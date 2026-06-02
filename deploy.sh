@@ -27,9 +27,11 @@ echo "[$(date)] Imagem API OK" | tee -a $LOG
 
 # ── 3. Build ERP ─────────────────────────────────────────────────
 echo "[$(date)] Buildando ERP..." | tee -a $LOG
-cd $REPO_DIR/apps/erp
-/usr/local/bin/node /usr/local/bin/vite build >> $LOG 2>&1
-cd $REPO_DIR
+docker run --rm \
+  -v $REPO_DIR:/workspace \
+  -w /workspace/apps/erp \
+  node:22-bookworm-slim \
+  sh -c "npm install --silent 2>/dev/null; npx vite@5.4.21 build" >> $LOG 2>&1
 echo "[$(date)] ERP OK" | tee -a $LOG
 
 # ── 4. Deploy staging ────────────────────────────────────────────
