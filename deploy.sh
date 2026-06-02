@@ -1,56 +1,47 @@
 #!/bin/bash
-# deploy.sh — Aura Platform
-# Uso: bash deploy.sh staging | bash deploy.sh main
-
 set -e
+
+# PATH explícito para SSH não herdar variáveis de ambiente incompletas
+export PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 
 BRANCH=${1:-staging}
 REPO_DIR="/home/helygp/projetos/aura-platform"
 LOG="/tmp/deploy-${BRANCH}.log"
-VITE="/usr/local/bin/vite"
 
 echo "[$(date)] === Deploy iniciado — branch: $BRANCH ===" | tee $LOG
 
-# ── 1. Git pull ──────────────────────────────────────────────────
+# ── 1. Git ───────────────────────────────────────────────────────
 cd $REPO_DIR
 git fetch origin 2>&1 | tee -a $LOG
 git checkout $BRANCH 2>&1 | tee -a $LOG
 git reset --hard origin/$BRANCH 2>&1 | tee -a $LOG
 echo "[$(date)] Git OK — $(git log --oneline -1)" | tee -a $LOG
 
-# ── 2. Build da imagem API ───────────────────────────────────────
-if [ "$BRANCH" = "staging" ]; then
-  IMAGE="api-aura:staging"
-else
-  IMAGE="api-aura:latest"
-fi
+# ── 2. Build imagem API ──────────────────────────────────────────
+if [ "$BRANCH" = "staging" ]; then IMAGE="api-aura:staging"
+else IMAGE="api-aura:latest"; fi
 
 echo "[$(date)] Buildando imagem API ($IMAGE)..." | tee -a $LOG
 docker build -f $REPO_DIR/services/api/Dockerfile -t $IMAGE $REPO_DIR 2>&1 | tail -3 | tee -a $LOG
-echo "[$(date)] Imagem OK" | tee -a $LOG
+echo "[$(date)] Imagem API OK" | tee -a $LOG
 
-# ── 3. Build do ERP ─────────────────────────────────────────────
+# ── 3. Build ERP ─────────────────────────────────────────────────
 echo "[$(date)] Buildando ERP..." | tee -a $LOG
 cd $REPO_DIR/apps/erp
-$VITE build >> $LOG 2>&1
+/usr/local/bin/node /usr/local/bin/vite build >> $LOG 2>&1
 cd $REPO_DIR
 echo "[$(date)] ERP OK" | tee -a $LOG
 
 # ── 4. Deploy staging ────────────────────────────────────────────
 if [ "$BRANCH" = "staging" ]; then
-
-  DB_PASS=$(docker exec supabase-db psql -U postgres -d aura_master -t -c \
-    "SELECT '' " 2>/dev/null || echo "AuraStaging2024")
-  DB_PASS="AuraStaging2024"
-
-  docker stop api-staging 2>/dev/null; docker rm api-staging 2>/dev/null
+  docker stop api-staging 2>/dev/null; docker rm api-staging 2>/dev/null || true
   docker run -d --name api-staging --restart unless-stopped \
     --network prod_default \
     --network supabase_supabase_net \
     --network tenant_staging_net \
     -e NODE_ENV=production -e PORT=3001 -e TENANT_SLUG=staging \
-    -e DATABASE_URL="postgresql://aura_staging:${DB_PASS}@supabase-db:5432/aura_staging" \
-    -e TENANT_DB_URL="postgresql://aura_staging:${DB_PASS}@supabase-db:5432/aura_staging" \
+    -e DATABASE_URL="postgresql://aura_staging:AuraStaging2024@supabase-db:5432/aura_staging" \
+    -e TENANT_DB_URL="postgresql://aura_staging:AuraStaging2024@supabase-db:5432/aura_staging" \
     -e MASTER_DB_URL="postgresql://postgres:pD5MouDfpF2b0ThSrnI6IQIcn7j5ZKFfnrxmPBeOgvs7JTl5WhWLQANAZCH7ztMe@supabase-db:5432/aura_master" \
     -e JWT_SECRET="b6c7dbc78f766c2bcdf76ecc0ea81963df24554bd6dcb6be6c5bf34e89c486e29cd9abede6032419" \
     -e JWT_REFRESH_SECRET="da40f37f0989d9aa7bfba64703d24ace4b14676326acf7595eae2d78b0ed468e0e9e8c2bfc5f4647" \
@@ -75,26 +66,19 @@ if [ "$BRANCH" = "staging" ]; then
 
   docker cp $REPO_DIR/apps/erp/dist/. erp-staging:/usr/share/nginx/html/
   docker exec erp-staging nginx -s reload
-  echo "[$(date)] ✅ Staging deployado — https://staging.aurabr.app" | tee -a $LOG
+  echo "[$(date)] ✅ https://staging.aurabr.app" | tee -a $LOG
 
 # ── 5. Deploy produção ───────────────────────────────────────────
 elif [ "$BRANCH" = "main" ]; then
-
   for SLUG in acme fastmalhas forroplastic; do
-    echo "[$(date)] → Deployando $SLUG..." | tee -a $LOG
-
     case $SLUG in
       acme)         DB_PASS="AuraAcme72aa2d14d2a454f5"  ; WAHA_URL="http://waha_7b61c0d3-104d-4f6d-b276-34e50d5b115e:3000" ; WAHA_KEY="eecfa4cf-8003-4c77-9f4f-a6e2de81a575" ;;
       fastmalhas)   DB_PASS="AuraFast29166"              ; WAHA_URL="" ; WAHA_KEY="" ;;
       forroplastic) DB_PASS="AuraForro9751847"           ; WAHA_URL="" ; WAHA_KEY="" ;;
     esac
-
     docker stop api-$SLUG && docker rm api-$SLUG
-
     docker run -d --name api-$SLUG --restart unless-stopped \
-      --network prod_default \
-      --network supabase_supabase_net \
-      --network tenant_${SLUG}_net \
+      --network prod_default --network supabase_supabase_net --network tenant_${SLUG}_net \
       -e NODE_ENV=production -e PORT=3001 -e TENANT_SLUG=$SLUG \
       -e DATABASE_URL="postgresql://aura_${SLUG}:${DB_PASS}@supabase-db:5432/aura_${SLUG}" \
       -e TENANT_DB_URL="postgresql://aura_${SLUG}:${DB_PASS}@supabase-db:5432/aura_${SLUG}" \
@@ -120,13 +104,10 @@ elif [ "$BRANCH" = "main" ]; then
       -l "traefik.http.routers.api-${SLUG}.entrypoints=websecure" \
       -l "traefik.http.services.api-${SLUG}.loadbalancer.server.port=3001" \
       $IMAGE
-
     docker cp $REPO_DIR/apps/erp/dist/. erp-$SLUG:/usr/share/nginx/html/
     docker exec erp-$SLUG nginx -s reload
     echo "[$(date)] ✅ $SLUG OK" | tee -a $LOG
   done
-
-  echo "[$(date)] ✅ Produção atualizada" | tee -a $LOG
 fi
 
 echo "[$(date)] === Deploy concluído ===" | tee -a $LOG
