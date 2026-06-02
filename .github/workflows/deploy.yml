@@ -20,10 +20,12 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: 22
           script: |
-            cd /projetos/aura-platform
-            bash deploy.sh ${{ github.ref_name }}
+            cd /home/helygp/projetos/aura-platform
+            git fetch origin
+            git checkout ${{ github.ref_name }}
+            git reset --hard origin/${{ github.ref_name }}
+            bash /home/helygp/projetos/aura-platform/deploy.sh ${{ github.ref_name }}
 
-      - name: Notificar resultado
+      - name: Status
         if: always()
-        run: |
-          echo "Deploy ${{ github.ref_name }} - ${{ job.status }}"
+        run: echo "Deploy ${{ github.ref_name }} — ${{ job.status }}"
