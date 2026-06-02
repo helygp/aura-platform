@@ -40,3 +40,4 @@ claude
 # Claude Code edita os arquivos
 git add . && git commit -m "feat: descrição" && git push origin staging
 ```
+# teste CI/CD Tue Jun  2 11:15:30 UTC 2026
