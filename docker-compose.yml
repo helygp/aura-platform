@@ -1,0 +1,133 @@
+# docker-compose.yml — Aura Platform por tenant
+#
+# Uso:
+#   TENANT_SLUG=acme TENANT_DB_URL=postgresql://... docker compose up -d
+#
+# Ou via script deploy-erp.sh que seta as variáveis automaticamente.
+#
+# Serviços:
+#   erp-${TENANT_SLUG}   — SPA React servido pelo Nginx
+#   api-${TENANT_SLUG}   — API Node.js + Express + Prisma
+#   store-${TENANT_SLUG} — Loja B2B Next.js (loja.[slug].aurabr.app)
+#
+# Ambos ingressam em prod_default para o Traefik rotear por domínio.
+# Comunicação interna usa a rede tenant isolada.
+
+services:
+
+  # ── ERP (frontend) ────────────────────────────────────────
+  erp:
+    build:
+      context: .
+      dockerfile: apps/erp/Dockerfile
+    image: aura-erp:latest
+    container_name: erp-${TENANT_SLUG}
+    restart: unless-stopped
+    depends_on:
+      - api
+    networks:
+      - tenant_net
+      - prod_default
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.erp-${TENANT_SLUG}.rule=Host(`${TENANT_SLUG}.aurabr.app`)"
+      - "traefik.http.routers.erp-${TENANT_SLUG}.entrypoints=websecure"
+      - "traefik.http.routers.erp-${TENANT_SLUG}.tls.certresolver=mytlschallenge"
+      - "traefik.http.routers.erp-${TENANT_SLUG}.service=erp-${TENANT_SLUG}-svc"
+      - "traefik.http.services.erp-${TENANT_SLUG}-svc.loadbalancer.server.port=80"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/health"]
+      interval: 30s
+      timeout:  5s
+      retries:  3
+
+  # ── API (backend) ─────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: services/api/Dockerfile
+    image: aura-api:latest
+    container_name: api-${TENANT_SLUG}
+    restart: unless-stopped
+    networks:
+      - tenant_net
+      - prod_default
+    environment:
+      NODE_ENV:             production
+      PORT:                 "3001"
+      TENANT_SLUG:          ${TENANT_SLUG}
+      DATABASE_URL:         ${TENANT_DB_URL}
+      TENANT_DB_URL:        ${TENANT_DB_URL}
+      MASTER_DB_URL:        ${MASTER_DB_URL}
+      JWT_SECRET:           ${JWT_SECRET}
+      JWT_REFRESH_SECRET:   ${JWT_REFRESH_SECRET}
+      BUYER_JWT_SECRET:     ${BUYER_JWT_SECRET}
+      COOKIE_DOMAIN:        .aurabr.app
+      CORS_ORIGINS:         https://${TENANT_SLUG}.aurabr.app,https://loja.${TENANT_SLUG}.aurabr.app
+      WAHA_URL:             ${WAHA_URL:-}
+      WAHA_API_KEY:         ${WAHA_API_KEY:-}
+      WAHA_SESSION:         ${TENANT_SLUG}
+      REDIS_URL:            ${REDIS_URL:-redis://redis-prod:6379}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/health"]
+      interval: 30s
+      timeout:  5s
+      retries:  3
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.api-${TENANT_SLUG}.rule=Host(`api.${TENANT_SLUG}.aurabr.app`)"
+      - "traefik.http.routers.api-${TENANT_SLUG}.tls.certresolver=mytlschallenge"
+      - "traefik.http.routers.api-${TENANT_SLUG}.entrypoints=websecure"
+      - "traefik.http.services.api-${TENANT_SLUG}.loadbalancer.server.port=3001"
+
+  # ── Loja B2B (Next.js) ────────────────────────────────────
+  store:
+    build:
+      context: .
+      dockerfile: apps/store/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: https://api.${TENANT_SLUG}.aurabr.app
+        NEXT_PUBLIC_DEFAULT_TENANT_SLUG: ${TENANT_SLUG}
+    image: aura-store:latest
+    container_name: store-${TENANT_SLUG}
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - tenant_net
+      - prod_default
+    environment:
+      NODE_ENV:                       production
+      PORT:                           "3000"
+      # URL interna da API (sem passar pelo Traefik — mais rápido no SSR)
+      API_INTERNAL_URL:               http://api-${TENANT_SLUG}:3001
+      # URL pública da API (usada pelo browser)
+      NEXT_PUBLIC_API_URL:            https://api.${TENANT_SLUG}.aurabr.app
+      NEXT_PUBLIC_DEFAULT_TENANT_SLUG: ${TENANT_SLUG}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/"]
+      interval: 30s
+      timeout:  10s
+      retries:  3
+      start_period: 60s   # Next.js demora mais para iniciar
+    labels:
+      - "traefik.enable=true"
+      # ── HTTPS: loja.[slug].aurabr.app ──
+      - "traefik.http.routers.store-${TENANT_SLUG}.rule=Host(`loja.${TENANT_SLUG}.aurabr.app`)"
+      - "traefik.http.routers.store-${TENANT_SLUG}.entrypoints=websecure"
+      - "traefik.http.routers.store-${TENANT_SLUG}.tls.certresolver=mytlschallenge"
+      - "traefik.http.routers.store-${TENANT_SLUG}.service=store-${TENANT_SLUG}-svc"
+      - "traefik.http.services.store-${TENANT_SLUG}-svc.loadbalancer.server.port=3000"
+      # ── Cabeçalho de segurança adicional via Traefik middleware ──
+      - "traefik.http.routers.store-${TENANT_SLUG}.middlewares=store-headers@docker"
+      - "traefik.http.middlewares.store-headers.headers.customResponseHeaders.X-Robots-Tag=noindex,nofollow"
+
+# ── Redes ─────────────────────────────────────────────────
+networks:
+  tenant_net:
+    name: tenant_${TENANT_SLUG}_net
+    driver: bridge
+
+  prod_default:
+    external: true

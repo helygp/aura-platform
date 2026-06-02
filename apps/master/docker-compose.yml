@@ -1,0 +1,41 @@
+# docker-compose para o painel master
+# Usar junto com o docker-compose.yml principal do tenant.
+# Subir com: MASTER_SECRET=xxx TENANT_SLUG=acme docker-compose -f docker-compose.yml -f apps/master/docker-compose.yml up -d master
+#
+# Ou standalone:
+#   docker build --build-arg VITE_MASTER_SECRET=xxx -f apps/master/Dockerfile -t aura-master .
+#   docker run -d --name master-panel --network prod_default \
+#     -l "traefik.enable=true" \
+#     -l "traefik.http.routers.master.rule=Host(\`master.aurabr.app\`)" \
+#     -l "traefik.http.routers.master.tls.certresolver=mytlschallenge" \
+#     -l "traefik.http.routers.master.entrypoints=websecure" \
+#     -l "traefik.http.middlewares.master-auth.basicauth.users=hely:$$apr1$$..." \
+#     -l "traefik.http.routers.master.middlewares=master-auth" \
+#     aura-master
+
+version: "3.9"
+
+services:
+  master:
+    build:
+      context: ../..
+      dockerfile: apps/master/Dockerfile
+      args:
+        VITE_MASTER_SECRET: ${MASTER_SECRET}
+        VITE_DOMAIN: ${DOMAIN:-aurabr.app}
+    container_name: master-panel
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.master.rule=Host(`master.aurabr.app`)"
+      - "traefik.http.routers.master.tls.certresolver=mytlschallenge"
+      - "traefik.http.routers.master.entrypoints=websecure"
+      # Basic auth extra — gere com: htpasswd -nb hely senha
+      - "traefik.http.middlewares.master-auth.basicauth.users=${MASTER_BASIC_AUTH}"
+      - "traefik.http.routers.master.middlewares=master-auth"
+    networks:
+      - prod_default
+
+networks:
+  prod_default:
+    external: true

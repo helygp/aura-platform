@@ -1,0 +1,138 @@
+// ─────────────────────────────────────────────────────────
+// Aura Platform — Banco Master (aura_master)
+// Prisma Schema — fonte de verdade do modelo de dados
+//
+// NOTA: O CLI do Prisma não roda neste ambiente (Alpine sem libssl.so.1.1).
+// Usar as migrations SQL em prisma/migrations/ para criar/alterar o schema.
+// O PrismaClient funciona normalmente em runtime — apenas o CLI está bloqueado.
+// ─────────────────────────────────────────────────────────
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Planos ───────────────────────────────────────────────
+model Plan {
+  id            String   @id @default(cuid())
+  name          String   @unique           // starter | pro | full
+  priceSetup    Decimal  @map("price_setup")    @db.Decimal(10,2)
+  priceMonthly  Decimal  @map("price_monthly")  @db.Decimal(10,2)
+  mcpQuota      Int      @map("mcp_quota")
+  maxUsers      Int      @map("max_users")
+  maxProducts   Int      @map("max_products")
+  features      Json     @default("{}")
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt       @map("updated_at")
+
+  tenants       Tenant[]
+
+  @@map("plans")
+}
+
+// ─── Tenants ──────────────────────────────────────────────
+model Tenant {
+  id            String        @id @default(cuid())
+  slug          String        @unique
+  name          String
+  planId        String        @map("plan_id")
+  plan          Plan          @relation(fields: [planId], references: [id])
+  status        TenantStatus  @default(TRIAL)
+  themeConfig   Json          @default("{}") @map("theme_config")
+  dbName        String?       @unique @map("db_name")
+  wahaSession   String?       @map("waha_session")
+
+  // ── Pagar.me (Sprint 4) ───────────────────────────────
+  pagarmeCustomerId     String?   @map("pagarme_customer_id")
+  pagarmeSubscriptionId String?   @map("pagarme_subscription_id")
+  billingStatus         String    @default("pending") @map("billing_status")
+  // paid | failed | pending | canceled | trial_ending
+  nextBillingDate       DateTime? @map("next_billing_date") @db.Date
+  trialEndsAt           DateTime? @map("trial_ends_at")
+
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt       @map("updated_at")
+
+  users         User[]
+  billings      Billing[]
+
+  @@map("tenants")
+}
+
+enum TenantStatus {
+  TRIAL
+  ACTIVE
+  SUSPENDED
+  CANCELLED
+
+  @@map("tenant_status")
+}
+
+// ─── Usuários ─────────────────────────────────────────────
+model User {
+  id              String    @id @default(cuid())
+  tokenId         String    @unique @default(uuid()) @map("token_id")
+  tenantId        String    @map("tenant_id")
+  tenant          Tenant    @relation(fields: [tenantId], references: [id])
+  email           String
+  name            String
+  passwordHash    String    @map("password_hash")
+  role            UserRole  @default(OPERADOR)
+  active          Boolean   @default(true)
+  refreshFamily   String?   @map("refresh_family")
+  lastLoginAt     DateTime? @map("last_login_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt       @map("updated_at")
+
+  @@unique([tenantId, email])
+  @@map("users")
+}
+
+enum UserRole {
+  ADMIN
+  FINANCEIRO
+  ESTOQUE
+  OPERADOR
+
+  @@map("user_role")
+}
+
+// ─── Billing ──────────────────────────────────────────────
+model Billing {
+  id          String        @id @default(cuid())
+  tenantId    String        @map("tenant_id")
+  tenant      Tenant        @relation(fields: [tenantId], references: [id])
+  period      String                         // "YYYY-MM"
+  amount      Decimal       @db.Decimal(10,2)
+  type        BillingType   @default(MONTHLY)
+  status      BillingStatus @default(PENDING)
+  paidAt      DateTime?     @map("paid_at")
+  invoiceRef  String?       @map("invoice_ref")
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt       @map("updated_at")
+
+  @@unique([tenantId, period, type])
+  @@map("billing")
+}
+
+enum BillingType {
+  SETUP
+  MONTHLY
+
+  @@map("billing_type")
+}
+
+enum BillingStatus {
+  PENDING
+  PAID
+  OVERDUE
+  CANCELLED
+
+  @@map("billing_status")
+}

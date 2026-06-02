@@ -1,0 +1,136 @@
+openapi: 3.1.0
+info:
+  title: Aura Platform ERP — GPT Action
+  description: |
+    Gerencie seu ERP B2B via ChatGPT.
+    Consulte KPIs, analise estoque, crie pedidos e mais.
+    
+    Para usar: cadastre-se em https://aurabr.app/cadastro
+    e obtenha sua API Key no painel de integrações.
+  version: "1.0.0"
+
+servers:
+  - url: https://mcp.aurabr.app
+    description: Aura Platform MCP
+
+security:
+  - ApiKeyAuth: []
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: x-api-key
+
+  schemas:
+    McpRequest:
+      type: object
+      required: [jsonrpc, method, id]
+      properties:
+        jsonrpc: { type: string, enum: ["2.0"] }
+        method:  { type: string }
+        params:  { type: object }
+        id:      { type: integer }
+
+    McpResponse:
+      type: object
+      properties:
+        jsonrpc: { type: string }
+        result:  { type: object }
+        error:   { type: object }
+        id:      { type: integer }
+
+paths:
+  /manager/{slug}:
+    post:
+      operationId: callManagerTool
+      summary: Executar tool do MCP Manager (gestão do ERP)
+      description: |
+        Executa uma das 10 tools de gestão:
+        get_dashboard, analyze_margin, list_low_stock, create_order,
+        update_order_status, get_sales_report, list_top_customers,
+        send_whatsapp, list_products, get_ai_insights
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: Slug do seu tenant (ex: acme)
+          schema: { type: string }
+        - name: mcp-session-id
+          in: header
+          schema: { type: string }
+          description: Session ID retornado pelo initialize
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/McpRequest'
+            examples:
+              initialize:
+                summary: Inicializar sessão
+                value:
+                  jsonrpc: "2.0"
+                  method: initialize
+                  params: { protocolVersion: "2024-11-05", capabilities: {} }
+                  id: 1
+              dashboard:
+                summary: Ver KPIs do dia
+                value:
+                  jsonrpc: "2.0"
+                  method: tools/call
+                  params: { name: get_dashboard, arguments: {} }
+                  id: 2
+              low_stock:
+                summary: Ver estoque crítico
+                value:
+                  jsonrpc: "2.0"
+                  method: tools/call
+                  params: { name: list_low_stock, arguments: { limite: 10 } }
+                  id: 3
+      responses:
+        "200":
+          description: Resposta MCP JSON-RPC
+          headers:
+            mcp-session-id:
+              schema: { type: string }
+              description: Session ID para próximas chamadas
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/McpResponse'
+        "401":
+          description: API Key inválida
+        "429":
+          description: Rate limit ou quota excedida
+
+  /store/{slug}:
+    post:
+      operationId: callStoreTool
+      summary: Executar tool do MCP Store (pedidos B2B)
+      description: |
+        Executa uma das 8 tools de compras:
+        browse_catalog, check_availability, create_cart, add_to_cart,
+        get_cart, checkout, get_order_status, list_my_orders
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+        - name: mcp-session-id
+          in: header
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/McpRequest'
+      responses:
+        "200":
+          description: Resposta MCP
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/McpResponse'

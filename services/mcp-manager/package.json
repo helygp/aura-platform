@@ -1,0 +1,14 @@
+{
+  "name": "mcp-manager",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Aura Platform — MCP Manager (gestores via IA)",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev":   "node --watch index.js"
+  },
+  "dependencies": {
+    "pg": "^8.11.0"
+  }
+}

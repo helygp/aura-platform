@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>Aura Platform — ERP B2B com MCPs Nativos</title>
+  <meta name="description" content="O primeiro ERP brasileiro com MCPs nativos. Gerencie estoque, pedidos e clientes via Claude, ChatGPT e outros assistentes de IA."/>
+  <!-- MCP Discovery metadata -->
+  <meta name="mcp:manager" content="https://mcp.aurabr.app/manager/{slug}"/>
+  <meta name="mcp:store"   content="https://mcp.aurabr.app/store/{slug}"/>
+  <meta name="mcp:connect" content="https://mcp.aurabr.app/connect/{slug}"/>
+  <meta name="openapi"     content="https://api.aurabr.app/openapi.json"/>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0f0a1e;color:#e2e8f0;min-height:100vh}
+    .hero{text-align:center;padding:80px 24px 60px;background:linear-gradient(135deg,#1e1040 0%,#0f0a1e 100%)}
+    .badge{display:inline-block;background:#7c3aed22;border:1px solid #7c3aed;color:#a78bfa;padding:6px 16px;border-radius:20px;font-size:13px;margin-bottom:24px}
+    h1{font-size:clamp(2rem,5vw,3.5rem);font-weight:800;line-height:1.15;margin-bottom:20px}
+    h1 span{background:linear-gradient(135deg,#a78bfa,#7c3aed);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+    .subtitle{font-size:1.1rem;color:#94a3b8;max-width:560px;margin:0 auto 40px}
+    .cta-group{display:flex;gap:16px;justify-content:center;flex-wrap:wrap}
+    .btn{padding:14px 28px;border-radius:10px;font-size:1rem;font-weight:600;cursor:pointer;text-decoration:none;transition:.2s}
+    .btn-primary{background:#7c3aed;color:#fff;border:none}
+    .btn-primary:hover{background:#6d28d9}
+    .btn-secondary{background:transparent;color:#a78bfa;border:1px solid #7c3aed}
+    .btn-secondary:hover{background:#7c3aed22}
+    .section{padding:60px 24px;max-width:1100px;margin:0 auto}
+    .section-title{text-align:center;font-size:1.8rem;font-weight:700;margin-bottom:12px}
+    .section-subtitle{text-align:center;color:#94a3b8;margin-bottom:48px}
+    .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:24px}
+    .card{background:#1e1040;border:1px solid #2d1b69;border-radius:16px;padding:28px;transition:.2s}
+    .card:hover{border-color:#7c3aed;transform:translateY(-2px)}
+    .card-icon{width:48px;height:48px;background:#7c3aed22;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:24px;margin-bottom:16px}
+    .card h3{font-size:1.1rem;font-weight:700;margin-bottom:8px;color:#e2e8f0}
+    .card p{color:#94a3b8;font-size:.9rem;line-height:1.6}
+    .card .url{font-family:monospace;font-size:.8rem;color:#7c3aed;margin-top:12px;background:#7c3aed11;padding:6px 10px;border-radius:6px;display:block;word-break:break-all}
+    .tools-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;margin-top:24px}
+    .tool{background:#1e1040;border:1px solid #2d1b69;border-radius:10px;padding:14px 16px}
+    .tool code{font-size:.8rem;color:#7c3aed;display:block;margin-bottom:4px}
+    .tool span{font-size:.85rem;color:#94a3b8}
+    .plans{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:24px}
+    .plan{background:#1e1040;border:1px solid #2d1b69;border-radius:16px;padding:28px;text-align:center}
+    .plan.featured{border-color:#7c3aed;background:#1e1040;position:relative}
+    .plan.featured::before{content:'Mais popular';position:absolute;top:-12px;left:50%;transform:translateX(-50%);background:#7c3aed;color:#fff;padding:4px 14px;border-radius:20px;font-size:.75rem;font-weight:700}
+    .plan-name{font-size:.9rem;font-weight:600;color:#a78bfa;text-transform:uppercase;margin-bottom:8px}
+    .plan-price{font-size:2rem;font-weight:800;margin-bottom:4px}
+    .plan-price span{font-size:1rem;color:#94a3b8}
+    .plan-quota{font-size:.85rem;color:#94a3b8;margin-bottom:20px}
+    .plan ul{list-style:none;text-align:left}
+    .plan li{font-size:.9rem;color:#cbd5e1;padding:6px 0;border-bottom:1px solid #2d1b69}
+    .plan li:last-child{border:none}
+    .plan li::before{content:'✓ ';color:#7c3aed}
+    code.block{display:block;background:#0d0820;border:1px solid #2d1b69;border-radius:10px;padding:20px;font-size:.85rem;color:#a78bfa;overflow-x:auto;margin-top:16px;white-space:pre}
+    footer{text-align:center;padding:40px 24px;color:#475569;font-size:.85rem;border-top:1px solid #1e1040}
+    footer a{color:#7c3aed;text-decoration:none}
+  </style>
+</head>
+<body>
+
+<div class="hero">
+  <div class="badge">🤖 Primeiro ERP Brasileiro com MCPs Nativos</div>
+  <h1>Gerencie seu negócio<br/><span>via assistente de IA</span></h1>
+  <p class="subtitle">Conecte o Claude, ChatGPT ou Copilot ao seu ERP e gerencie estoque, pedidos e clientes em linguagem natural.</p>
+  <div class="cta-group">
+    <a href="https://aurabr.app/cadastro" class="btn btn-primary">Começar trial gratuito →</a>
+    <a href="https://docs.aurabr.app" class="btn btn-secondary">Ver documentação</a>
+  </div>
+</div>
+
+<div class="section">
+  <h2 class="section-title">3 MCPs para cada perfil</h2>
+  <p class="section-subtitle">Cada MCP tem um propósito — gestor, comprador ou desenvolvedor</p>
+  <div class="cards">
+    <div class="card">
+      <div class="card-icon">📊</div>
+      <h3>MCP Manager</h3>
+      <p>Para gestores. Consulte KPIs, analise margens, controle estoque, crie pedidos e envie mensagens WhatsApp diretamente pelo chat.</p>
+      <code class="url">mcp.aurabr.app/manager/{slug}</code>
+    </div>
+    <div class="card">
+      <div class="card-icon">🛍️</div>
+      <h3>MCP Store</h3>
+      <p>Para compradores B2B. Navegue pelo catálogo, adicione ao carrinho e finalize pedidos sem sair do assistente de IA.</p>
+      <code class="url">mcp.aurabr.app/store/{slug}</code>
+    </div>
+    <div class="card">
+      <div class="card-icon">⚙️</div>
+      <h3>MCP Connect</h3>
+      <p>Para desenvolvedores. Consulte endpoints, valide payloads, registre webhooks e monitore uso da API via IA.</p>
+      <code class="url">mcp.aurabr.app/connect/{slug}</code>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="background:#0d0820;border-radius:20px;margin:0 auto;max-width:1100px">
+  <h2 class="section-title">26 tools disponíveis</h2>
+  <p class="section-subtitle">Tudo que você precisa para gerenciar um negócio B2B via IA</p>
+  <div class="tools-grid">
+    <div class="tool"><code>get_dashboard</code><span>KPIs do dia</span></div>
+    <div class="tool"><code>analyze_margin</code><span>Análise de margem</span></div>
+    <div class="tool"><code>list_low_stock</code><span>Estoque crítico</span></div>
+    <div class="tool"><code>create_order</code><span>Criar pedido</span></div>
+    <div class="tool"><code>update_order_status</code><span>Atualizar status</span></div>
+    <div class="tool"><code>get_sales_report</code><span>Relatório de vendas</span></div>
+    <div class="tool"><code>list_top_customers</code><span>Melhores clientes</span></div>
+    <div class="tool"><code>send_whatsapp</code><span>Mensagem WhatsApp</span></div>
+    <div class="tool"><code>list_products</code><span>Catálogo</span></div>
+    <div class="tool"><code>get_ai_insights</code><span>Insights com IA</span></div>
+    <div class="tool"><code>browse_catalog</code><span>Navegar catálogo</span></div>
+    <div class="tool"><code>check_availability</code><span>Checar estoque</span></div>
+    <div class="tool"><code>add_to_cart</code><span>Adicionar ao carrinho</span></div>
+    <div class="tool"><code>checkout</code><span>Finalizar pedido</span></div>
+    <div class="tool"><code>get_order_status</code><span>Status do pedido</span></div>
+    <div class="tool"><code>list_my_orders</code><span>Meu histórico</span></div>
+    <div class="tool"><code>list_endpoints</code><span>Endpoints da API</span></div>
+    <div class="tool"><code>get_schema</code><span>Schema detalhado</span></div>
+    <div class="tool"><code>validate_payload</code><span>Validar JSON</span></div>
+    <div class="tool"><code>register_webhook</code><span>Registrar webhook</span></div>
+    <div class="tool"><code>test_connection</code><span>Testar conexão</span></div>
+    <div class="tool"><code>get_usage</code><span>Uso e quotas</span></div>
+    <div class="tool"><code>list_integrations</code><span>Integrações ativas</span></div>
+    <div class="tool"><code>get_sandbox_data</code><span>Dados de teste</span></div>
+  </div>
+</div>
+
+<div class="section">
+  <h2 class="section-title">Como conectar no Claude</h2>
+  <p class="section-subtitle">Em menos de 2 minutos você está gerenciando seu ERP via IA</p>
+  <div class="cards">
+    <div class="card">
+      <div class="card-icon">1️⃣</div>
+      <h3>Cadastre-se</h3>
+      <p>Crie sua conta em aurabr.app/cadastro. Trial de 14 dias grátis, sem cartão de crédito.</p>
+    </div>
+    <div class="card">
+      <div class="card-icon">2️⃣</div>
+      <h3>Gere sua API Key</h3>
+      <p>No painel ERP, acesse Integrações → MCP Keys e gere sua chave de acesso.</p>
+    </div>
+    <div class="card">
+      <div class="card-icon">3️⃣</div>
+      <h3>Conecte no Claude</h3>
+      <p>Em Claude.ai → Configurações → Conectores, adicione o MCP Manager com sua URL e API Key.</p>
+    </div>
+  </div>
+
+  <code class="block">// Exemplo de uso no Claude após conectar:
+"Quais são os KPIs de hoje?"
+→ Receita: R$ 0,00 | Pedidos pendentes: 2 | Estoque crítico: 1 SKU
+
+"Qual produto tem a maior margem?"
+→ Tênis Runner Pro: 45% de margem | 12 unidades vendidas no mês
+
+"Me mande uma mensagem pro cliente João dizendo que o pedido foi aprovado"
+→ ✅ WhatsApp enviado para João Silva (11999990000)</code>
+</div>
+
+<div class="section">
+  <h2 class="section-title">Planos e quotas MCP</h2>
+  <p class="section-subtitle">Pague apenas pelo que usar. Calls MCP incluídas em todos os planos.</p>
+  <div class="plans">
+    <div class="plan">
+      <div class="plan-name">Starter</div>
+      <div class="plan-price">R$ 297<span>/mês</span></div>
+      <div class="plan-quota">500 tool calls MCP/mês</div>
+      <ul>
+        <li>MCP Manager + Store + Connect</li>
+        <li>Até 3 usuários</li>
+        <li>Até 500 produtos</li>
+        <li>Excedente: R$ 0,30/call</li>
+      </ul>
+    </div>
+    <div class="plan featured">
+      <div class="plan-name">Pro</div>
+      <div class="plan-price">R$ 597<span>/mês</span></div>
+      <div class="plan-quota">2.000 tool calls MCP/mês</div>
+      <ul>
+        <li>MCP Manager + Store + Connect</li>
+        <li>Até 10 usuários</li>
+        <li>Produtos ilimitados</li>
+        <li>Excedente: R$ 0,20/call</li>
+      </ul>
+    </div>
+    <div class="plan">
+      <div class="plan-name">Full</div>
+      <div class="plan-price">R$ 1.497<span>/mês</span></div>
+      <div class="plan-quota">10.000 tool calls MCP/mês</div>
+      <ul>
+        <li>MCP Manager + Store + Connect</li>
+        <li>Usuários ilimitados</li>
+        <li>SLA 99,9%</li>
+        <li>Excedente: R$ 0,10/call</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<footer>
+  <p>
+    <a href="https://aurabr.app">aurabr.app</a> ·
+    <a href="https://docs.aurabr.app">Documentação</a> ·
+    <a href="https://aurabr.app/privacidade">Privacidade</a> ·
+    <a href="https://aurabr.app/termos">Termos</a> ·
+    <a href="mailto:dev@aurabr.app">dev@aurabr.app</a>
+  </p>
+  <p style="margin-top:12px">© 2026 Aura Cloud Solutions. Todos os direitos reservados.</p>
+</footer>
+
+</body>
+</html>

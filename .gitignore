@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.next/
+.env
+.env.*
+.credentials/
+*.log
+acme.json
+acme.json.bak*
+.DS_Store

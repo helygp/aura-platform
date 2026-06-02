@@ -1,0 +1,302 @@
+/**
+ * routes/onboarding.js
+ *
+ * POST /onboarding/register   — formulário público de cadastro
+ * GET  /onboarding/plans      — lista planos ativos
+ * GET  /onboarding/check-slug/:slug — disponibilidade de slug
+ *
+ * Fluxo POST:
+ *   1. Valida body (zod)
+ *   2. Resolve slug único
+ *   3. Cria tenant + admin no banco MASTER (status TRIAL)
+ *   4. Chama provision-agent (host) via HTTP — sobe containers
+ *   5. Cria customer + assinatura no Pagar.me em background
+ *   6. Envia email de boas-vindas
+ *   7. Responde 202 imediatamente
+ */
+
+import { Router }    from 'express'
+import { z }         from 'zod'
+import bcrypt        from 'bcryptjs'
+import { prismaMaster } from '../lib/prisma-master.js'
+import { sendWelcomeEmail } from '../lib/mailer.js'
+import {
+  createCustomer,
+  createSubscription,
+} from '../lib/pagarme.js'
+
+export const onboardingRouter = Router()
+
+const DOMAIN          = process.env.AURA_DOMAIN         ?? 'aurabr.app'
+const TRIAL_DAYS      = parseInt(process.env.TRIAL_DAYS ?? '14', 10)
+const AGENT_URL       = process.env.PROVISION_AGENT_URL ?? 'http://host.docker.internal:4001'
+const AGENT_SECRET    = process.env.AGENT_SECRET        ?? 'aura-provision-secret-2024'
+
+/* ─── Schema de validação ─── */
+const onboardingSchema = z.object({
+  companyName:     z.string().min(2).max(120),
+  segment:         z.string().max(60).optional(),
+  responsibleName: z.string().min(2).max(120),
+  email:           z.string().email(),
+  phone:           z.string().regex(/^\+?\d{10,15}$/).optional(),
+  planId:          z.string().min(1),
+  document:        z.string().optional(),
+  paymentMethod:   z.enum(['boleto', 'credit_card']).default('boleto'),
+  lang:            z.enum(['pt', 'en']).default('pt'),
+  termsAccepted:   z.boolean().refine(v => v === true, {
+    message: 'Você precisa aceitar os termos de uso.',
+  }),
+})
+
+/* ─── Chama o provision-agent no host ─── */
+async function callProvisionAgent(payload) {
+  const body = JSON.stringify(payload)
+  const res = await fetch(`${AGENT_URL}/provision`, {
+    method:  'POST',
+    headers: {
+      'Content-Type':    'application/json',
+      'x-agent-secret':  AGENT_SECRET,
+    },
+    body,
+    signal: AbortSignal.timeout(10_000),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(`provision-agent retornou ${res.status}: ${text}`)
+  }
+  return res.json()
+}
+
+/* ─── POST /onboarding/register ─── */
+onboardingRouter.post('/register', async (req, res) => {
+  const parsed = onboardingSchema.safeParse(req.body)
+  if (!parsed.success) {
+    return res.status(400).json({
+      error:  'Dados inválidos.',
+      fields: parsed.error.flatten().fieldErrors,
+    })
+  }
+
+  const {
+    companyName, segment, responsibleName, email,
+    phone, planId, document, paymentMethod, lang,
+  } = parsed.data
+
+  try {
+    /* 1. Busca o plano */
+    const plan = await prismaMaster.plan.findUnique({ where: { id: planId } })
+    if (!plan || !plan.active) {
+      return res.status(400).json({ error: 'Plano inválido ou indisponível.' })
+    }
+
+    /* 2. Gera slug único */
+    const baseSlug = companyName
+      .toLowerCase()
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 28)
+
+    const slug = await resolveUniqueSlug(baseSlug)
+
+    /* 3. Senha temporária */
+    const tempPassword = generateTempPassword()
+
+    /* 4. Trial end date */
+    const trialEndsAt = new Date()
+    trialEndsAt.setDate(trialEndsAt.getDate() + TRIAL_DAYS)
+
+    /* 5. Cria tenant no banco master */
+    const tenant = await prismaMaster.tenant.create({
+      data: {
+        slug,
+        name:          companyName,
+        planId,
+        status:        'TRIAL',
+        billingStatus: 'trial',
+        dbName:        `aura_${slug.replace(/-/g, '_')}`,
+        trialEndsAt,
+      },
+    })
+
+    /* 5b. Cria usuário admin no banco master */
+    const passwordHash = await bcrypt.hash(tempPassword, 10)
+    await prismaMaster.user.create({
+      data: {
+        tenantId:     tenant.id,
+        email,
+        name:         responsibleName,
+        passwordHash,
+        role:         'ADMIN',
+        active:       true,
+      },
+    })
+
+    const erpUrl   = `https://${slug}.${DOMAIN}`
+    const storeUrl = `https://loja.${slug}.${DOMAIN}`
+
+    /* 6. Chama provision-agent (async — não bloqueia resposta) */
+    callProvisionAgent({
+      slug,
+      tenantId:      tenant.id,
+      tenantName:    companyName,
+      planId,
+      adminEmail:    email,
+      adminPassword: tempPassword,
+      adminName:     responsibleName,
+      segment:       segment ?? '',
+    })
+    .then(() => {
+      console.log(`[onboarding] ✅ provision-agent aceito: ${slug}`)
+    })
+    .catch(err => {
+      console.error(`[onboarding] ❌ Erro ao chamar provision-agent ${slug}:`, err.message)
+      prismaMaster.tenant.update({
+        where: { slug },
+        data:  { status: 'SUSPENDED', billingStatus: 'provision_error' },
+      }).catch(() => {})
+    })
+
+    /* 7. Pagar.me em background */
+    if (process.env.PAGARME_API_KEY) {
+      setupPagarmeOnboarding({
+        tenant, plan, responsibleName, email,
+        document, phone, paymentMethod,
+      }).catch(err =>
+        console.error(`[onboarding] ❌ Pagar.me ${slug}:`, err.message)
+      )
+    }
+
+    /* 8. Email de boas-vindas em background */
+    sendWelcomeEmail({
+      adminName:    responsibleName,
+      adminEmail:   email,
+      tempPassword,
+      companyName,
+      slug,
+      planName:     plan.name,
+      erpUrl,
+      storeUrl,
+    }).catch(err =>
+      console.error(`[onboarding] ❌ Email ${slug}:`, err.message)
+    )
+
+    /* 9. Resposta imediata */
+    return res.status(202).json({
+      message:   'Cadastro recebido! Você receberá um e-mail com seus dados de acesso em instantes.',
+      slug,
+      erpUrl,
+      storeUrl,
+      trialDays: TRIAL_DAYS,
+    })
+
+  } catch (err) {
+    console.error('[onboarding POST]', err)
+    return res.status(500).json({ error: 'Erro interno ao processar o cadastro. Tente novamente.' })
+  }
+})
+
+/* ─── GET /onboarding/plans ─── */
+onboardingRouter.get('/plans', async (req, res) => {
+  try {
+    const plans = await prismaMaster.plan.findMany({
+      where:   { active: true },
+      select:  {
+        id:           true,
+        name:         true,
+        priceSetup:   true,
+        priceMonthly: true,
+        maxUsers:     true,
+        maxProducts:  true,
+        features:     true,
+      },
+      orderBy: { priceMonthly: 'asc' },
+    })
+    return res.json({ plans })
+  } catch (err) {
+    console.error('[onboarding/plans]', err)
+    return res.status(500).json({ error: 'Erro interno.' })
+  }
+})
+
+/* ─── GET /onboarding/check-slug/:slug ─── */
+onboardingRouter.get('/check-slug/:slug', async (req, res) => {
+  const slug = req.params.slug
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '')
+    .slice(0, 32)
+
+  if (!slug || slug.length < 2) {
+    return res.status(400).json({ error: 'Slug inválido.' })
+  }
+
+  try {
+    const existing = await prismaMaster.tenant.findUnique({ where: { slug } })
+    return res.json({ slug, available: !existing })
+  } catch (err) {
+    return res.status(500).json({ error: 'Erro interno.' })
+  }
+})
+
+/* ── Helpers ─────────────────────────────────────────────── */
+
+async function resolveUniqueSlug(base) {
+  let slug   = base
+  let suffix = 2
+  while (suffix <= 99) {
+    const existing = await prismaMaster.tenant.findUnique({ where: { slug } })
+    if (!existing) return slug
+    slug = `${base}-${suffix++}`
+  }
+  return `${base}-${Date.now().toString(36)}`
+}
+
+function generateTempPassword() {
+  const upper   = 'ABCDEFGHJKMNPQRSTUVWXYZ'
+  const lower   = 'abcdefghjkmnpqrstuvwxyz'
+  const digits  = '23456789'
+  const special = '!@#'
+  const all     = upper + lower + digits + special
+
+  let pwd = ''
+  pwd += upper[Math.floor(Math.random() * upper.length)]
+  pwd += lower[Math.floor(Math.random() * lower.length)]
+  pwd += digits[Math.floor(Math.random() * digits.length)]
+  pwd += special[Math.floor(Math.random() * special.length)]
+  for (let i = 4; i < 12; i++) {
+    pwd += all[Math.floor(Math.random() * all.length)]
+  }
+  return pwd.split('').sort(() => Math.random() - 0.5).join('')
+}
+
+async function setupPagarmeOnboarding({
+  tenant, plan, responsibleName, email,
+  document, phone, paymentMethod,
+}) {
+  const customer = await createCustomer({
+    name:     responsibleName,
+    email,
+    document: document ?? undefined,
+    phone:    phone    ?? undefined,
+    type:     'company',
+  })
+
+  const subscription = await createSubscription({
+    customerId:   customer.id,
+    planCode:     plan.name,
+    priceMonthly: parseFloat(plan.priceMonthly),
+    tenantSlug:   tenant.slug,
+    paymentMethod,
+  })
+
+  await prismaMaster.tenant.update({
+    where: { id: tenant.id },
+    data: {
+      pagarmeCustomerId:     customer.id,
+      pagarmeSubscriptionId: subscription.id,
+      billingStatus:         'trial',
+    },
+  })
+
+  console.log(`[onboarding] ✅ Pagar.me: ${tenant.slug} | sub: ${subscription.id}`)
+}

@@ -1,0 +1,33 @@
+# .dockerignore — Aura Platform
+# Exclui arquivos desnecessários do contexto de build Docker
+# Reduz o contexto de ~600MB para ~50MB
+
+# Dependências (reinstaladas no build)
+node_modules
+**/node_modules
+
+# Builds anteriores
+**/dist
+**/.next
+**/out
+**/.turbo
+
+# Dev / editor
+.git
+.gitignore
+**/.env
+**/.env.local
+**/.env.*.local
+**/.DS_Store
+**/*.log
+
+# Docs e scripts de dev
+docs
+README.md
+*.md
+
+# Credenciais (NUNCA no contexto de build)
+.credentials
+
+# Writable (logs temporários)
+/writable

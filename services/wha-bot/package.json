@@ -1,0 +1,16 @@
+{
+  "name": "@aura/wha-bot",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "dev": "node --watch src/index.js",
+    "build": "echo 'wha-bot: no build step'",
+    "start": "node src/index.js",
+    "lint": "eslint src"
+  },
+  "dependencies": {
+    "axios": "^1.7.3",
+    "dotenv": "^16.4.5",
+    "zod": "^3.23.8"
+  }
+}

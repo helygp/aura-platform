@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Aura Platform — API Docs</title>
+  <meta name="description" content="Documentação da API pública do ERP Aura Platform — integre seu sistema B2B em minutos." />
+  <style>
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    #scalar-mount { height: 100vh; }
+  </style>
+</head>
+<body>
+  <div id="scalar-mount"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference@latest/dist/browser/standalone.min.js" crossorigin></script>
+  <script>
+    Scalar.createApiReference('#scalar-mount', {
+      spec: {
+        url: 'https://api.aurabr.app/openapi.json',
+      },
+      theme: 'purple',
+      layout: 'modern',
+      darkMode: false,
+      defaultOpenAllTags: false,
+      metaData: {
+        title: 'Aura Platform API',
+        description: 'API pública do ERP Aura Platform para integrações B2B',
+        ogTitle: 'Aura Platform — Documentação da API',
+        ogDescription: 'Integre seu sistema ao ERP brasileiro com MCPs nativos',
+      },
+      servers: [
+        {
+          url: 'https://api.aurabr.app/v1/{slug}',
+          description: 'Produção',
+          variables: { slug: { default: 'acme', description: 'Slug do seu tenant' } },
+        },
+      ],
+      authentication: {
+        apiKey: {
+          name: 'x-api-key',
+          value: 'sua_api_key_aqui',
+        },
+      },
+      customCss: `
+        .scalar-app { --scalar-color-1: #6b21a8; --scalar-button-1: #7c3aed; }
+        .introduction-description h2 { color: #6b21a8; }
+      `,
+    })
+  </script>
+</body>
+</html>

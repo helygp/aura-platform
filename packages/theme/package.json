@@ -1,0 +1,21 @@
+{
+  "name": "@aura/theme",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "scripts": {
+    "lint": "eslint src",
+    "build": "echo 'theme: no build step'"
+  },
+  "dependencies": {
+    "next-themes": "^0.3.0"
+  },
+  "peerDependencies": {
+    "react": "^18.0.0",
+    "react-dom": "^18.0.0"
+  }
+}

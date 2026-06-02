@@ -1,0 +1,29 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - staging
+      - main
+
+jobs:
+  deploy:
+    name: Deploy ${{ github.ref_name }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: 31.97.151.162
+          username: root
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: 22
+          script: |
+            cd /projetos/aura-platform
+            bash deploy.sh ${{ github.ref_name }}
+
+      - name: Notificar resultado
+        if: always()
+        run: |
+          echo "Deploy ${{ github.ref_name }} - ${{ job.status }}"

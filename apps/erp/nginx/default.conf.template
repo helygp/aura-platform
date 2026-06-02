@@ -1,0 +1,31 @@
+server {
+    listen 80;
+    root /usr/share/nginx/html;
+    index index.html;
+
+    resolver 127.0.0.11 valid=10s ipv6=off;
+
+    location = /index.html {
+        add_header Cache-Control "no-store, no-cache, must-revalidate";
+        expires 0;
+    }
+    location /assets/ {
+        add_header Cache-Control "public, max-age=31536000, immutable";
+    }
+    location ~ ^/(auth|api|store|master|onboarding|billing)/ {
+        set $upstream http://api-SLUG:3001;
+        proxy_pass $upstream;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header Cookie $http_cookie;
+        proxy_pass_header Set-Cookie;
+        proxy_cookie_domain api-SLUG $host;
+        proxy_cookie_path / /;
+        proxy_connect_timeout 5s;
+        proxy_read_timeout 30s;
+    }
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
