@@ -170,7 +170,7 @@ export function OrdersPage() {
     filters, setFilters, page, setPage,
     refetch, createOrder, updateStatus,
     stats, PAGE_SIZE,
-    SKUS_MOCK, CUSTOMERS_MOCK,
+    skus, customers,
   } = useOrders()
 
   const [detailOrder, setDetailOrder] = useState(null)
@@ -365,8 +365,8 @@ export function OrdersPage() {
         open={formOpen}
         onClose={() => setFormOpen(false)}
         onSave={handleCreate}
-        customers={CUSTOMERS_MOCK}
-        skus={SKUS_MOCK}
+        customers={customers}
+        skus={skus}
       />
     </div>
   )

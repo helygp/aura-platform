@@ -14,8 +14,8 @@
  *   createOrder   (payload) => Promise
  *   updateStatus  (orderId, newStatus, note?) => Promise
  *   getOrder      (orderId) => object | null   (para detalhe)
- *
- * Mock enquanto /api/orders não existe.
+ *   customers     — clientes reais da API
+ *   skus          — SKUs reais da API (achatados de products)
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
@@ -23,7 +23,7 @@ import { ORDER_STATUS, ORDER_CHANNEL, calcOrderTotals } from './ordersTypes.js'
 
 const PAGE_SIZE = 12
 
-/* ─── Mock ─── */
+/* ─── Dados estáticos para fallback de pedidos mockados ─── */
 const CUSTOMERS_MOCK = [
   { id: 'c1', name: 'Distribuidora São Paulo Ltda',  whatsapp: '11999990001' },
   { id: 'c2', name: 'Atacado Norte EIRELI',           whatsapp: '11999990002' },
@@ -32,11 +32,11 @@ const CUSTOMERS_MOCK = [
 ]
 
 const SKUS_MOCK = [
-  { id: 'sku-1', code: 'PROD-001-P-PRE', productName: 'Tênis Runner Pro',    attributes: { Tamanho: 'P', Cor: 'Preto'  }, priceWholesale: 89.90 },
-  { id: 'sku-2', code: 'PROD-001-M-PRE', productName: 'Tênis Runner Pro',    attributes: { Tamanho: 'M', Cor: 'Preto'  }, priceWholesale: 89.90 },
-  { id: 'sku-3', code: 'PROD-002-UN',    productName: 'Camiseta Básica',     attributes: {},                              priceWholesale: 39.90 },
-  { id: 'sku-4', code: 'PROD-003-M-AZU', productName: 'Bolsa Couro Clássica',attributes: { Tamanho: 'M', Cor: 'Azul'   }, priceWholesale: 149.90 },
-  { id: 'sku-5', code: 'PROD-004-G-BRA', productName: 'Calça Jeans Slim',   attributes: { Tamanho: 'G', Cor: 'Branco' }, priceWholesale: 79.90 },
+  { id: 'sku-1', code: 'PROD-001-P-PRE', productName: 'Tênis Runner Pro',     attributes: { Tamanho: 'P', Cor: 'Preto'  }, priceWholesale: 89.90 },
+  { id: 'sku-2', code: 'PROD-001-M-PRE', productName: 'Tênis Runner Pro',     attributes: { Tamanho: 'M', Cor: 'Preto'  }, priceWholesale: 89.90 },
+  { id: 'sku-3', code: 'PROD-002-UN',    productName: 'Camiseta Básica',      attributes: {},                              priceWholesale: 39.90 },
+  { id: 'sku-4', code: 'PROD-003-M-AZU', productName: 'Bolsa Couro Clássica', attributes: { Tamanho: 'M', Cor: 'Azul'   }, priceWholesale: 149.90 },
+  { id: 'sku-5', code: 'PROD-004-G-BRA', productName: 'Calça Jeans Slim',    attributes: { Tamanho: 'G', Cor: 'Branco' }, priceWholesale: 79.90 },
 ]
 
 const STATUSES = Object.values(ORDER_STATUS)
@@ -70,7 +70,6 @@ function buildMockOrders() {
     const status = STATUSES[i % STATUSES.length]
     const createdAt = new Date(Date.now() - i * 3600000 * 8).toISOString()
 
-    // Histórico de status
     const history = [
       { status: ORDER_STATUS.PENDING, note: 'Pedido criado.', user: 'sistema', at: createdAt },
     ]
@@ -103,7 +102,40 @@ export function useOrders() {
   const [filters,   setFiltersRaw] = useState({
     search: '', status: '', channel: '', dateFrom: '', dateTo: '',
   })
-  const [page, setPage] = useState(1)
+  const [page,      setPage]      = useState(1)
+  const [customers, setCustomers] = useState([])
+  const [skus,      setSkus]      = useState([])
+
+  /* ─── Busca clientes e produtos reais ─── */
+  const fetchCatalog = useCallback(async () => {
+    try {
+      const [custRes, prodRes] = await Promise.all([
+        fetch('/api/customers', { credentials: 'include' }),
+        fetch('/api/products',  { credentials: 'include' }),
+      ])
+      if (custRes.ok) {
+        const { customers: list } = await custRes.json()
+        setCustomers(list ?? [])
+      }
+      if (prodRes.ok) {
+        const { products } = await prodRes.json()
+        const skuList = (products ?? []).flatMap(p =>
+          (p.skus ?? []).map(sku => ({
+            id:             sku.id,
+            code:           sku.code,
+            productName:    p.name,
+            attributes:     sku.attributes ?? {},
+            priceWholesale: sku.priceWholesale ?? 0,
+          }))
+        )
+        setSkus(skuList)
+      }
+    } catch {
+      // silently fail — formulário mostra listas vazias
+    }
+  }, [])
+
+  useEffect(() => { fetchCatalog() }, [fetchCatalog])
 
   const fetchAll = useCallback(async () => {
     setIsLoading(true)
@@ -234,7 +266,7 @@ export function useOrders() {
     getOrder,
     stats,
     PAGE_SIZE,
-    SKUS_MOCK,      // expõe para o formulário
-    CUSTOMERS_MOCK, // expõe para o formulário
+    customers,
+    skus,
   }
 }
