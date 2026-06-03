@@ -170,7 +170,7 @@ export function OrdersPage() {
     filters, setFilters, page, setPage,
     refetch, createOrder, updateStatus,
     stats, PAGE_SIZE,
-    skus, customers,
+    customers, skus,
   } = useOrders()
 
   const [detailOrder, setDetailOrder] = useState(null)
@@ -181,7 +181,6 @@ export function OrdersPage() {
 
   const handleStatusChange = useCallback(async (orderId, newStatus) => {
     await updateStatus(orderId, newStatus)
-    // Atualiza o drawer com os dados frescos
     setDetailOrder(prev => prev?.id === orderId
       ? {
           ...prev,
@@ -243,7 +242,6 @@ export function OrdersPage() {
 
       {/* ── Filtros ── */}
       <Card className="p-3 space-y-2">
-        {/* Linha 1: busca + limpar */}
         <div className="flex gap-2">
           <div className="flex-1 relative">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)] pointer-events-none" />
@@ -255,7 +253,6 @@ export function OrdersPage() {
               className="w-full h-9 pl-8 pr-3 rounded-lg text-sm bg-[var(--color-bg-subtle)] border border-[var(--color-border)] text-[var(--color-text)] placeholder:text-[var(--color-text-disabled)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:bg-[var(--color-bg)]"
             />
           </div>
-          {/* Canal */}
           <select
             value={filters.channel}
             onChange={e => setFilters({ channel: e.target.value })}
@@ -266,7 +263,6 @@ export function OrdersPage() {
               <option key={ch} value={ch}>{CHANNEL_META[ch]?.label}</option>
             ))}
           </select>
-          {/* Datas */}
           <input
             type="date"
             value={filters.dateFrom}
@@ -289,7 +285,6 @@ export function OrdersPage() {
           )}
         </div>
 
-        {/* Linha 2: pills de status */}
         <div className="flex gap-1.5 flex-wrap">
           {STATUS_FILTER_OPTIONS.map(opt => (
             <button
@@ -309,7 +304,7 @@ export function OrdersPage() {
         </div>
       </Card>
 
-      {/* ── Conte��do ── */}
+      {/* ── Conteúdo ── */}
       {isLoading ? (
         <OrdersSkeleton />
       ) : orders.length === 0 ? (

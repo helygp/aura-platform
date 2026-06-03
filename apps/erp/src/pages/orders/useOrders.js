@@ -1,21 +1,5 @@
 /**
  * pages/orders/useOrders.js
- *
- * Hook de dados do módulo de pedidos.
- *
- * Retorna:
- *   orders        — página atual (filtrado + paginado)
- *   total         — total filtrado
- *   totalPages
- *   isLoading
- *   filters / setFilters  — { search, status, channel, dateFrom, dateTo }
- *   page / setPage
- *   refetch
- *   createOrder   (payload) => Promise
- *   updateStatus  (orderId, newStatus, note?) => Promise
- *   getOrder      (orderId) => object | null   (para detalhe)
- *   customers     — clientes reais da API
- *   skus          — SKUs reais da API (achatados de products)
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
@@ -23,7 +7,7 @@ import { ORDER_STATUS, ORDER_CHANNEL, calcOrderTotals } from './ordersTypes.js'
 
 const PAGE_SIZE = 12
 
-/* ─── Dados estáticos para fallback de pedidos mockados ─── */
+/* ─── Fallback para pedidos mockados (quando /api/orders falha) ─── */
 const CUSTOMERS_MOCK = [
   { id: 'c1', name: 'Distribuidora São Paulo Ltda',  whatsapp: '11999990001' },
   { id: 'c2', name: 'Atacado Norte EIRELI',           whatsapp: '11999990002' },
@@ -184,7 +168,6 @@ export function useOrders() {
     setPage(1)
   }, [])
 
-  /* Stats para o header */
   const stats = useMemo(() => ({
     total:    allOrders.length,
     pending:  allOrders.filter(o => o.status === ORDER_STATUS.PENDING).length,
