@@ -166,7 +166,7 @@ function Pagination({ page, totalPages, onPage, total, pageSize }) {
 /* ─── Página ─── */
 export function OrdersPage() {
   const {
-    orders, total, totalPages, isLoading,
+    orders, total, totalPages, isLoading, error,
     filters, setFilters, page, setPage,
     refetch, createOrder, updateStatus,
     stats, PAGE_SIZE,
