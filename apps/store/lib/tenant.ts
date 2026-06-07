@@ -51,6 +51,7 @@ export interface TenantTheme {
   fontSans:      string
 
   // Conteúdo da home
+  whatsapp:      string | null
   heroTitle:     string | null
   heroSubtitle:  string | null
   heroCta:       string | null
@@ -236,6 +237,7 @@ export const DEFAULT_THEME: TenantTheme = {
   themeVariant:  'verde',
   radius:        '0.875rem',
   fontSans:      'Hanken Grotesk',
+  whatsapp:      null,
   heroTitle:     null,
   heroSubtitle:  null,
   heroCta:       'Ver catálogo',
