@@ -45,7 +45,7 @@ const DEFAULT_COLOR_HEX: Record<string, string> = {
 
 // ─── Ordenação de tamanhos por padrão do mercado têxtil ───────────────────────
 
-const SIZE_LETTER_ORDER = ['PP', 'P', 'M', 'G', 'GG', 'GGG', 'GGGG', 'EG', 'XGG', 'XG']
+const SIZE_LETTER_ORDER = ['PP', 'P', 'M', 'G', 'GG', 'XG']
 
 /**
  * Ordena tamanhos conforme padrão do mercado têxtil:
@@ -54,7 +54,7 @@ const SIZE_LETTER_ORDER = ['PP', 'P', 'M', 'G', 'GG', 'GGG', 'GGGG', 'EG', 'XGG'
  * - Misto           → numéricos primeiro, letras depois
  */
 function sortSizes(raw: string[]): string[] {
-  const isNum = (s: string) => /^d+$/.test(s)
+  const isNum = (s: string) => /^\d+$/.test(s)
   const nums    = raw.filter(isNum).sort((a, b) => Number(a) - Number(b))
   const letters = raw
     .filter(s => !isNum(s))

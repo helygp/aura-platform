@@ -74,7 +74,16 @@ separationSheetRouter.get('/', async (req, res) => {
       ORDER BY
         p.name,
         s.attributes->>'Cor',
-        (s.attributes->>'Tamanho')::text,
+        CASE WHEN (s.attributes->>'Tamanho') ~ '^[0-9]+$'
+             THEN (s.attributes->>'Tamanho')::int
+             ELSE 99999
+        END,
+        CASE s.attributes->>'Tamanho'
+          WHEN 'PP' THEN 1 WHEN 'P'  THEN 2 WHEN 'M'  THEN 3
+          WHEN 'G'  THEN 4 WHEN 'GG' THEN 5 WHEN 'XG' THEN 6
+          ELSE 99
+        END,
+        s.attributes->>'Tamanho',
         s.code,
         o.number
     `, params)

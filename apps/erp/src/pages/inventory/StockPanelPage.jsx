@@ -30,6 +30,16 @@ function authFetch(url) {
 const PREF_COLS = ['Cor', 'cor', 'COLOR', 'Color', 'Estampa']
 const PREF_ROWS = ['Tamanho', 'tamanho', 'Size', 'size', 'Tam', 'tam']
 
+const _SZ_LETTERS = ['PP','P','M','G','GG','XG']
+function _szKey(v) {
+  const s = String(v).trim()
+  if (/^[0-9]+(\.[0-9]+)?$/.test(s)) return 'A' + String(parseFloat(s) + 1e5).padStart(12,'0')
+  const i = _SZ_LETTERS.indexOf(s.toUpperCase())
+  return 'B' + (i === -1 ? s.toUpperCase() : String(i).padStart(4,'0'))
+}
+function _sortSizes(arr) { return [...arr].sort((a,b)=>{ const ka=_szKey(a),kb=_szKey(b); return ka<kb?-1:ka>kb?1:0 }) }
+function _sortColors(arr){ return [...arr].sort((a,b)=>String(a).localeCompare(String(b),'pt-BR')) }
+
 function pickAttrKeys(keys) {
   const col = keys.find(k => PREF_COLS.includes(k))
            ?? keys.find(k => !PREF_ROWS.includes(k))
@@ -70,7 +80,7 @@ function adaptProduct(p) {
 
   if (!rowKey) {
     const colors = ['Qtd']
-    const sizes  = [...new Set(skus.map(s => String(s.attributes[colKey] ?? s.code ?? '?')))]
+    const sizes  = _sortSizes([...new Set(skus.map(s => String(s.attributes[colKey] ?? s.code ?? '?')))])
     const stock  = { Qtd: {} }
     sizes.forEach(sz => { stock.Qtd[sz] = 0 })
     skus.forEach(s => {
@@ -81,8 +91,8 @@ function adaptProduct(p) {
   }
 
   // grade colKey (Cor) × rowKey (Tamanho)
-  const colors = [...new Set(skus.map(s => String(s.attributes[colKey] ?? '?')))]
-  const sizes  = [...new Set(skus.map(s => String(s.attributes[rowKey] ?? '?')))]
+  const colors = _sortColors([...new Set(skus.map(s => String(s.attributes[colKey] ?? '?')))])
+  const sizes  = _sortSizes([...new Set(skus.map(s => String(s.attributes[rowKey] ?? '?')))])
   const stock  = {}
   colors.forEach(c => { stock[c] = {}; sizes.forEach(sz => { stock[c][sz] = 0 }) })
   skus.forEach(s => {

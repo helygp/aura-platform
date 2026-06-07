@@ -29,7 +29,7 @@ export const DEFAULT_ATTRIBUTES = ['Cor', 'Tamanho', 'Material', 'Voltagem']
 
 /* ─── Valores padrão por atributo ─── */
 export const DEFAULT_ATTRIBUTE_VALUES = {
-  Tamanho:   ['PP', 'P', 'M', 'G', 'GG', 'XGG'],
+  Tamanho:   ['PP', 'P', 'M', 'G', 'GG', 'XG'],
   Cor:       ['Preto', 'Branco', 'Azul', 'Vermelho', 'Verde', 'Amarelo', 'Cinza'],
   Material:  ['Couro', 'Tecido', 'Sintético', 'Borracha'],
   Voltagem:  ['110V', '220V', 'Bivolt'],

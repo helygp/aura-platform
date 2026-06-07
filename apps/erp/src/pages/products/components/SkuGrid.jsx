@@ -38,6 +38,22 @@ function CellInput({ value, onChange, placeholder, type = 'text', prefix }) {
   )
 }
 
+/* ── Sort helpers (Cor primário, Tamanho secundário) ── */
+const _SG_COLS = ['Cor','cor','COLOR','Color','Estampa']
+const _SG_ROWS = ['Tamanho','tamanho','Size','size','Tam','tam']
+const _SG_SZ   = ['PP','P','M','G','GG','XG']
+function _sgSzKey(v) {
+  const s = String(v).trim()
+  if (/^[0-9]+(\.[0-9]+)?$/.test(s)) return 'A' + String(parseFloat(s)+1e5).padStart(12,'0')
+  const i = _SG_SZ.indexOf(s.toUpperCase())
+  return 'B' + (i === -1 ? s.toUpperCase() : String(i).padStart(4,'0'))
+}
+function _sgSortKey(sku, colKeys, rowKeys) {
+  const c = colKeys.map(k => String(sku.attributes?.[k] ?? '')).join('|')
+  const r = rowKeys.map(k => _sgSzKey(sku.attributes?.[k] ?? '')).join('|')
+  return c + '~~' + r
+}
+
 export function SkuGrid({ skus, onChange }) {
   const updateSku = useCallback((index, field, value) => {
     const next = skus.map((sku, i) =>
@@ -45,6 +61,18 @@ export function SkuGrid({ skus, onChange }) {
     )
     onChange(next)
   }, [skus, onChange])
+
+  /* Ordena exibição: Cor (primário) → Tamanho (secundário) */
+  const _allKeys  = skus.length ? [...new Set(skus.flatMap(s => Object.keys(s.attributes ?? {})))] : []
+  const _colKeys  = _allKeys.filter(k => _SG_COLS.includes(k))
+  const _rowKeys  = _allKeys.filter(k => _SG_ROWS.includes(k))
+  const _otherKeys = _allKeys.filter(k => !_SG_COLS.includes(k) && !_SG_ROWS.includes(k))
+  const _ckFull   = [..._colKeys, ..._otherKeys]
+  const sortedSkus = [...(skus ?? [])].sort((a,b) => {
+    const ka = _ckFull.map(k=>String(a.attributes?.[k]??'')).join('|') + '~~' + _rowKeys.map(k=>_sgSzKey(a.attributes?.[k]??'')).join('|')
+    const kb = _ckFull.map(k=>String(b.attributes?.[k]??'')).join('|') + '~~' + _rowKeys.map(k=>_sgSzKey(b.attributes?.[k]??'')).join('|')
+    return ka < kb ? -1 : ka > kb ? 1 : 0
+  })
 
   if (!skus?.length) {
     return (
@@ -83,7 +111,7 @@ export function SkuGrid({ skus, onChange }) {
             </tr>
           </thead>
           <tbody className="divide-y divide-[var(--color-border)]">
-            {skus.map((sku, i) => (
+            {sortedSkus.map((sku, i) => (
               <tr key={sku._tempId ?? sku.id ?? i} className="bg-[var(--color-bg)] hover:bg-[var(--color-bg-subtle)] transition-colors">
                 {/* Colunas de atributo — read-only */}
                 {attrKeys.map(k => (
@@ -95,7 +123,7 @@ export function SkuGrid({ skus, onChange }) {
                 <td className="px-3 py-2 min-w-[140px]">
                   <CellInput
                     value={sku.code}
-                    onChange={v => updateSku(i, 'code', v)}
+                    onChange={v => updateSku(skus.indexOf(sku), 'code', v)}
                     placeholder="SKU-001"
                   />
                 </td>
@@ -103,7 +131,7 @@ export function SkuGrid({ skus, onChange }) {
                 <td className="px-3 py-2 min-w-[110px]">
                   <CellInput
                     value={sku.priceWholesale}
-                    onChange={v => updateSku(i, 'priceWholesale', v)}
+                    onChange={v => updateSku(skus.indexOf(sku), 'priceWholesale', v)}
                     placeholder="0,00"
                     type="number"
                     prefix="R$"
@@ -113,7 +141,7 @@ export function SkuGrid({ skus, onChange }) {
                 <td className="px-3 py-2 min-w-[90px]">
                   <CellInput
                     value={sku.stockMin}
-                    onChange={v => updateSku(i, 'stockMin', v)}
+                    onChange={v => updateSku(skus.indexOf(sku), 'stockMin', v)}
                     placeholder="0"
                     type="number"
                   />

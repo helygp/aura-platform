@@ -16,34 +16,60 @@ import React, { useState, useMemo } from 'react'
 import { Search, Plus, ChevronDown, ChevronUp, ShoppingCart } from 'lucide-react'
 import { fmtBRL } from '../ordersTypes.js'
 
-/* ── Detecta os dois eixos da grade (atributos únicos) ── */
+/* ── Constantes de ordenação ── */
+const _GP_COLS = ['Cor', 'cor', 'COLOR', 'Color', 'Estampa']   // → colunas (axisB)
+const _GP_ROWS = ['Tamanho', 'tamanho', 'Size', 'size', 'Tam', 'tam']  // → linhas (axisA)
+const _GP_SZ   = ['PP','P','M','G','GG','XG']
+
+function _gpSzKey(v) {
+  const s = String(v).trim()
+  if (/^[0-9]+(\.[0-9]+)?$/.test(s)) return 'A' + String(parseFloat(s) + 1e5).padStart(12,'0')
+  const i = _GP_SZ.indexOf(s.toUpperCase())
+  return 'B' + (i === -1 ? s.toUpperCase() : String(i).padStart(4,'0'))
+}
+function _gpSortSizes(arr){ return [...arr].sort((a,b)=>{ const ka=_gpSzKey(a),kb=_gpSzKey(b); return ka<kb?-1:ka>kb?1:0 }) }
+function _gpSortColors(arr){ return [...arr].sort((a,b)=>String(a).localeCompare(String(b),'pt-BR')) }
+
+/* ── Detecta os dois eixos da grade por nome (Cor → colunas, Tamanho → linhas) ── */
 function detectAxes(skus) {
   const attrNames = [...new Set(skus.flatMap(s => Object.keys(s.attributes ?? {})))]
   if (attrNames.length === 0) return { axisA: null, axisB: null }
   if (attrNames.length === 1) return { axisA: attrNames[0], axisB: null }
 
-  // Eixo com mais valores = linhas; eixo com menos = colunas
+  // Detecção por nome: Cor → axisB (colunas), Tamanho → axisA (linhas)
+  const colName = attrNames.find(n => _GP_COLS.includes(n))
+  const rowName = attrNames.find(n => _GP_ROWS.includes(n))
+  if (colName && rowName) return { axisA: rowName, axisB: colName }
+  if (colName) {
+    const other = attrNames.find(n => n !== colName) ?? null
+    return { axisA: other ?? colName, axisB: colName }
+  }
+  if (rowName) {
+    const other = attrNames.find(n => n !== rowName) ?? null
+    return { axisA: rowName, axisB: other ?? rowName }
+  }
+  // Fallback: mais valores = linhas
   const counts = {}
-  attrNames.forEach(n => {
-    counts[n] = new Set(skus.map(s => s.attributes[n]).filter(Boolean)).size
-  })
-  const sorted = attrNames.sort((a, b) => counts[b] - counts[a])
+  attrNames.forEach(n => { counts[n] = new Set(skus.map(s => s.attributes[n]).filter(Boolean)).size })
+  const sorted = [...attrNames].sort((a, b) => counts[b] - counts[a])
   return { axisA: sorted[0], axisB: sorted[1] }
 }
-
 function GradeMatrix({ product, onAdd, addedIds }) {
   const skus = product.skus ?? []
   const { axisA, axisB } = useMemo(() => detectAxes(skus), [skus])
   const [qtys, setQtys] = useState({})  // skuId → qty string
 
-  const valuesA = useMemo(() =>
-    axisA ? [...new Set(skus.map(s => s.attributes?.[axisA]).filter(Boolean))] : [],
-  [skus, axisA])
+  const valuesA = useMemo(() => {
+    if (!axisA) return []
+    const raw = [...new Set(skus.map(s => s.attributes?.[axisA]).filter(Boolean))]
+    return _GP_ROWS.includes(axisA) ? _gpSortSizes(raw) : _gpSortColors(raw)
+  }, [skus, axisA])
 
-  const valuesB = useMemo(() =>
-    axisB ? [...new Set(skus.map(s => s.attributes?.[axisB]).filter(Boolean))] : [''],
-  [skus, axisB])
-
+  const valuesB = useMemo(() => {
+    if (!axisB) return ['']
+    const raw = [...new Set(skus.map(s => s.attributes?.[axisB]).filter(Boolean))]
+    return _GP_COLS.includes(axisB) ? _gpSortColors(raw) : _gpSortSizes(raw)
+  }, [skus, axisB])
   const skuMap = useMemo(() => {
     const m = {}
     skus.forEach(s => {

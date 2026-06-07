@@ -54,19 +54,24 @@ function Card({ icon: Icon, label, value, color, sub }) {
 
 
 /* ── Ordem predefinida para tamanhos comuns ── */
-const SIZE_ORDER = ['pp','p','m','g','gg','xg','xgg','exg','2xg','3xg','4xg',
-  '34','36','38','40','42','44','46','48','50','52','54','56','58','60',
-  '1','2','3','4','5','6','7','8','10','12','14','16','18','u','un','unico','único']
+
+/* ── Ordem canônica: Cor (primário) → Tamanho (secundário) ── */
+const _PREF_COLS = ['Cor', 'cor', 'COLOR', 'Color', 'Estampa']
+const _PREF_ROWS = ['Tamanho', 'tamanho', 'Size', 'size', 'Tam', 'tam']
+const _SZ_LETTERS = ['pp', 'p', 'm', 'g', 'gg', 'xg']
 
 function attrSortValue(val) {
-  if (val == null) return '￿'
+  if (val == null) return 'zzzz'
   const norm = String(val).toLowerCase().trim()
-  const idx  = SIZE_ORDER.indexOf(norm)
-  if (idx !== -1) return String(idx).padStart(4, '0')
-  // numeric?
-  const n = parseFloat(norm)
-  if (!isNaN(n)) return String(n + 10000).padStart(10, '0')
-  return norm
+  // Numérico → ordena crescente, prefixo 'A' para vir antes de letras
+  if (/^[0-9]+(\.[0-9]+)?$/.test(norm)) {
+    return 'A' + String(parseFloat(norm) + 1e5).padStart(12, '0')
+  }
+  // Letra de tamanho canônica (PP, P, M, G, GG, XG)
+  const idx = _SZ_LETTERS.indexOf(norm)
+  if (idx !== -1) return 'B' + String(idx).padStart(4, '0')
+  // Demais: ordem alfabética
+  return 'B' + norm
 }
 
 /* ── Linha SKU editável ── */
@@ -168,20 +173,17 @@ export function ProductDetailPage() {
     return { total, value, critical, zero }
   }, [skus])
 
-  /* SKUs ordenados: atributos de tamanho (SIZE_ORDER) primeiro, demais depois */
+
+  /* SKUs ordenados: Cor (primário) → Tamanho (secundário) */
   const sortedSkus = useMemo(() => {
     if (!skus.length) return skus
     const allKeys = [...new Set(skus.flatMap(s => Object.keys(s.attributes ?? {})))]
 
-    // Separar chaves de tamanho (valores existem no SIZE_ORDER ou são números) das demais
-    const isSizeKey = (k) => skus.some(s => {
-      const v = String(s.attributes?.[k] ?? '').toLowerCase().trim()
-      return SIZE_ORDER.includes(v) || (!isNaN(parseFloat(v)) && v !== '')
-    })
-    const sizeKeys  = allKeys.filter(isSizeKey)
-    const otherKeys = allKeys.filter(k => !isSizeKey(k))
-    // Tamanho vem primeiro, depois cor/outros atributos
-    const sortKeys  = [...sizeKeys, ...otherKeys]
+    // Chaves de cor (primário), tamanho (secundário), demais (terciário)
+    const colorKeys = allKeys.filter(k => _PREF_COLS.includes(k))
+    const sizeKeys  = allKeys.filter(k => _PREF_ROWS.includes(k))
+    const otherKeys = allKeys.filter(k => !_PREF_COLS.includes(k) && !_PREF_ROWS.includes(k))
+    const sortKeys  = [...colorKeys, ...sizeKeys, ...otherKeys]
 
     return [...skus].sort((a, b) => {
       for (const k of sortKeys) {
