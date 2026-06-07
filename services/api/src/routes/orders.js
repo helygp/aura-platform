@@ -524,6 +524,7 @@ ordersRouter.delete('/:id/items/:itemId', authorize('admin','operador'), async (
 function normalizeOrder(o) {
   return {
     id:               o.id,
+    ref:              o.ref ?? null,
     number:           o.number,
     customerId:       o.customer_id,
     customerName:     o.resolved_customer_name ?? o.customer_name,

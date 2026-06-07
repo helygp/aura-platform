@@ -82,7 +82,9 @@ export function calcOrderTotals(items) {
 }
 
 /* ─── Gera número de pedido legível ─── */
-export function orderNumber(id, number) {
-  if (number != null) return `#${number}`
-  return `#${String(id).slice(-6).toUpperCase()}`
+// ref: presente em pedidos da loja (ex: FM070626-1042) — exibido como complemento
+export function orderNumber(id, number, ref) {
+  const base = number != null ? `#${number}` : `#${String(id).slice(-6).toUpperCase()}`
+  if (ref) return `${base} · ${ref}`
+  return base
 }

@@ -65,20 +65,26 @@ storeOrdersRouter.post('/', optionalBuyerAuth, async (req, res) => {
       }
     }
 
-    // ── Ref ──
-    const { rows: [{ ref }] } = await client.query(
-      `SELECT 'ord_' || encode(gen_random_bytes(8), 'hex') AS ref`
-    )
-
     const customerId   = req.buyer?.id ?? null
     const customerName = req.buyer?.name ?? ''
 
-    // ── Insere pedido ──
+    // ── Insere pedido (ref calculado após obter o number sequencial do ERP) ──
     const { rows: [order] } = await client.query(`
-      INSERT INTO orders (ref, customer_id, customer_name, channel, status, total, delivery_address, notes, payment_method)
-      VALUES ($1, $2, $3, 'loja', 'pendente', $4, $5, $6, $7)
-      RETURNING id, ref, created_at
-    `, [ref, customerId, customerName, total, deliveryAddress ?? null, notes ?? '', paymentMethod])
+      INSERT INTO orders (customer_id, customer_name, channel, status, total, delivery_address, notes, payment_method)
+      VALUES ($1, $2, 'loja', 'pendente', $3, $4, $5, $6)
+      RETURNING id, number, created_at
+    `, [customerId, customerName, total, deliveryAddress ?? null, notes ?? '', paymentMethod])
+
+    // ── Ref legível: {INICIAIS}{DDMMYY}-{number_erp}
+    //    Ex: FM070626-1042  (Fabricio Melo, 07/06/26, pedido #1042)
+    const _initials = (customerName.trim().split(/\s+/).slice(0, 2).map(w => w[0].toUpperCase()).join('')) || 'LJ'
+    const _now = new Date()
+    const _dd  = String(_now.getDate()).padStart(2, '0')
+    const _mm  = String(_now.getMonth() + 1).padStart(2, '0')
+    const _yy  = String(_now.getFullYear()).slice(-2)
+    const ref  = `${_initials}${_dd}${_mm}${_yy}-${order.number}`
+
+    await client.query('UPDATE orders SET ref = $1 WHERE id = $2', [ref, order.id])
 
     // ── Itens + estoque ──
     for (const { sku, quantity } of orderItems) {
@@ -123,7 +129,7 @@ storeOrdersRouter.post('/', optionalBuyerAuth, async (req, res) => {
 storeOrdersRouter.get('/:ref', async (req, res) => {
   try {
     const { ref } = req.params
-    if (!/^ord_[0-9a-f]{16}$/.test(ref))
+    if (!/^[A-Z]{1,4}\d{6}-\d+$/.test(ref))
       return res.status(404).json({ error: 'Pedido não encontrado.' })
 
     const { rows: [order] } = await query(
@@ -196,7 +202,7 @@ storeOrdersRouter.get('/', authenticateBuyer, async (req, res) => {
 /* ── PATCH /store/orders/:ref/cancel ────────────────────────────────────────── */
 storeOrdersRouter.patch('/:ref/cancel', async (req, res) => {
   const { ref } = req.params
-  if (!/^ord_[0-9a-f]{16}$/.test(ref))
+  if (!/^[A-Z]{1,4}\d{6}-\d+$/.test(ref))
     return res.status(404).json({ error: 'Pedido não encontrado.' })
 
   const client = await getClient(req.tenantSlug)

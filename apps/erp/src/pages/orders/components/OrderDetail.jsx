@@ -96,7 +96,7 @@ function printOrder(order) {
   const { subtotal } = calcOrderTotals(order.items)
   const win = window.open('', '_blank')
   win.document.write(`
-    <html><head><title>Pedido ${orderNumber(order.id, order.number)}</title>
+    <html><head><title>Pedido ${orderNumber(order.id, order.number, order.ref)}</title>
     <style>
       body { font-family: sans-serif; padding: 24px; max-width: 480px; margin: 0 auto; }
       h1 { font-size: 18px; margin-bottom: 4px; }
@@ -107,7 +107,7 @@ function printOrder(order) {
       .total { font-size: 15px; font-weight: bold; text-align: right; margin-top: 8px; }
       .footer { margin-top: 24px; font-size: 11px; color: #999; }
     </style></head><body>
-    <h1>Pedido ${orderNumber(order.id, order.number)}</h1>
+    <h1>Pedido ${orderNumber(order.id, order.number, order.ref)}</h1>
     <div class="sub">${order.customerName} · ${fmtDate(order.createdAt)}</div>
     <table>
       <tr><th>Produto</th><th>Qtd</th><th>Unit.</th><th>Total</th></tr>
@@ -132,7 +132,7 @@ function printOrder(order) {
 /* ── Compõe mensagem de confirmação WhatsApp ── */
 function composeWhatsAppMessage(order) {
   const { subtotal } = calcOrderTotals(order.items)
-  const num  = orderNumber(order.id, order.number)
+  const num  = orderNumber(order.id, order.number, order.ref)
   const date = fmtDate(order.createdAt)
 
   const itemLines = (order.items ?? []).map(i => {
@@ -254,7 +254,7 @@ export function OrderDetail({ order, onClose, onStatusChange, onItemCancel }) {
             <div className="flex items-start justify-between gap-3 p-4 border-b border-[var(--color-border)] shrink-0">
               <div>
                 <div className="flex items-center gap-2 mb-1">
-                  <span className="text-lg font-bold text-[var(--color-text)]">{orderNumber(order.id, order.number)}</span>
+                  <span className="text-lg font-bold text-[var(--color-text)]">{orderNumber(order.id, order.number, order.ref)}</span>
                   <span className="text-sm text-[var(--color-text-muted)]">{channelMeta.icon} {channelMeta.label}</span>
                 </div>
                 <div className="flex items-center gap-2">
