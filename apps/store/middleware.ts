@@ -1,67 +1,63 @@
 /**
  * middleware.ts
- * Tarefa 2 — Middleware de tenant + tema
  *
- * Responsabilidades:
- * 1. Lê o Host header e extrai o slug do tenant
- * 2. Injeta o slug em dois lugares:
- *    - Header `x-tenant-slug`  → lido pelos RSC (layout, pages)
- *    - Cookie `tenant-slug`    → lido por Client Components sem round-trip
- * 3. NÃO busca o tema aqui — busca cabe ao layout RSC (tem cache do Next.js)
- *    O middleware é Edge Runtime: sem Node.js APIs, sem I/O pesado.
+ * 1. Extrai slug do tenant do Host header → injeta em x-tenant-slug + cookie
+ * 2. Protege rotas autenticadas da loja:
+ *    /pedido/novo, /conta/pedidos, /conta/perfil → requer cookie store_access
+ *    Sem cookie → redirect /conta/login?redirect=<URL>
  *
- * Fluxo completo sem flash de estilo:
- *   Request → middleware (slug) → layout RSC (tema via API) → CSS vars no <head> → HTML
+ * Edge Runtime: verificação JWT completa ocorre na rota/server component.
+ * Aqui apenas checamos presença do cookie como gate rápido.
  */
 
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 
-/**
- * Extrai o slug do tenant do hostname.
- * Duplicado aqui (sem import) porque o Edge Runtime não garante
- * tree-shaking de módulos com process.env condicionais.
- *
- * loja.acme.aurabr.app  → "acme"
- * loja.acme.localhost   → "acme"  (dev)
- * localhost / outros    → NEXT_PUBLIC_DEFAULT_TENANT_SLUG ?? "demo"
- */
+/** Rotas que exigem login do comprador */
+const AUTH_REQUIRED = [
+  '/pedido/novo',
+  '/conta/pedidos',
+  '/conta/perfil',
+]
+
 function extractSlug(hostname: string): string {
   const host = hostname.split(':')[0]
-
   const prod = host.match(/^loja\.([^.]+)\.aurabr\.app$/)
   if (prod) return prod[1]
-
   const dev = host.match(/^loja\.([^.]+)\.localhost$/)
   if (dev) return dev[1]
-
   return process.env.NEXT_PUBLIC_DEFAULT_TENANT_SLUG ?? 'demo'
 }
 
 export function middleware(request: NextRequest) {
   const hostname = request.headers.get('host') ?? ''
   const slug = extractSlug(hostname)
+  const { pathname, search } = request.nextUrl
 
-  // Clona os headers de request para passar o slug adiante para RSC
+  // ── Auth gate ──────────────────────────────────────────────────────────────
+  const needsAuth = AUTH_REQUIRED.some(p => pathname.startsWith(p))
+  if (needsAuth) {
+    const token = request.cookies.get('store_access')?.value
+    if (!token) {
+      const loginUrl = request.nextUrl.clone()
+      loginUrl.pathname = '/conta/login'
+      loginUrl.search   = '?redirect=' + encodeURIComponent(pathname + search)
+      return NextResponse.redirect(loginUrl)
+    }
+  }
+
+  // ── Tenant injection ───────────────────────────────────────────────────────
   const requestHeaders = new Headers(request.headers)
   requestHeaders.set('x-tenant-slug', slug)
-
-  const response = NextResponse.next({
-    request: { headers: requestHeaders },
-  })
-
-  // Injeta também na response (response headers ficam disponíveis via headers() no RSC)
+  const response = NextResponse.next({ request: { headers: requestHeaders } })
   response.headers.set('x-tenant-slug', slug)
 
-  // Cookie para Client Components — não httpOnly para poder ser lido no browser
   const existing = request.cookies.get('tenant-slug')?.value
   if (existing !== slug) {
     response.cookies.set('tenant-slug', slug, {
-      path: '/',
+      path:     '/',
       httpOnly: false,
       sameSite: 'lax',
-      // Expira junto com a sessão do browser (sem maxAge fixo)
-      // Será reescrito a cada request se o subdomínio mudar
     })
   }
 
@@ -70,13 +66,6 @@ export function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    /*
-     * Executa em todas as rotas exceto:
-     * - _next/static  (arquivos estáticos buildados)
-     * - _next/image   (image optimization)
-     * - favicon.ico
-     * - arquivos de imagem na raiz
-     */
     '/((?!_next/static|_next/image|favicon\\.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 }

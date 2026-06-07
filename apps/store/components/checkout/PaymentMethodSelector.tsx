@@ -2,13 +2,14 @@
 
 /**
  * components/checkout/PaymentMethodSelector.tsx
- * Seletor de forma de pagamento: Pix / Boleto / A combinar / Crédito.
- * A opção Crédito só aparece se o cliente tiver crédito disponível.
+ * Seletor de forma de pagamento: Pix / Boleto / Crédito.
+ * A opção Crédito só aparece se o cliente tiver crédito disponível (credit_limit > 0).
+ * "A combinar" foi removido — pagamento deve ser confirmado na plataforma.
  */
 
 import { formatPrice } from '@/lib/cart'
 
-export type PaymentMethod = 'pix' | 'boleto' | 'a_combinar' | 'credito'
+export type PaymentMethod = 'pix' | 'boleto' | 'credito'
 
 interface Option {
   value:       PaymentMethod
@@ -29,12 +30,6 @@ const BASE_OPTIONS: Option[] = [
     label:       'Boleto bancário',
     description: 'Vencimento em 3 dias úteis',
     icon:        BoletoIcon,
-  },
-  {
-    value:       'a_combinar',
-    label:       'A combinar',
-    description: 'Faturamento ou outra condição acordada',
-    icon:        HandshakeIcon,
   },
 ]
 
@@ -99,7 +94,8 @@ export default function PaymentMethodSelector({ value, onChange, creditAvailable
 function PixIcon() {
   return (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
-      <path d="m12 2 3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01z" />
+      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/>
+      <path d="m8 12 2.5 2.5L16 9"/>
     </svg>
   )
 }
@@ -110,16 +106,6 @@ function BoletoIcon() {
       <line x1="6" y1="9" x2="6" y2="15" /><line x1="9" y1="9" x2="9" y2="15" />
       <line x1="12" y1="9" x2="12" y2="15" /><line x1="15" y1="9" x2="15" y2="15" />
       <line x1="18" y1="9" x2="18" y2="15" />
-    </svg>
-  )
-}
-function HandshakeIcon() {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
-      <path d="m11 17 2 2a1 1 0 1 0 3-3" />
-      <path d="m14 14 2.5 2.5a1 1 0 1 0 3-3l-3.88-3.88a3 3 0 0 0-4.24 0l-.88.88a1 1 0 1 1-3-3l2.81-2.81a5.79 5.79 0 0 1 7.06-.87l.47.28a2 2 0 0 0 1.42.25L21 4" />
-      <path d="m21 3 1 11h-2" /><path d="M3 3 2 14l6.5 6.5a1 1 0 1 0 3-3" />
-      <path d="M3 4h8" />
     </svg>
   )
 }

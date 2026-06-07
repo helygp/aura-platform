@@ -42,6 +42,37 @@ const DEFAULT_COLOR_HEX: Record<string, string> = {
   'Salmão':       '#ff8a65',
 }
 
+
+// ─── Ordenação de tamanhos por padrão do mercado têxtil ───────────────────────
+
+const SIZE_LETTER_ORDER = ['PP', 'P', 'M', 'G', 'GG', 'GGG', 'GGGG', 'EG', 'XGG', 'XG']
+
+/**
+ * Ordena tamanhos conforme padrão do mercado têxtil:
+ * - Todos numéricos → crescente (2, 4, 6, 8, 10, 12…)
+ * - Por letra       → PP, P, M, G, GG, GGG…
+ * - Misto           → numéricos primeiro, letras depois
+ */
+function sortSizes(raw: string[]): string[] {
+  const isNum = (s: string) => /^d+$/.test(s)
+  const nums    = raw.filter(isNum).sort((a, b) => Number(a) - Number(b))
+  const letters = raw
+    .filter(s => !isNum(s))
+    .sort((a, b) => {
+      const ia = SIZE_LETTER_ORDER.indexOf(a.toUpperCase())
+      const ib = SIZE_LETTER_ORDER.indexOf(b.toUpperCase())
+      if (ia === -1 && ib === -1) return a.localeCompare(b)
+      if (ia === -1) return 1
+      if (ib === -1) return -1
+      return ia - ib
+    })
+  return [...nums, ...letters]
+}
+
+function sortColors(raw: string[]): string[] {
+  return [...raw].sort((a, b) => a.localeCompare(b, 'pt-BR'))
+}
+
 interface Props {
   product: ProductDetail
   theme?:  TenantTheme
@@ -52,8 +83,8 @@ export default function ProductDetailView({ product, theme }: Props) {
 
   // Detecta se produto tem estrutura Cor × Tamanho (B2B grade)
   const attrs    = product.attributes ?? {}
-  const colors   = (attrs['Cor']     ?? attrs['cor']     ?? []) as string[]
-  const sizes    = (attrs['Tamanho'] ?? attrs['tamanho'] ?? []) as string[]
+  const colors   = sortColors((attrs['Cor']     ?? attrs['cor']     ?? []) as string[])
+  const sizes    = sortSizes((attrs['Tamanho'] ?? attrs['tamanho'] ?? []) as string[])
   const hasGrade = colors.length > 0 && sizes.length > 0
 
   // Grade template: usa distribuição padrão ou deriva dos SKUs

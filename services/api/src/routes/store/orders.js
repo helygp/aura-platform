@@ -12,7 +12,7 @@ storeOrdersRouter.post('/', optionalBuyerAuth, async (req, res) => {
   if (!Array.isArray(items) || items.length === 0)
     return res.status(400).json({ error: 'O carrinho está vazio.' })
 
-  const validMethods = ['pix', 'boleto', 'a_combinar', 'credito']
+  const validMethods = ['pix', 'boleto', 'credito']
   if (!validMethods.includes(paymentMethod))
     return res.status(400).json({ error: 'Forma de pagamento inválida.' })
 
