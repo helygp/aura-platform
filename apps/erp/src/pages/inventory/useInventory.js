@@ -2,180 +2,152 @@
  * pages/inventory/useInventory.js
  *
  * Hook de dados do módulo de estoque.
+ * Usa a API real — sem fallback mock.
  *
  * Retorna:
- *   skus          : SKUs filtrados e paginados (com info do produto pai)
- *   total         : total sem paginação
- *   totalPages    : número de páginas
- *   isLoading     : boolean
- *   filters       : { search, status }
- *   setFilters    : fn
- *   page / setPage
- *   refetch       : fn
- *   addMovement   : (skuId, { type, qty, reason }) => Promise
- *   movements     : (skuId) => array de movimentos do SKU
- *
- * Usa mock local enquanto /api/inventory não existe.
+ *   skus        : SKUs filtrados e paginados
+ *   total / totalPages / isLoading / error
+ *   filters / setFilters / page / setPage
+ *   stats       : { total, ok, low, zero }
+ *   refetch     : fn
+ *   addMovement : (skuId, { type, qty, reason }) => Promise
+ *   getMovements: (skuId) => array
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { stockStatus, MOVEMENT_TYPES } from './inventoryTypes.js'
+import { useAuth } from '../../auth/AuthContext.jsx'
+import { stockStatus } from './inventoryTypes.js'
 
 const PAGE_SIZE = 15
 
-/* ─── Mock ─── */
-function buildMockSkus() {
-  const products = [
-    { name: 'Tênis Runner Pro',    code: 'PROD-001' },
-    { name: 'Camiseta Básica',     code: 'PROD-002' },
-    { name: 'Bolsa Couro Clássica',code: 'PROD-003' },
-    { name: 'Calça Jeans Slim',    code: 'PROD-004' },
-    { name: 'Sandália Conforto',   code: 'PROD-005' },
-    { name: 'Boné Aba Reta',       code: 'PROD-006' },
-    { name: 'Mochila Executiva',   code: 'PROD-007' },
-    { name: 'Vestido Floral',      code: 'PROD-008' },
-  ]
-  const sizes  = ['P', 'M', 'G', 'GG']
-  const colors = ['Preto', 'Branco', 'Azul']
-
-  const skus = []
-  products.forEach((prod, pi) => {
-    sizes.slice(0, pi % 2 === 0 ? 4 : 2).forEach((size, si) => {
-      colors.slice(0, pi % 3 === 0 ? 3 : 1).forEach((color, ci) => {
-        const stock    = Math.floor(Math.random() * 50)
-        const stockMin = 5 + (pi % 3) * 3
-        skus.push({
-          id:         `sku-${pi}-${si}-${ci}`,
-          productId:  `prod-${pi + 1}`,
-          productName: prod.name,
-          productCode: prod.code,
-          code:       `${prod.code}-${size.replace(/\s/g,'')}-${color.slice(0,3).toUpperCase()}`,
-          attributes: { Tamanho: size, Cor: color },
-          stock,
-          stockMin,
-          priceWholesale: 79.9 + pi * 12 + si * 5,
-        })
-      })
-    })
+/* ─── authFetch com Bearer token (mesmo padrão dos outros hooks) ─── */
+function authFetch(url, opts = {}) {
+  const token = window.__aura_mem_token__ || ''
+  return fetch(url, {
+    ...opts,
+    credentials: 'include',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { 'Authorization': 'Bearer ' + token } : {}),
+      ...(opts.headers ?? {}),
+    },
   })
-  return skus
 }
-
-function buildMockMovements(skuIds) {
-  const types   = [MOVEMENT_TYPES.IN, MOVEMENT_TYPES.OUT, MOVEMENT_TYPES.ADJ]
-  const reasons = ['Compra fornecedor', 'Venda atacado', 'Devolução', 'Ajuste inventário', 'Perda']
-  const movs    = {}
-  skuIds.forEach(id => {
-    movs[id] = Array.from({ length: Math.floor(Math.random() * 6) + 2 }, (_, i) => ({
-      id:        `mov-${id}-${i}`,
-      type:      types[i % types.length],
-      qty:       Math.floor(Math.random() * 20) + 1,
-      reason:    reasons[i % reasons.length],
-      user:      'admin',
-      createdAt: new Date(Date.now() - i * 3600000 * (i + 1)).toISOString(),
-    }))
-  })
-  return movs
-}
-
-let MOCK_SKUS = buildMockSkus()
-let MOCK_MOVS = buildMockMovements(MOCK_SKUS.map(s => s.id))
 
 export function useInventory() {
-  const [allSkus,   setAllSkus]   = useState([])
-  const [movBySkuId, setMovBySkuId] = useState({})
-  const [isLoading, setIsLoading] = useState(true)
-  const [filters,   setFiltersRaw] = useState({ search: '', status: 'all' })
-  const [page,      setPage]       = useState(1)
+  const { user } = useAuth()
 
+  const [allSkus,    setAllSkus]    = useState([])
+  const [movBySkuId, setMovBySkuId] = useState({})
+  const [isLoading,  setIsLoading]  = useState(true)
+  const [error,      setError]      = useState(null)
+  const [filters,    setFiltersRaw] = useState({ search: '', status: 'all', category: '' })
+  const [page,       setPage]       = useState(1)
+
+  /* ─── Busca lista de SKUs da API ─── */
   const fetchAll = useCallback(async () => {
     setIsLoading(true)
+    setError(null)
     try {
-      const res = await fetch('/api/inventory', { credentials: 'include' })
-      if (!res.ok) throw new Error()
+      const res = await authFetch('/api/inventory')
+      if (!res.ok) throw new Error(`Erro ${res.status}`)
       const json = await res.json()
       setAllSkus(json.skus ?? [])
-      setMovBySkuId(json.movements ?? {})
-    } catch {
-      await new Promise(r => setTimeout(r, 500))
-      setAllSkus([...MOCK_SKUS])
-      setMovBySkuId({ ...MOCK_MOVS })
+    } catch (e) {
+      setError(e.message)
+      setAllSkus([])
     } finally {
       setIsLoading(false)
     }
   }, [])
 
-  useEffect(() => { fetchAll() }, [fetchAll])
+  useEffect(() => { if (user) fetchAll() }, [fetchAll, user])
 
-  /* ─── Filtros ─── */
+  /* ─── Filtros client-side ─── */
   const filtered = useMemo(() => {
     let list = allSkus
     const q = filters.search.trim().toLowerCase()
     if (q) list = list.filter(s =>
       s.code.toLowerCase().includes(q) ||
-      s.productName.toLowerCase().includes(q)
+      s.productName.toLowerCase().includes(q) ||
+      Object.values(s.attributes ?? {}).some(v =>
+        String(v).toLowerCase().includes(q)
+      )
     )
-    if (filters.status !== 'all') {
-      list = list.filter(s => stockStatus(s) === filters.status)
+    if (filters.category) list = list.filter(s =>
+      (s.category ?? s.productCategory ?? '').toLowerCase() === filters.category.toLowerCase()
+    )
+    if (filters.status === 'critico') {
+      list = list.filter(s => {
+        const st = s.stockStatus ?? stockStatus(s)
+        return st === 'baixo' || st === 'zerado'
+      })
+    } else if (filters.status !== 'all') {
+      list = list.filter(s => (s.stockStatus ?? stockStatus(s)) === filters.status)
     }
     return list
   }, [allSkus, filters])
 
-  const paginated   = useMemo(() => filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE), [filtered, page])
-  const totalPages  = Math.ceil(filtered.length / PAGE_SIZE)
+  const paginated  = useMemo(() =>
+    filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
+  [filtered, page])
+
+  const totalPages = Math.ceil(filtered.length / PAGE_SIZE)
 
   const setFilters = useCallback((updates) => {
     setFiltersRaw(prev => ({ ...prev, ...updates }))
     setPage(1)
   }, [])
 
-  /* ─── Estatísticas para o summary bar ─── */
   const stats = useMemo(() => ({
-    total:  allSkus.length,
-    ok:     allSkus.filter(s => stockStatus(s) === 'ok').length,
-    low:    allSkus.filter(s => stockStatus(s) === 'baixo').length,
-    zero:   allSkus.filter(s => stockStatus(s) === 'zerado').length,
+    total: allSkus.length,
+    ok:    allSkus.filter(s => (s.stockStatus ?? stockStatus(s)) === 'ok').length,
+    low:   allSkus.filter(s => (s.stockStatus ?? stockStatus(s)) === 'baixo').length,
+    zero:  allSkus.filter(s => (s.stockStatus ?? stockStatus(s)) === 'zerado').length,
   }), [allSkus])
 
-  /* ─── Adicionar movimentação ─── */
+  /* ─── Registrar movimentação ─── */
   const addMovement = useCallback(async (skuId, { type, qty, reason }) => {
     const qtyNum = Number(qty)
     if (!qtyNum || qtyNum <= 0) throw new Error('Quantidade inválida')
 
-    try {
-      const res = await fetch(`/api/inventory/${skuId}/movements`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ type, qty: qtyNum, reason }),
-      })
-      if (!res.ok) throw new Error()
-      await fetchAll()
-    } catch {
-      // mock local
-      const delta = type === MOVEMENT_TYPES.IN  ?  qtyNum
-                  : type === MOVEMENT_TYPES.OUT ? -qtyNum
-                  : qtyNum - (MOCK_SKUS.find(s => s.id === skuId)?.stock ?? 0)
+    // POST /api/inventory/:skuId/movement  (singular — conforme a rota no backend)
+    const res = await authFetch(`/api/inventory/${skuId}/movement`, {
+      method: 'POST',
+      body: JSON.stringify({ type, qty: qtyNum, reason }),
+    })
 
-      MOCK_SKUS = MOCK_SKUS.map(s =>
-        s.id === skuId
-          ? { ...s, stock: Math.max(0, s.stock + delta) }
-          : s
-      )
-      const newMov = {
-        id: `mov-${Date.now()}`,
-        type, qty: qtyNum, reason,
-        user: 'admin',
-        createdAt: new Date().toISOString(),
-      }
-      MOCK_MOVS = {
-        ...MOCK_MOVS,
-        [skuId]: [newMov, ...(MOCK_MOVS[skuId] ?? [])],
-      }
-      setAllSkus([...MOCK_SKUS])
-      setMovBySkuId({ ...MOCK_MOVS })
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}))
+      throw new Error(d.error || 'Erro ao registrar movimentação')
     }
+
+    await fetchAll()
   }, [fetchAll])
+
+  /* ─── Normaliza campos snake_case → camelCase vindos da API ─── */
+  function normMov(m) {
+    return {
+      id:        m.id,
+      type:      m.type,
+      qty:       m.qty,
+      qtyBefore: m.qty_before  ?? m.qtyBefore  ?? 0,
+      qtyAfter:  m.qty_after   ?? m.qtyAfter   ?? 0,
+      reason:    m.reason      ?? "",
+      user:      m.user_name   ?? m.user        ?? "sistema",
+      createdAt: m.created_at  ?? m.createdAt   ?? new Date().toISOString(),
+    }
+  }
+
+  /* ─── Histórico de movimentos do SKU ─── */
+  const fetchMovements = useCallback(async (skuId) => {
+    try {
+      const res = await authFetch(`/api/inventory/${skuId}/movements`)
+      if (!res.ok) return
+      const json = await res.json()
+      setMovBySkuId(prev => ({ ...prev, [skuId]: (json.movements ?? []).map(normMov) }))
+    } catch { /* silencioso */ }
+  }, [])
 
   const getMovements = useCallback((skuId) => movBySkuId[skuId] ?? [], [movBySkuId])
 
@@ -184,6 +156,7 @@ export function useInventory() {
     total: filtered.length,
     totalPages,
     isLoading,
+    error,
     filters,
     setFilters,
     page,
@@ -191,6 +164,7 @@ export function useInventory() {
     refetch: fetchAll,
     addMovement,
     getMovements,
+    fetchMovements,
     stats,
     PAGE_SIZE,
   }

@@ -3,86 +3,88 @@
  *
  * Hook de dados do módulo de produtos.
  *
- * Retorna:
- *   products    : array filtrado e paginado
- *   total       : total sem filtros
- *   isLoading   : boolean
- *   filters     : { search, type, category }
- *   setFilters  : fn
- *   page        : number
- *   setPage     : fn
- *   refetch     : fn
- *   saveProduct : (data) => Promise  — cria ou atualiza
- *   deleteProduct: (id) => Promise
- *
- * Usa mock enquanto a API não existe.
+ * Fix 6.1: guard de autenticação + retry sem flash de estado vazio
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { PRODUCT_TYPES, STOCK_STATUS } from './productsTypes.js'
+import { useAuth } from '../../auth/AuthContext.jsx'
+import { PRODUCT_TYPES } from './productsTypes.js'
 
-const PAGE_SIZE = 12
-
-/* ─── Dados mock ─── */
-function buildMock() {
-  const cats   = ['Calçados', 'Roupas', 'Acessórios', 'Bolsas']
-  const names  = [
-    'Tênis Runner Pro', 'Camiseta Básica', 'Bolsa Couro Clássica',
-    'Calça Jeans Slim', 'Sandália Conforto', 'Boné Aba Reta',
-    'Mochila Executiva', 'Vestido Floral', 'Jaqueta Corta-Vento',
-    'Short Esportivo', 'Sapato Social', 'Blusa Manga Longa',
-  ]
-
-  return names.map((name, i) => {
-    const isVariant = i % 3 !== 0
-    const code = `PROD-${String(i + 1).padStart(3, '0')}`
-    return {
-      id:       `prod-${i + 1}`,
-      name,
-      code,
-      category: cats[i % cats.length],
-      type:     isVariant ? PRODUCT_TYPES.VARIANT : PRODUCT_TYPES.SIMPLE,
-      imageUrl: null,
-      skus: isVariant
-        ? [
-            { id: `${code}-PM`, code: `${code}-P-PRE`, attributes: { Tamanho: 'P', Cor: 'Preto' }, priceWholesale: 89.9 + i * 10, stock: Math.floor(Math.random() * 40), stockMin: 5 },
-            { id: `${code}-MM`, code: `${code}-M-PRE`, attributes: { Tamanho: 'M', Cor: 'Preto' }, priceWholesale: 89.9 + i * 10, stock: Math.floor(Math.random() * 40), stockMin: 5 },
-            { id: `${code}-GG`, code: `${code}-G-BRA`, attributes: { Tamanho: 'G', Cor: 'Branco' }, priceWholesale: 94.9 + i * 10, stock: 0, stockMin: 5 },
-          ]
-        : [
-            { id: `${code}-UN`, code, attributes: {}, priceWholesale: 129.9 + i * 15, stock: Math.floor(Math.random() * 60) + 1, stockMin: 10 },
-          ],
-      createdAt: new Date(Date.now() - i * 86400000).toISOString(),
-    }
+function authFetch(url, opts = {}) {
+  const token = window.__aura_mem_token__ || ''
+  return fetch(url, {
+    ...opts,
+    credentials: 'include',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: 'Bearer ' + token } : {}),
+      ...(opts.headers ?? {}),
+    },
   })
 }
 
-let MOCK_DB = buildMock()
+const PAGE_SIZE = 12
 
 export function useProducts() {
+  const { user } = useAuth()
   const [allProducts, setAllProducts] = useState([])
   const [isLoading,   setIsLoading]   = useState(true)
   const [filters,     setFilters]     = useState({ search: '', type: '', category: '' })
   const [page,        setPage]        = useState(1)
 
-  const fetchAll = useCallback(async () => {
-    setIsLoading(true)
+  const fetchAll = useCallback(async (attempt = 0) => {
+    // Controla loading: seta true apenas na primeira tentativa
+    if (attempt === 0) setIsLoading(true)
+
+    let willRetry = false
     try {
-      const res = await fetch('/api/products', { credentials: 'include' })
-      if (!res.ok) throw new Error()
+      const res = await authFetch('/api/products')
+
+      // Cache 304 — re-fetch sem cache header
+      if (res.status === 304) {
+        const res2 = await fetch('/api/products', {
+          credentials: 'include',
+          cache: 'no-store',
+          headers: { ...(window.__aura_mem_token__ ? { Authorization: 'Bearer ' + window.__aura_mem_token__ } : {}) },
+        })
+        const json2 = await res2.json()
+        setAllProducts(json2.products ?? [])
+        return
+      }
+
+      if (!res.ok) {
+        // Retry única em erro 5xx
+        if (res.status >= 500 && attempt === 0) {
+          willRetry = true
+          await new Promise(r => setTimeout(r, 800))
+          return fetchAll(1)
+        }
+        throw new Error(`Erro ${res.status}`)
+      }
+
       const json = await res.json()
       setAllProducts(json.products ?? [])
-    } catch {
-      await new Promise(r => setTimeout(r, 400))
-      setAllProducts([...MOCK_DB])
+    } catch (e) {
+      console.error('[useProducts] fetchAll:', e.message)
+      if (attempt === 0) {
+        willRetry = true
+        await new Promise(r => setTimeout(r, 600))
+        return fetchAll(1)
+      }
+      // Na segunda tentativa: mantém dados existentes se houver
+      setAllProducts(prev => prev)
     } finally {
-      setIsLoading(false)
+      // Só limpa o loading se não formos fazer retry (para evitar flash de estado vazio)
+      if (!willRetry) setIsLoading(false)
     }
   }, [])
 
-  useEffect(() => { fetchAll() }, [fetchAll])
+  // Guard de autenticação: só busca quando user está disponível
+  useEffect(() => {
+    if (user) fetchAll()
+  }, [fetchAll, user])
 
-  /* ─── Filtro client-side (prod: filtrar no servidor) ─── */
+  /* ─── Filtro client-side ─── */
   const filtered = useMemo(() => {
     let list = allProducts
     const q = filters.search.trim().toLowerCase()
@@ -97,52 +99,35 @@ export function useProducts() {
     return filtered.slice(start, start + PAGE_SIZE)
   }, [filtered, page])
 
-  /* ─── Reset page ao filtrar ─── */
   const updateFilters = useCallback((updates) => {
     setFilters(prev => ({ ...prev, ...updates }))
     setPage(1)
   }, [])
 
-  /* ─── Salvar (create/update) ─── */
   const saveProduct = useCallback(async (data) => {
     try {
       const method = data.id ? 'PUT' : 'POST'
       const url    = data.id ? `/api/products/${data.id}` : '/api/products'
-      const res    = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify(data),
-      })
-      if (!res.ok) throw new Error()
-      await fetchAll()
-    } catch {
-      // mock local
-      if (data.id) {
-        MOCK_DB = MOCK_DB.map(p => p.id === data.id ? { ...p, ...data } : p)
-      } else {
-        const newProd = {
-          ...data,
-          id: `prod-${Date.now()}`,
-          createdAt: new Date().toISOString(),
-        }
-        MOCK_DB = [newProd, ...MOCK_DB]
+      const res    = await authFetch(url, { method, body: JSON.stringify(data) })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        throw new Error(d.error || `Erro ${res.status}`)
       }
-      setAllProducts([...MOCK_DB])
+      await fetchAll()
+    } catch (e) {
+      console.error('[useProducts/save]', e.message)
+      throw e
     }
   }, [fetchAll])
 
-  /* ─── Deletar ─── */
   const deleteProduct = useCallback(async (id) => {
     try {
-      const res = await fetch(`/api/products/${id}`, {
-        method: 'DELETE', credentials: 'include',
-      })
+      const res = await authFetch(`/api/products/${id}`, { method: 'DELETE' })
       if (!res.ok) throw new Error()
       await fetchAll()
-    } catch {
-      MOCK_DB = MOCK_DB.filter(p => p.id !== id)
-      setAllProducts([...MOCK_DB])
+    } catch (e) {
+      console.error('[useProducts/delete]', e.message)
+      throw e
     }
   }, [fetchAll])
 

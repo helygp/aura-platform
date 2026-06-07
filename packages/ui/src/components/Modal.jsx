@@ -80,6 +80,7 @@ const ModalContent = React.forwardRef(function ModalContent(
           sizeMap[size] ?? sizeMap.md,
           'rounded-[var(--radius-lg)] border border-[var(--color-border)]',
           'bg-[var(--color-bg)] shadow-[var(--shadow-md)]',
+          'flex flex-col max-h-[90dvh]',
           'focus:outline-none',
           'data-[state=open]:animate-in   data-[state=open]:fade-in-0   data-[state=open]:zoom-in-95',
           'data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95',
@@ -122,7 +123,7 @@ const ModalContent = React.forwardRef(function ModalContent(
         )}
 
         {/* Body */}
-        <div className="px-6 py-4">
+        <div className="px-6 py-4 flex-1 overflow-y-auto overscroll-contain">
           {children}
         </div>
       </Dialog.Content>

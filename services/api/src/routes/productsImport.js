@@ -22,6 +22,7 @@ import { Router } from 'express'
 import { authenticate } from '../middleware/authenticate.js'
 import { authorize }    from '../middleware/authorize.js'
 import { query }        from '../lib/tenantDb.js'
+import { autoSlug }     from './productAttributes.js'
 
 export const productsImportRouter = Router()
 productsImportRouter.use(authenticate)
@@ -88,75 +89,124 @@ productsImportRouter.post('/', async (req, res) => {
 
     const results = { inserted: 0, updated: 0, skipped: 0, errors: [] }
 
-    for (let i = 0; i < rows.length; i++) {
-      const row = rows[i]
-      const lineNum = i + 2   // linha 1 = cabeçalho
-
-      const nome   = val(row, C.nome)
-      const codigo = val(row, C.codigo) || nome.toLowerCase().replace(/\s+/g, '-').slice(0, 30)
-
-      if (!nome) {
-        results.errors.push({ linha: lineNum, erro: 'Nome do produto obrigatório.' })
-        results.skipped++
-        continue
-      }
-      if (!codigo) {
-        results.errors.push({ linha: lineNum, erro: 'Código não pôde ser gerado.' })
-        results.skipped++
-        continue
-      }
-
-      const categoria = val(row, C.cat) || 'Geral'
-      const tipoRaw   = val(row, C.tipo).toLowerCase()
-      const tipo      = tipoRaw.includes('var') || tipoRaw.includes('grade') ? 'variante' : 'simples'
-      const preco     = toDecimal(val(row, C.preco))
-      const estoque   = toInt(val(row, C.estoque))
-      const stockMin  = toInt(val(row, C.min))
-
-      // Atributos da variação
-      const attrs = {}
+    /* ── Coleta e registra atributos novos no domínio ── */
+    const attrCollector = new Map()
+    for (const row of rows) {
       const a1n = val(row, C.a1n); const a1v = val(row, C.a1v)
       const a2n = val(row, C.a2n); const a2v = val(row, C.a2v)
-      if (a1n && a1v) attrs[a1n] = a1v
-      if (a2n && a2v) attrs[a2n] = a2v
+      if (a1n && a1v) { if (!attrCollector.has(a1n)) attrCollector.set(a1n, new Set()); attrCollector.get(a1n).add(a1v) }
+      if (a2n && a2v) { if (!attrCollector.has(a2n)) attrCollector.set(a2n, new Set()); attrCollector.get(a2n).add(a2v) }
+    }
+    for (const [attrName, valSet] of attrCollector) {
+      try {
+        const { rows: existing } = await query(
+          'SELECT id, values FROM product_attribute_defs WHERE name = ', [attrName]
+        )
+        const existingValues = existing[0]?.values ?? []
+        const existingLabels = new Set(existingValues.map(v => v.label))
+        const merged = [...existingValues]
+        for (const v of valSet) {
+          if (!existingLabels.has(v)) merged.push({ label: v, slug: autoSlug(v) })
+        }
+        if (existing[0]) {
+          await query(
+            'UPDATE product_attribute_defs SET values=::jsonb, updated_at=now() WHERE id=',
+            [JSON.stringify(merged), existing[0].id]
+          )
+        } else {
+          await query(
+            'INSERT INTO product_attribute_defs (name, values) VALUES (, ::jsonb)',
+            [attrName, JSON.stringify(Array.from(valSet).map(v => ({ label: v, slug: autoSlug(v) })))]
+          )
+        }
+      } catch (_) { /* não bloqueia importação por falha no domínio */ }
+    }
+
+    /* ── Pré-processar: agrupar variantes pelo nome do produto ── */
+    // Para variantes: mesmo nome = mesmo produto pai.
+    // O 'codigo' da planilha vira código do SKU.
+    // O código do produto pai = primeiro segmento do codigo (ex: C001 de C001-02-PT)
+    //   ou o proprio codigo se não houver traço.
+    const prodGroups = new Map() // nome+categoria → { code, nome, categoria, tipo, linhas[] }
+
+    for (let i = 0; i < rows.length; i++) {
+      const row     = rows[i]
+      const lineNum = i + 2
+      const nome    = val(row, C.nome)
+      const codigo  = val(row, C.codigo) || nome.toLowerCase().replace(/\s+/g, '-').slice(0, 30)
+      if (!nome) {
+        results.errors.push({ linha: lineNum, erro: 'Nome do produto obrigatório.' })
+        results.skipped++; continue
+      }
+      const tipoRaw  = val(row, C.tipo).toLowerCase()
+      const tipo     = tipoRaw.includes('var') || tipoRaw.includes('grade') ? 'variante' : 'simples'
+      const categoria = val(row, C.cat) || 'Geral'
+
+      // Código base do produto: primeiro segmento do codigo (para variantes)
+      const baseCode = tipo === 'variante'
+        ? (codigo.includes('-') ? codigo.split('-')[0] : codigo)
+        : codigo
+
+      const groupKey = `${nome}|${baseCode}`
+      if (!prodGroups.has(groupKey)) {
+        prodGroups.set(groupKey, { baseCode, nome, categoria, tipo, linhas: [] })
+      }
+      prodGroups.get(groupKey).linhas.push({ row, lineNum, codigo, tipo })
+    }
+
+    /* ── Processar grupos ── */
+    for (const [, group] of prodGroups) {
+      const { baseCode, nome, categoria, tipo } = group
 
       try {
-        // Upsert produto
+        // Upsert produto pai
         const prodResult = await query(`
           INSERT INTO products (id, name, code, category, type, attributes, created_at, updated_at)
           VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, now(), now())
           ON CONFLICT (code) DO UPDATE
-            SET name       = EXCLUDED.name,
-                category   = EXCLUDED.category,
-                type       = EXCLUDED.type,
-                updated_at = now()
+            SET name=EXCLUDED.name, category=EXCLUDED.category,
+                type=EXCLUDED.type, updated_at=now()
           RETURNING id, (xmax = 0) AS inserted
-        `, [nome, codigo, categoria, tipo, JSON.stringify([])])
+        `, [nome, baseCode, categoria, tipo, JSON.stringify([])])
 
         const prodId    = prodResult.rows[0].id
         const wasInsert = prodResult.rows[0].inserted
+        if (wasInsert) results.inserted++; else results.updated++
 
-        // SKU code — para produto simples usa o próprio codigo, para variante adiciona sufixo
-        const attrSuffix = Object.values(attrs).join('-')
-        const skuCode    = attrSuffix ? `${codigo}-${attrSuffix}` : codigo
+        // Upsert SKUs do grupo
+        for (const { row, lineNum, codigo } of group.linhas) {
+          const preco    = toDecimal(val(row, C.preco))
+          const estoque  = toInt(val(row, C.estoque))
+          const stockMin = toInt(val(row, C.min))
+          const a1n = val(row, C.a1n); const a1v = val(row, C.a1v)
+          const a2n = val(row, C.a2n); const a2v = val(row, C.a2v)
+          const attrs = {}
+          if (a1n && a1v) attrs[a1n] = a1v
+          if (a2n && a2v) attrs[a2n] = a2v
 
-        // Upsert SKU
-        await query(`
-          INSERT INTO skus (id, product_id, code, attributes, price_wholesale, stock, stock_min, created_at, updated_at)
-          VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, $6, now(), now())
-          ON CONFLICT (code) DO UPDATE
-            SET price_wholesale = EXCLUDED.price_wholesale,
-                stock           = EXCLUDED.stock,
-                stock_min       = EXCLUDED.stock_min,
-                updated_at      = now()
-        `, [prodId, skuCode, JSON.stringify(attrs), preco, estoque, stockMin])
+          // skuCode = codigo da planilha (já é o código único do SKU)
+          // Para simples sem atributos: usa o proprio baseCode
+          const skuCode = tipo === 'simples' ? baseCode : codigo
 
-        if (wasInsert) results.inserted++
-        else           results.updated++
-
+          try {
+            await query(`
+              INSERT INTO skus (id, product_id, code, attributes, price_wholesale, stock, stock_min, created_at, updated_at)
+              VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, $6, now(), now())
+              ON CONFLICT (code) DO UPDATE
+                SET price_wholesale=EXCLUDED.price_wholesale,
+                    stock=EXCLUDED.stock, stock_min=EXCLUDED.stock_min,
+                    product_id=EXCLUDED.product_id, updated_at=now()
+            `, [prodId, skuCode, JSON.stringify(attrs), preco, estoque, stockMin])
+          } catch (e) {
+            results.errors.push({ linha: lineNum, nome, codigo, erro: e.message })
+            results.skipped++
+          }
+        }
       } catch (e) {
-        results.errors.push({ linha: lineNum, nome, codigo, erro: e.message })
-        results.skipped++
+        group.linhas.forEach(({ lineNum }) =>
+          results.errors.push({ linha: lineNum, nome, erro: e.message })
+        )
+        results.skipped += group.linhas.length
       }
     }
 

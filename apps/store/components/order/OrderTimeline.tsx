@@ -13,9 +13,9 @@ interface Props {
 }
 
 const FLOW = [
-  { key: 'aguardando_confirmacao', label: 'Pedido recebido',     icon: ReceiptIcon },
+  { key: 'pendente', label: 'Pedido recebido',     icon: ReceiptIcon },
   { key: 'confirmado',             label: 'Confirmado',          icon: CheckCircleIcon },
-  { key: 'em_separacao',           label: 'Em separação',        icon: BoxIcon },
+  { key: 'separando',           label: 'Em separação',        icon: BoxIcon },
   { key: 'enviado',                label: 'Enviado',             icon: TruckIcon },
   { key: 'entregue',               label: 'Entregue',            icon: HomeIcon },
 ]
@@ -98,12 +98,12 @@ export default function OrderTimeline({ timeline, currentStatus, isCancelled }: 
 function statusKey(label: string): string {
   // Converte label PT para chave — ex: "Aguardando confirmação" → "aguardando_confirmacao"
   const map: Record<string, string> = {
-    'Pedido recebido':      'aguardando_confirmacao',
-    'Aguardando confirmação': 'aguardando_confirmacao',
-    'Confirmado':           'confirmado',
-    'Em separação':         'em_separacao',
-    'Enviado':              'enviado',
-    'Entregue':             'entregue',
+    'Pedido recebido':        'pendente',
+    'Aguardando confirmação': 'pendente',
+    'Confirmado':             'confirmado',
+    'Em separação':           'separando',
+    'Enviado':                'enviado',
+    'Entregue':               'entregue',
   }
   return map[label] ?? label.toLowerCase().replace(/\s+/g, '_').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
 }

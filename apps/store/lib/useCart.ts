@@ -26,14 +26,17 @@ export interface UseCartReturn {
   remove:    (skuId: string) => void
   clear:     () => void
   isEmpty:   boolean
+  isLoaded:  boolean
 }
 
 export function useCart(): UseCartReturn {
-  const [items, setItems] = useState<CartItem[]>([])
+  const [items, setItems]   = useState<CartItem[]>([])
+  const [isLoaded, setIsLoaded] = useState(false)
 
   // Lê do localStorage apenas no cliente (evita mismatch SSR)
   useEffect(() => {
     setItems(readCart())
+    setIsLoaded(true)
 
     function sync() { setItems(readCart()) }
     window.addEventListener(CART_UPDATED_EVENT, sync)
@@ -60,6 +63,7 @@ export function useCart(): UseCartReturn {
     updateQty,
     remove,
     clear,
-    isEmpty: items.length === 0,
+    isEmpty:  items.length === 0,
+    isLoaded,
   }
 }

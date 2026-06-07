@@ -2,83 +2,122 @@
 
 /**
  * components/product/ProductDetail.tsx
- * Orquestra: galeria + seletor de atributos + quantidade + CTA.
- * Client Component — estado de seleção, quantidade, toast de carrinho.
+ * v2 — integra GradeMatrix para produtos B2B com Cor × Tamanho.
+ * Mantém AttributeSelector como fallback para produtos simples.
  */
 
 import { useState, useMemo, useCallback } from 'react'
 import type { ProductDetail, Sku } from '@/lib/api'
+import type { TenantTheme } from '@/lib/tenant'
 import { useTenant } from '@/components/layout/TenantProvider'
+import { addToCart, formatPrice as fmtPrice } from '@/lib/cart'
 
-import ImageGallery from './ImageGallery'
-import AttributeSelector from './AttributeSelector'
-import QuantityInput from './QuantityInput'
-import StockBadge from './StockBadge'
-import { addToCart, formatPrice as fmtPrice, type CartItem } from '@/lib/cart'
+import ImageGallery       from './ImageGallery'
+import AttributeSelector  from './AttributeSelector'
+import QuantityInput      from './QuantityInput'
+import StockBadge         from './StockBadge'
+import GradeMatrix        from './GradeMatrix'
+
+// Mapa de cores padrão Fast Malhas / Aura Store
+const DEFAULT_COLOR_HEX: Record<string, string> = {
+  'Preto':        '#1a1a1a',
+  'Branco':       '#f3f3ee',
+  'Bege':         '#d8c7a8',
+  'Bordo':        '#6b1f2e',
+  'Vermelho':     '#c62828',
+  'Rosa Pink':    '#e0218a',
+  'Rosa Bebê':    '#f4b8cf',
+  'Azul Bic':     '#1f6fd6',
+  'Azul Marinho': '#1e2a52',
+  'Cinza Mescla': '#b7bcc0',
+  'Cinza':        '#9e9e9e',
+  'Verde':        '#2e7d32',
+  'Amarelo':      '#f9a825',
+  'Laranja':      '#e65100',
+  'Lilás':        '#7b1fa2',
+  'Marrom':       '#5d4037',
+  'Caqui':        '#8d7b68',
+  'Caramelo':     '#bf8040',
+  'Menta':        '#80cbc4',
+  'Salmão':       '#ff8a65',
+}
 
 interface Props {
   product: ProductDetail
+  theme?:  TenantTheme
 }
 
-export default function ProductDetailView({ product }: Props) {
+export default function ProductDetailView({ product, theme }: Props) {
   const { slug: tenantSlug } = useTenant()
-  const [selected, setSelected] = useState<Record<string, string>>({})
-  const [quantity, setQuantity]   = useState(1)
-  const [adding, setAdding]       = useState(false)
-  const [toast, setToast]         = useState<string | null>(null)
 
-  // ─── SKU resolvido ────────────────────────────────────────────────────────
+  // Detecta se produto tem estrutura Cor × Tamanho (B2B grade)
+  const attrs    = product.attributes ?? {}
+  const colors   = (attrs['Cor']     ?? attrs['cor']     ?? []) as string[]
+  const sizes    = (attrs['Tamanho'] ?? attrs['tamanho'] ?? []) as string[]
+  const hasGrade = colors.length > 0 && sizes.length > 0
+
+  // Grade template: usa distribuição padrão ou deriva dos SKUs
+  const gradeTemplate = useMemo(() => {
+    if (sizes.length === 0) return {}
+    // Conta ocorrências de cada tamanho nos SKUs
+    const counts: Record<string, number> = {}
+    product.skus.forEach(s => {
+      const sz = s.attributes['Tamanho'] ?? s.attributes['tamanho']
+      if (sz) counts[sz] = (counts[sz] ?? 0) + 1
+    })
+    // Se tem contagens reais, normaliza para min=1
+    if (Object.keys(counts).length > 0) {
+      const min = Math.min(...Object.values(counts))
+      return Object.fromEntries(Object.entries(counts).map(([k, v]) => [k, Math.round(v / min)]))
+    }
+    // Fallback: 1 de cada
+    return Object.fromEntries(sizes.map(sz => [sz, 1]))
+  }, [sizes, product.skus])
+
+  // ── Estado para modo simples (sem grade) ───────────────────────────────────
+  const [selected, setSelected] = useState<Record<string, string>>({})
+  const [quantity, setQuantity] = useState(1)
+  const [adding, setAdding]     = useState(false)
+  const [toast, setToast]       = useState<string | null>(null)
 
   const resolvedSku = useMemo<Sku | null>(() => {
-    const dims = Object.keys(product.attributes)
+    if (hasGrade) return null
+    const dims = Object.keys(attrs)
     if (dims.length === 0) {
-      // Produto simples — pega o primeiro SKU ativo
-      return product.skus.find((s) => s.active && s.stock > 0) ?? product.skus[0] ?? null
+      return product.skus.find(s => s.active && s.stock > 0) ?? product.skus[0] ?? null
     }
-    // Todos os atributos precisam estar selecionados
-    if (dims.some((d) => !selected[d])) return null
-    return (
-      product.skus.find(
-        (s) =>
-          s.active &&
-          dims.every((d) => s.attributes[d] === selected[d])
-      ) ?? null
-    )
-  }, [selected, product.skus, product.attributes])
+    if (dims.some(d => !selected[d])) return null
+    return product.skus.find(s => s.active && dims.every(d => s.attributes[d] === selected[d])) ?? null
+  }, [selected, product.skus, attrs, hasGrade])
 
   const isSelectionComplete = useMemo(() => {
-    const dims = Object.keys(product.attributes)
-    return dims.length === 0 || dims.every((d) => selected[d])
-  }, [selected, product.attributes])
-
-  // ─── Preço exibido ────────────────────────────────────────────────────────
+    if (hasGrade) return true
+    const dims = Object.keys(attrs)
+    return dims.length === 0 || dims.every(d => selected[d])
+  }, [selected, attrs, hasGrade])
 
   const displayPrice = useMemo(() => {
     if (resolvedSku) return formatPrice(resolvedSku.price)
-    const { minPrice, maxPrice } = product
-    if (minPrice === maxPrice) return formatPrice(minPrice)
-    return `${formatPrice(minPrice)} – ${formatPrice(maxPrice)}`
+    return formatPrice(product.minPrice)
   }, [resolvedSku, product])
 
-  // ─── Adicionar ao carrinho ────────────────────────────────────────────────
+  // ── Handlers ───────────────────────────────────────────────────────────────
 
-  const handleAddToCart = useCallback(async () => {
+  const handleAddSimple = useCallback(async () => {
     if (!resolvedSku || adding) return
     setAdding(true)
-
     try {
       addToCart({
-          skuId:        resolvedSku.id,
-          skuCode:      resolvedSku.code,
-          productSlug:  product.slug,
-          productName:  product.name,
-          attributes:   resolvedSku.attributes,
-          price:        resolvedSku.price,
-          coverImageUrl: product.coverImageUrl,
-          quantity,
-          maxStock:     resolvedSku.stock,
-        })
-
+        skuId:         resolvedSku.id,
+        skuCode:       resolvedSku.code,
+        productSlug:   product.slug,
+        productName:   product.name,
+        attributes:    resolvedSku.attributes,
+        price:         resolvedSku.price,
+        coverImageUrl: product.coverImageUrl,
+        quantity,
+        maxStock:      resolvedSku.stock,
+      })
       showToast(`${product.name} adicionado ao carrinho`)
     } catch {
       showToast('Erro ao adicionar. Tente novamente.')
@@ -87,15 +126,39 @@ export default function ProductDetailView({ product }: Props) {
     }
   }, [resolvedSku, adding, quantity, product])
 
+  const handleAddGrade = useCallback((items: Array<{ key: string; color: string; size: string; qty: number }>) => {
+    let added = 0
+    items.forEach(({ color, size, qty }) => {
+      // Encontra SKU correspondente
+      const sku = product.skus.find(s =>
+        (s.attributes['Cor'] ?? s.attributes['cor']) === color &&
+        (s.attributes['Tamanho'] ?? s.attributes['tamanho']) === size
+      )
+      if (!sku) return
+      addToCart({
+        skuId:         sku.id,
+        skuCode:       sku.code,
+        productSlug:   product.slug,
+        productName:   product.name,
+        attributes:    sku.attributes,
+        price:         sku.price,
+        coverImageUrl: product.coverImageUrl,
+        quantity:      qty,
+        maxStock:      sku.stock > 0 ? sku.stock : 9999,
+      })
+      added += qty
+    })
+    if (added > 0) showToast(`${added} peças de ${product.name} adicionadas ao carrinho`)
+  }, [product])
+
   function showToast(msg: string) {
     setToast(msg)
     setTimeout(() => setToast(null), 3000)
   }
 
-  // ─── Render ───────────────────────────────────────────────────────────────
-
-  const hasDimensions = Object.keys(product.attributes).length > 0
   const stockMax = resolvedSku?.stock ?? 0
+
+  // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
@@ -136,85 +199,89 @@ export default function ProductDetailView({ product }: Props) {
             <h1 className="text-2xl font-bold leading-tight text-foreground sm:text-3xl">
               {product.name}
             </h1>
+            {theme?.showSkuCode && product.skus[0]?.code && (
+              <p className="mt-1 text-xs font-mono text-muted-foreground">
+                {product.skus[0].code.split('-')[0]}
+              </p>
+            )}
           </div>
 
           {/* Preço */}
-          <p className="text-2xl font-bold text-primary">{displayPrice}</p>
-
-          {/* Seletor de atributos */}
-          {hasDimensions && (
-            <AttributeSelector
-              attributes={product.attributes}
-              skus={product.skus}
-              selected={selected}
-              onChange={setSelected}
-            />
-          )}
-
-          {/* Disponibilidade em tempo real */}
-          {resolvedSku && (
-            <StockBadge
-              tenantSlug={tenantSlug}
-              skuId={resolvedSku.id}
-              initialStock={resolvedSku.stock}
-            />
-          )}
-
-          {/* Quantidade */}
-          {resolvedSku && resolvedSku.stock > 0 && (
-            <div className="flex items-center gap-3">
-              <span className="text-sm font-medium text-foreground">Quantidade</span>
-              <QuantityInput
-                value={quantity}
-                max={stockMax}
-                onChange={setQuantity}
-              />
-            </div>
-          )}
-
-          {/* Aviso seleção incompleta */}
-          {hasDimensions && !isSelectionComplete && (
-            <p className="text-sm text-muted-foreground">
-              Selecione {Object.keys(product.attributes)
-                .filter((d) => !selected[d])
-                .join(', ')} para continuar.
-            </p>
-          )}
-
-          {/* CTA — adicionar ao carrinho */}
-          <button
-            onClick={handleAddToCart}
-            disabled={!resolvedSku || resolvedSku.stock <= 0 || adding || !isSelectionComplete}
-            className={[
-              'flex w-full items-center justify-center gap-2 rounded-[var(--radius)] py-3.5 text-sm font-semibold transition active:scale-95',
-              resolvedSku && resolvedSku.stock > 0 && isSelectionComplete
-                ? 'bg-primary text-primary-foreground shadow hover:opacity-90'
-                : 'cursor-not-allowed bg-muted text-muted-foreground',
-            ].join(' ')}
-          >
-            {adding ? (
-              <>
-                <SpinnerIcon />
-                Adicionando…
-              </>
-            ) : resolvedSku && resolvedSku.stock <= 0 ? (
-              'Fora de estoque'
-            ) : (
-              <>
-                <CartIcon />
-                Adicionar ao carrinho
-              </>
-            )}
-          </button>
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10 }}>
+            <span style={{ fontSize: 34, fontWeight: 800, letterSpacing: '-0.03em', color: 'var(--ink)', lineHeight: 1 }}>
+              {displayPrice}
+            </span>
+            <span style={{ fontSize: 14, color: 'var(--muted)', paddingBottom: 4 }}>
+              por peça · à vista no PIX
+            </span>
+          </div>
 
           {/* Descrição */}
           {product.description && (
-            <div className="border-t border-border pt-5">
-              <h2 className="mb-2 text-sm font-semibold text-foreground">Descrição</h2>
-              <p className="whitespace-pre-line text-sm leading-relaxed text-muted-foreground">
-                {product.description}
-              </p>
-            </div>
+            <p style={{ fontSize: 15, color: 'var(--ink-2)', lineHeight: 1.6, maxWidth: 520 }}>
+              {product.description}
+            </p>
+          )}
+
+          {/* ── MODO GRADE (B2B) ── */}
+          {hasGrade ? (
+            <GradeMatrix
+              productId={product.slug}
+              productName={product.name}
+              price={product.minPrice}
+              colors={colors}
+              colorHexMap={DEFAULT_COLOR_HEX}
+              sizes={sizes}
+              gradeTemplate={gradeTemplate}
+              gradeFechada={theme?.gradeFechada ?? true}
+              showSkuCode={theme?.showSkuCode ?? false}
+              volumeTiers={theme?.volumeTiers ?? []}
+              minOrder={theme?.minimumOrderAmount ?? 300}
+              theme={theme as TenantTheme}
+              onAddToCart={handleAddGrade}
+            />
+          ) : (
+            /* ── MODO SIMPLES (fallback) ── */
+            <>
+              {Object.keys(attrs).length > 0 && (
+                <AttributeSelector
+                  attributes={attrs}
+                  skus={product.skus}
+                  selected={selected}
+                  onChange={setSelected}
+                />
+              )}
+              {resolvedSku && (
+                <StockBadge
+                  tenantSlug={tenantSlug}
+                  skuId={resolvedSku.id}
+                  initialStock={resolvedSku.stock}
+                />
+              )}
+              {resolvedSku && resolvedSku.stock > 0 && (
+                <div className="flex items-center gap-3">
+                  <span className="text-sm font-medium text-foreground">Quantidade</span>
+                  <QuantityInput value={quantity} max={stockMax} onChange={setQuantity} />
+                </div>
+              )}
+              {Object.keys(attrs).length > 0 && !isSelectionComplete && (
+                <p className="text-sm text-muted-foreground">
+                  Selecione {Object.keys(attrs).filter(d => !selected[d]).join(', ')} para continuar.
+                </p>
+              )}
+              <button
+                onClick={handleAddSimple}
+                disabled={!resolvedSku || resolvedSku.stock <= 0 || adding || !isSelectionComplete}
+                className={[
+                  'flex w-full items-center justify-center gap-2 rounded-[var(--radius)] py-3.5 text-sm font-semibold transition active:scale-95',
+                  resolvedSku && resolvedSku.stock > 0 && isSelectionComplete
+                    ? 'bg-primary text-primary-foreground shadow hover:opacity-90'
+                    : 'cursor-not-allowed bg-muted text-muted-foreground',
+                ].join(' ')}
+              >
+                {adding ? 'Adicionando…' : resolvedSku && resolvedSku.stock <= 0 ? 'Fora de estoque' : 'Adicionar ao carrinho'}
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -229,25 +296,4 @@ export default function ProductDetailView({ product }: Props) {
   )
 }
 
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
 const formatPrice = fmtPrice
-
-function CartIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z" />
-      <line x1="3" x2="21" y1="6" y2="6" />
-      <path d="M16 10a4 4 0 0 1-8 0" />
-    </svg>
-  )
-}
-
-function SpinnerIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="animate-spin">
-      <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-    </svg>
-  )
-}

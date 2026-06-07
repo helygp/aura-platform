@@ -9,7 +9,8 @@
  */
 
 import { Router }                 from 'express'
-import { authenticate }           from '../middleware/authenticate.js'
+import { authenticate } from '../middleware/authenticate.js'
+import { authorize }    from '../middleware/authorize.js'
 import { prismaMaster as prisma }                 from '../lib/prisma-master.js'
 import { prismaMaster }           from '../lib/prisma-master.js'
 import { query }                  from '../lib/tenantDb.js'
@@ -310,3 +311,27 @@ p{margin:0;color:#475569;line-height:1.7;font-size:14px;white-space:pre-line}
   <div class="foot">Aura Platform · aurabr.app · Mensagem automática</div>
 </div></body></html>`
 }
+
+/* ── GET /api/tenant/permissions ── */
+tenantRouter.get('/permissions', authenticate, authorize('admin'), async (req, res) => {
+  try {
+    const { rows } = await query("SELECT value FROM settings WHERE key='access_permissions'")
+    res.json({ permissions: rows[0]?.value ?? {} })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+/* ── PUT /api/tenant/permissions ── */
+tenantRouter.put('/permissions', authenticate, authorize('admin'), async (req, res) => {
+  try {
+    const { permissions } = req.body
+    await query(`
+      INSERT INTO settings (key, value) VALUES ('access_permissions', $1::jsonb)
+      ON CONFLICT (key) DO UPDATE SET value=$1::jsonb, updated_at=now()
+    `, [JSON.stringify(permissions)])
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})

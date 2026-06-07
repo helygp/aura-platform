@@ -41,8 +41,13 @@ export const STATUS_META = {
   zerado: { label: 'Zerado',        variant: 'error',   dot: 'bg-red-500'   },
 }
 
-export const fmtDate = (iso) =>
-  new Intl.DateTimeFormat('pt-BR', {
-    day: '2-digit', month: '2-digit', year: 'numeric',
-    hour: '2-digit', minute: '2-digit',
-  }).format(new Date(iso))
+export const fmtDate = (iso) => {
+  try {
+    const d = new Date(iso)
+    if (!iso || isNaN(d.getTime())) return "-"
+    return new Intl.DateTimeFormat("pt-BR", {
+      day: "2-digit", month: "2-digit", year: "numeric",
+      hour: "2-digit", minute: "2-digit",
+    }).format(d)
+  } catch { return "-" }
+}

@@ -86,6 +86,8 @@ model User {
   role            UserRole  @default(OPERADOR)
   active          Boolean   @default(true)
   refreshFamily   String?   @map("refresh_family")
+  whatsapp        String?
+  customerIds     String[]  @default([]) @map("customer_ids")
   lastLoginAt     DateTime? @map("last_login_at")
   createdAt       DateTime  @default(now()) @map("created_at")
   updatedAt       DateTime  @updatedAt       @map("updated_at")

@@ -2,8 +2,8 @@
  * layout/navItems.js
  *
  * Fonte única de verdade para itens de navegação do ERP.
- * Cada item define: rota, chave i18n, ícone (nome Lucide) e papel mínimo.
  * roles: null = qualquer usuário autenticado
+ * newTab: true = abre em nova aba ao clicar
  */
 
 export const NAV_ITEMS = [
@@ -26,6 +26,13 @@ export const NAV_ITEMS = [
     roles: ['admin', 'estoque'],
   },
   {
+    key:    'stock-panel',
+    path:   '/stock-panel',
+    icon:   'Monitor',
+    roles:  ['admin', 'estoque'],
+    newTab: true,
+  },
+  {
     key:   'orders',
     path:  '/orders',
     icon:  'ShoppingCart',
@@ -44,10 +51,22 @@ export const NAV_ITEMS = [
     roles: ['admin', 'operador'],
   },
   {
+    key:   'receivables',
+    path:  '/receivables',
+    icon:  'Wallet',
+    roles: ['admin', 'financeiro'],
+  },
+  {
     key:   'reports',
     path:  '/reports',
     icon:  'BarChart2',
     roles: ['admin', 'financeiro'],
+  },
+  {
+    key:   'users',
+    path:  '/users',
+    icon:  'UserCog',
+    roles: ['admin'],
   },
   {
     key:   'billing',
@@ -65,9 +84,9 @@ export const NAV_ITEMS = [
 
 /* Itens que aparecem no bottom nav mobile (máx. 5) */
 export const BOTTOM_NAV_ITEMS = [
-  NAV_ITEMS[0], // dashboard
-  NAV_ITEMS[3], // orders
-  NAV_ITEMS[1], // products
-  NAV_ITEMS[4], // customers
-  NAV_ITEMS[6], // settings
+  NAV_ITEMS[0],  // dashboard
+  NAV_ITEMS[4],  // orders
+  NAV_ITEMS[1],  // products
+  NAV_ITEMS[5],  // customers
+  NAV_ITEMS[11], // settings
 ]

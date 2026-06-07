@@ -3,6 +3,7 @@
     "dashboard": "Painel",
     "products": "Produtos",
     "inventory": "Estoque",
+    "stock-panel": "Cockpit",
     "orders": "Pedidos",
     "customers": "Clientes",
     "store": "Loja",
@@ -14,7 +15,8 @@
     "home": "Início",
     "whatsapp": "WhatsApp",
     "users": "Usuários",
-    "reports": "Relatórios"
+    "reports": "Relatórios",
+    "receivables": "Contas a Receber"
   },
   "common": {
     "save": "Salvar",

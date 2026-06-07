@@ -25,7 +25,7 @@ export const DEFAULT_CATEGORIES = [
 ]
 
 /* ─── Atributos padrão para grade ─── */
-export const DEFAULT_ATTRIBUTES = ['Tamanho', 'Cor', 'Material', 'Voltagem']
+export const DEFAULT_ATTRIBUTES = ['Cor', 'Tamanho', 'Material', 'Voltagem']
 
 /* ─── Valores padrão por atributo ─── */
 export const DEFAULT_ATTRIBUTE_VALUES = {
@@ -85,12 +85,18 @@ export function validateSimpleProduct(form) {
 
 /* ─── Valida form de produto com grade ─── */
 export function validateVariantProduct(form) {
-  const errors = validateSimpleProduct(form)
-  if (!form.attributes?.some(a => a.name && a.values?.length))
-    errors.attributes = 'Adicione pelo menos um atributo com valores.'
-  return errors
+  return validateSimpleProduct(form)
 }
 
+
+/* ─── Gera sigla automática para valor de atributo ─── */
+export function generateValueSlug(label) {
+  if (!label) return ''
+  const normalized = label.normalize('NFD').replace(/[̀-ͯ]/g, '')
+  const words = normalized.trim().split(/s+/)
+  if (words.length === 1) return words[0].slice(0, 3).toUpperCase()
+  return words.map(w => w[0] || '').join('').toUpperCase().slice(0, 3)
+}
 /* ─── Formata preço BRL ─── */
 export const fmtBRL = (v) =>
   v == null || v === ''

@@ -17,11 +17,14 @@
  *   - Banner de alerta no topo quando há SKUs críticos
  */
 
-import React, { useState, useCallback } from 'react'
+import { useSortable } from '../../hooks/useSortable.js'
+import React, { useState, useCallback, useEffect, useMemo } from 'react'
+import { useLocation } from 'react-router-dom'
 import {
   Search, RefreshCw, AlertTriangle, CheckCircle2,
   ArrowDownToLine, History, ChevronLeft, ChevronRight,
-  X, Package,
+  X, Package, ChevronUp, ChevronDown,
+  ChevronsUpDown,
 } from 'lucide-react'
 import { Card, Badge, Skeleton } from '@aura/ui'
 import { MovementModal }  from './components/MovementModal.jsx'
@@ -198,18 +201,65 @@ function Pagination({ page, totalPages, onPage, total, pageSize }) {
 }
 
 /* ─── Página principal ─── */
+const INV_COLS = [
+  { label: 'SKU / Produto', key: 'productName', sortable: true },
+  { label: 'Atributos',     key: '_attrs',       sortable: false },
+  { label: 'Estoque',       key: 'stock',        sortable: true, align: 'right' },
+  { label: 'Mínimo',        key: 'stockMin',     sortable: true, align: 'right' },
+  { label: 'Status',        key: '_status',       sortable: false },
+  { label: 'Ações',         key: '_act',          sortable: false },
+]
+function SortableTh({ col, sortKey, sortDir, onSort }) {
+  const active = sortKey === (col.sortKey ?? col.key)
+  const align  = col.align === 'right' ? 'text-right' : 'text-left'
+  return (
+    <th onClick={() => col.sortable && onSort(col)}
+      className={`px-4 py-3 text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap select-none ${align} ${col.sortable ? 'cursor-pointer hover:text-[var(--color-text)] hover:bg-[var(--color-bg-subtle)] transition-colors' : ''}`}
+    >
+      <span className="inline-flex items-center gap-1">
+        {col.label}
+        {col.sortable && (active
+          ? sortDir === 'asc' ? <ChevronUp size={11} className="shrink-0" /> : <ChevronDown size={11} className="shrink-0" />
+          : <ChevronsUpDown size={11} className="shrink-0 opacity-30" />
+        )}
+      </span>
+    </th>
+  )
+}
 export function InventoryPage() {
   const {
     skus, total, totalPages, isLoading,
     filters, setFilters, page, setPage,
-    refetch, addMovement, getMovements,
+    refetch, addMovement, getMovements, fetchMovements,
     stats, PAGE_SIZE,
   } = useInventory()
+  const { sorted: sortedSkusInv, sortKey: iSortKey, sortDir: iSortDir, handleSort: iHandleSort } = useSortable(skus, 'productName')
+
+  const location = useLocation()
+
+  // Categorias do DB
+  const [availableCategories, setAvailableCategories] = useState([])
+
+  // Aplica filtro/ação vindo do Dashboard via navigate state
+  useEffect(() => {
+    const st = location.state?.status
+    if (st) setFilters({ status: st })
+    // Limpar state para não reaplicar em navegações futuras
+    window.history.replaceState({}, '')
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    const token = window.__aura_mem_token__ || ''
+    fetch('/api/product-categories', {
+      credentials: 'include',
+      headers: token ? { Authorization: 'Bearer ' + token } : {},
+    }).then(r => r.json()).then(d => setAvailableCategories((d.categories ?? []).map(c => c.name))).catch(() => {})
+  }, [])
 
   const [movingSku,  setMovingSku]  = useState(null)
   const [historySku, setHistorySku] = useState(null)
 
-  const openHistory = useCallback((sku) => setHistorySku(sku), [])
+  const openHistory = useCallback((sku) => { setHistorySku(sku); if (sku) fetchMovements(sku.id); }, [fetchMovements])
   const closeHistory = useCallback(() => setHistorySku(null), [])
 
   const openMove = useCallback((sku) => {
@@ -221,7 +271,7 @@ export function InventoryPage() {
     await addMovement(skuId, data)
   }, [addMovement])
 
-  const hasActiveFilters = filters.search || filters.status !== 'all'
+  const hasActiveFilters = filters.search || filters.status !== 'all' || filters.category
 
   return (
     <div className="space-y-5 max-w-screen-xl">
@@ -284,7 +334,7 @@ export function InventoryPage() {
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)] pointer-events-none" />
             <input
               type="text"
-              placeholder="Buscar SKU ou produto…"
+              placeholder="Buscar por SKU, produto ou atributo (Preto, GG, 38…)"
               value={filters.search}
               onChange={e => setFilters({ search: e.target.value })}
               className="
@@ -297,25 +347,43 @@ export function InventoryPage() {
             />
           </div>
 
-          {['all', 'ok', 'baixo', 'zerado'].map(s => (
-            <button
-              key={s}
-              onClick={() => setFilters({ status: s })}
-              className={`
-                h-9 px-3 rounded-lg text-sm font-medium transition-colors
-                ${filters.status === s
-                  ? 'bg-[var(--color-primary)] text-white'
-                  : 'bg-[var(--color-bg-subtle)] border border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)]'
-                }
-              `}
+          {availableCategories.length > 0 && (
+            <select
+              value={filters.category ?? ''}
+              onChange={e => setFilters({ category: e.target.value })}
+              className="h-9 px-3 rounded-lg text-sm bg-[var(--color-bg-subtle)] border border-[var(--color-border)] text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] shrink-0"
             >
-              {s === 'all' ? 'Todos' : s === 'ok' ? 'Em estoque' : s === 'baixo' ? 'Baixo' : 'Zerado'}
-            </button>
-          ))}
+              <option value="">Todas as categorias</option>
+              {availableCategories.map(cat => (
+                <option key={cat} value={cat}>{cat}</option>
+              ))}
+            </select>
+          )}
+
+          {[
+            { value: 'all',     label: 'Todos' },
+            { value: 'ok',      label: 'Em estoque' },
+            { value: 'critico', label: '\u26a0 Cr\u00edtico', warn: true },
+            { value: 'baixo',   label: 'Baixo' },
+            { value: 'zerado',  label: 'Zerado' },
+          ].map(({ value, label, warn }) => {
+            const active = filters.status === value
+            const cls = [
+              'h-9 px-3 rounded-lg text-sm font-medium transition-colors whitespace-nowrap',
+              active
+                ? (warn ? 'bg-amber-500 text-white' : 'bg-[var(--color-primary)] text-white')
+                : 'bg-[var(--color-bg-subtle)] border border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)]',
+            ].join(' ')
+            return (
+              <button key={value} onClick={() => setFilters({ status: value })} className={cls}>
+                {label}
+              </button>
+            )
+          })}
 
           {hasActiveFilters && (
             <button
-              onClick={() => setFilters({ search: '', status: 'all' })}
+              onClick={() => setFilters({ search: '', status: 'all', category: '' })}
               className="h-9 w-9 flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950 transition-colors"
             >
               <X size={14} />
@@ -332,7 +400,7 @@ export function InventoryPage() {
           <Package size={32} className="text-[var(--color-text-disabled)]" />
           <p className="font-semibold text-[var(--color-text)]">Nenhum SKU encontrado</p>
           {hasActiveFilters && (
-            <button onClick={() => setFilters({ search: '', status: 'all' })} className="text-sm text-[var(--color-primary)] hover:underline">
+            <button onClick={() => setFilters({ search: '', status: 'all', category: '' })} className="text-sm text-[var(--color-primary)] hover:underline">
               Limpar filtros
             </button>
           )}
@@ -344,15 +412,13 @@ export function InventoryPage() {
               <table className="w-full text-sm">
                 <thead className="bg-[var(--color-bg-subtle)] border-b border-[var(--color-border)]">
                   <tr>
-                    {['SKU / Produto', 'Atributos', 'Estoque', 'Mín.', 'Status', 'Ações'].map(h => (
-                      <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap">
-                        {h}
-                      </th>
+                    {INV_COLS.map(col => (
+                      <SortableTh key={col.key} col={col} sortKey={iSortKey} sortDir={iSortDir} onSort={iHandleSort} />
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {skus.map(sku => (
+                  {sortedSkusInv.map(sku => (
                     <SkuRow
                       key={sku.id}
                       sku={sku}

@@ -136,12 +136,12 @@ export interface CreateOrderPayload {
   items: OrderItem[]
   deliveryAddress?: string
   notes?: string
-  paymentMethod: 'pix' | 'boleto' | 'a_combinar'
+  paymentMethod: 'pix' | 'boleto' | 'a_combinar' | 'credito'
 }
 
 export interface OrderStatus {
   ref: string // token opaco ex: ord_k3x9p2mq
-  status: 'aguardando_confirmacao' | 'confirmado' | 'em_separacao' | 'enviado' | 'entregue' | 'cancelado'
+  status: 'pendente' | 'confirmado' | 'separando' | 'enviado' | 'entregue' | 'cancelado'
   createdAt: string
   items: Array<{ name: string; variant: string; quantity: number; price: number; skuId?: string; skuCode?: string; productSlug?: string; attributes?: Record<string,string> }>
   total: number
@@ -173,9 +173,14 @@ export const ordersApi = {
 // ─── Auth do comprador ────────────────────────────────────────────────────────
 
 export interface BuyerSession {
-  name: string
-  email: string
-  companyName: string | null
+  id:              string
+  name:            string
+  email:           string
+  document:        string | null
+  companyName:     string | null
+  creditLimit:     number  // centavos
+  creditBalance:   number  // centavos
+  creditAvailable: number  // centavos
 }
 
 export const authApi = {
@@ -192,12 +197,14 @@ export const authApi = {
   },
 
   me(tenantSlug: string): Promise<BuyerSession | null> {
-        return apiFetch<BuyerSession>("/store/auth/me", { tenantSlug }).catch((): null => null)
+    return apiFetch<{ buyer: BuyerSession | null }>('/store/auth/me', { tenantSlug })
+      .then(r => r.buyer)
+      .catch((): null => null)
   },
 
   register(
     tenantSlug: string,
-    data: { name: string; email: string; password: string; companyName?: string; phone?: string },
+    data: { name: string; email: string; password: string; companyName?: string; document?: string; phone?: string },
   ): Promise<BuyerSession> {
     return apiFetch('/store/auth/register', {
       method: 'POST',

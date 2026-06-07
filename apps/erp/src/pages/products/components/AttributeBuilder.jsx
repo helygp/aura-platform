@@ -2,23 +2,41 @@
  * pages/products/components/AttributeBuilder.jsx
  *
  * Componente para configurar atributos da grade de produto variante.
+ * Busca o domínio de atributos da API; fallback para lista hardcoded.
  *
  * Props:
  *   attributes : [{ name, values: string[] }]
  *   onChange   : (newAttributes) => void
- *
- * Permite:
- *   - Adicionar até 3 atributos (ex: Tamanho, Cor, Material)
- *   - Selecionar nome de uma lista ou digitar livremente
- *   - Adicionar valores chip a chip (com sugestões)
- *   - Remover valor individual ou atributo inteiro
  */
 
-import React, { useState, useCallback, useRef } from 'react'
+import React, { useState, useCallback, useRef, useEffect } from 'react'
 import { Plus, X, ChevronDown } from 'lucide-react'
 import { DEFAULT_ATTRIBUTES, DEFAULT_ATTRIBUTE_VALUES } from '../productsTypes.js'
 
 const MAX_ATTRIBUTES = 3
+
+/* ── Cache de domínio (evita refetch a cada abertura do form) ── */
+let _defsCache = null
+
+async function loadAttrDefs() {
+  if (_defsCache) return _defsCache
+  try {
+    const token = window.__aura_mem_token__ || ''
+    const res = await fetch('/api/product-attributes', {
+      credentials: 'include',
+      headers: token ? { Authorization: 'Bearer ' + token } : {},
+    })
+    if (!res.ok) throw new Error()
+    const data = await res.json()
+    _defsCache = data.attributes ?? []
+    return _defsCache
+  } catch {
+    return []
+  }
+}
+
+/* Invalida cache ao salvar no AttributeDefManager */
+export function invalidateDefsCache() { _defsCache = null }
 
 function ValueChip({ value, onRemove }) {
   return (
@@ -41,12 +59,16 @@ function ValueChip({ value, onRemove }) {
   )
 }
 
-function AttributeRow({ attr, index, usedNames, onChange, onRemove }) {
-  const [valueInput, setValueInput] = useState('')
+function AttributeRow({ attr, index, usedNames, attrDefs, onChange, onRemove }) {
+  const [valueInput,      setValueInput]      = useState('')
   const [showSuggestions, setShowSuggestions] = useState(false)
   const inputRef = useRef(null)
 
-  const suggestions = DEFAULT_ATTRIBUTE_VALUES[attr.name] ?? []
+  /* Sugestões: do DB (preferido) ou fallback hardcoded */
+  const defEntry    = attrDefs.find(d => d.name === attr.name)
+  const dbValues    = defEntry?.values?.map(v => v.label) ?? null
+  const suggestions = dbValues ?? DEFAULT_ATTRIBUTE_VALUES[attr.name] ?? []
+
   const filteredSugg = suggestions.filter(
     s => !attr.values.includes(s) &&
          s.toLowerCase().includes(valueInput.toLowerCase())
@@ -72,9 +94,9 @@ function AttributeRow({ attr, index, usedNames, onChange, onRemove }) {
     }
   }
 
-  const availableNames = DEFAULT_ATTRIBUTES.filter(
-    n => n === attr.name || !usedNames.includes(n)
-  )
+  /* Nomes disponíveis: do DB (preferido) ou fallback */
+  const dbNames      = attrDefs.length ? attrDefs.map(d => d.name) : DEFAULT_ATTRIBUTES
+  const availableNames = dbNames.filter(n => n === attr.name || !usedNames.includes(n))
 
   return (
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-4 space-y-3">
@@ -108,7 +130,7 @@ function AttributeRow({ attr, index, usedNames, onChange, onRemove }) {
         </button>
       </div>
 
-      {/* Input de nome personalizado */}
+      {/* Nome personalizado */}
       {attr.name === '__custom__' && (
         <input
           type="text"
@@ -145,7 +167,6 @@ function AttributeRow({ attr, index, usedNames, onChange, onRemove }) {
             onFocus={() => setShowSuggestions(true)}
             onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
             onKeyDown={handleKeyDown}
-            disabled={!attr.name || attr.name === '__custom__' ? false : false}
             className="
               flex-1 h-9 px-3 rounded-lg text-sm
               bg-[var(--color-bg)] border border-[var(--color-border)]
@@ -198,6 +219,12 @@ function AttributeRow({ attr, index, usedNames, onChange, onRemove }) {
 }
 
 export function AttributeBuilder({ attributes, onChange }) {
+  const [attrDefs, setAttrDefs] = useState([])
+
+  useEffect(() => {
+    loadAttrDefs().then(setAttrDefs)
+  }, [])
+
   const usedNames = attributes.map(a => a.name).filter(Boolean)
 
   const addAttribute = () => {
@@ -223,6 +250,7 @@ export function AttributeBuilder({ attributes, onChange }) {
           attr={attr}
           index={i}
           usedNames={usedNames}
+          attrDefs={attrDefs}
           onChange={updateAttribute}
           onRemove={removeAttribute}
         />

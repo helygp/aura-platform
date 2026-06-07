@@ -30,6 +30,9 @@ function period(req) {
 reportsRouter.get('/sales', async (req, res) => {
   try {
     const { start, end } = period(req)
+    const customerId = req.query.customer_id || null
+    const custClause = customerId ? ` AND customer_id = $3` : ''
+    const baseParams  = customerId ? [start, end, customerId] : [start, end]
 
     const [kpi, byDay, byChannel, byStatus] = await Promise.all([
       // KPIs principais
@@ -41,8 +44,8 @@ reportsRouter.get('/sales', async (req, res) => {
           COALESCE(SUM(total) FILTER (WHERE status NOT IN ('cancelado','pendente')), 0) AS faturamento,
           COALESCE(AVG(total) FILTER (WHERE status NOT IN ('cancelado','pendente')), 0) AS ticket_medio
         FROM orders
-        WHERE created_at::date BETWEEN $1 AND $2
-      `, [start, end]),
+        WHERE created_at::date BETWEEN $1 AND $2${custClause}
+      `, baseParams),
 
       // Por dia
       query(`
@@ -51,9 +54,9 @@ reportsRouter.get('/sales', async (req, res) => {
           COUNT(*)         AS pedidos,
           COALESCE(SUM(total) FILTER (WHERE status NOT IN ('cancelado','pendente')), 0) AS faturamento
         FROM orders
-        WHERE created_at::date BETWEEN $1 AND $2
+        WHERE created_at::date BETWEEN $1 AND $2${custClause}
         GROUP BY dia ORDER BY dia
-      `, [start, end]),
+      `, baseParams),
 
       // Por canal
       query(`
@@ -62,25 +65,26 @@ reportsRouter.get('/sales', async (req, res) => {
           COUNT(*) AS pedidos,
           COALESCE(SUM(total) FILTER (WHERE status NOT IN ('cancelado','pendente')), 0) AS faturamento
         FROM orders
-        WHERE created_at::date BETWEEN $1 AND $2
+        WHERE created_at::date BETWEEN $1 AND $2${custClause}
         GROUP BY channel ORDER BY faturamento DESC
-      `, [start, end]),
+      `, baseParams),
 
       // Por status
       query(`
         SELECT status, COUNT(*) AS total
         FROM orders
-        WHERE created_at::date BETWEEN $1 AND $2
+        WHERE created_at::date BETWEEN $1 AND $2${custClause}
         GROUP BY status ORDER BY total DESC
-      `, [start, end]),
+      `, baseParams),
     ])
 
     res.json({
-      period: { start, end },
-      kpi:       kpi.rows[0],
-      byDay:     byDay.rows,
-      byChannel: byChannel.rows,
-      byStatus:  byStatus.rows,
+      period:     { start, end },
+      customerId: customerId || null,
+      kpi:        kpi.rows[0],
+      byDay:      byDay.rows,
+      byChannel:  byChannel.rows,
+      byStatus:   byStatus.rows,
     })
   } catch(e) { res.status(500).json({ error: e.message }) }
 })
@@ -217,7 +221,7 @@ reportsRouter.get('/stock-idle', async (req, res) => {
       WHERE s.stock > 0
         AND (
           last_sale.ultima_venda IS NULL
-          OR last_sale.ultima_venda < CURRENT_DATE - ($1 || ' days')::interval
+          OR last_sale.ultima_venda < CURRENT_DATE - ($1::int * INTERVAL '1 day')
         )
       ORDER BY dias_sem_venda DESC, valor_parado DESC
     `, [dias])
@@ -246,10 +250,14 @@ reportsRouter.get('/movements', async (req, res) => {
         sm.qty_before       AS saldo_anterior,
         sm.qty_after        AS saldo_atual,
         sm.reason           AS motivo,
-        sm.user_name        AS usuario
+        sm.user_name        AS usuario,
+        sm.order_id         AS pedido_id,
+        sm.customer_name    AS cliente,
+        o.number            AS pedido_numero
       FROM stock_movements sm
       JOIN skus     s ON s.id  = sm.sku_id
       JOIN products p ON p.id  = s.product_id
+      LEFT JOIN orders o ON o.id = sm.order_id
       WHERE sm.created_at::date BETWEEN $1 AND $2
       ORDER BY sm.created_at DESC
       LIMIT $3

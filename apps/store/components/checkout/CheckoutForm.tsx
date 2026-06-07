@@ -21,10 +21,10 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { useCart } from '@/lib/useCart'
 import { ordersApi } from '@/lib/api'
-import PaymentMethodSelector from './PaymentMethodSelector'
+import PaymentMethodSelector, { type PaymentMethod } from './PaymentMethodSelector'
+import { useAuth } from '@/lib/useAuth'
 import OrderSummaryPanel from './OrderSummaryPanel'
 
-type PaymentMethod = 'pix' | 'boleto' | 'a_combinar'
 
 interface Props {
   tenantSlug:         string
@@ -39,7 +39,8 @@ interface FormErrors {
 
 export default function CheckoutForm({ tenantSlug, minimumOrderAmount }: Props) {
   const router = useRouter()
-  const { items, total, clear, isEmpty } = useCart()
+  const { items, total, clear, isEmpty, isLoaded } = useCart()
+  const { buyer } = useAuth()
 
   const [deliveryAddress, setDeliveryAddress] = useState('')
   const [notes,           setNotes]           = useState('')
@@ -49,10 +50,10 @@ export default function CheckoutForm({ tenantSlug, minimumOrderAmount }: Props) 
 
   // Redireciona se carrinho esvaziar fora do fluxo (ex: outra aba)
   useEffect(() => {
-    if (isEmpty && !submitting) {
+    if (isLoaded && isEmpty && !submitting) {
       router.replace('/carrinho')
     }
-  }, [isEmpty, submitting, router])
+  }, [isLoaded, isEmpty, submitting, router])
 
   // ── Validação ──────────────────────────────────────────────────────────────
 
@@ -102,7 +103,7 @@ export default function CheckoutForm({ tenantSlug, minimumOrderAmount }: Props) 
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
-  if (isEmpty && !submitting) return null  // evita flash antes do redirect
+  if (isLoaded && isEmpty && !submitting) return null  // evita flash antes do redirect
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
@@ -165,7 +166,12 @@ export default function CheckoutForm({ tenantSlug, minimumOrderAmount }: Props) 
           {/* Forma de pagamento */}
           <section className="flex flex-col gap-3 rounded-[var(--radius-lg)] border border-border bg-card p-5">
             <h2 className="text-sm font-semibold text-foreground">Forma de pagamento</h2>
-            <PaymentMethodSelector value={paymentMethod} onChange={setPaymentMethod} />
+            <PaymentMethodSelector
+              value={paymentMethod}
+              onChange={setPaymentMethod}
+              creditAvailable={buyer?.creditAvailable ?? 0}
+              orderTotal={total}
+            />
           </section>
 
           {/* Erro geral */}

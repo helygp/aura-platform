@@ -37,11 +37,12 @@ export function useOrders() {
   const [isLoading, setIsLoading] = useState(true)
   const [error,     setError]     = useState(null)
   const [filters,   setFiltersRaw] = useState({
-    search: '', status: '', channel: '', dateFrom: '', dateTo: '',
+    search: '', status: '', channel: '', dateFrom: '', dateTo: '', customerId: '',
   })
   const [page,      setPage]      = useState(1)
   const [customers, setCustomers] = useState([])
   const [skus,      setSkus]      = useState([])
+  const [products,  setProducts]  = useState([])
 
   /* ─── Busca clientes e SKUs para o formulário ─── */
   const fetchCatalog = useCallback(async () => {
@@ -63,9 +64,11 @@ export function useOrders() {
             productName:    p.name,
             attributes:     sku.attributes ?? {},
             priceWholesale: sku.priceWholesale ?? 0,
+            stock:          sku.stock ?? 0,
           }))
         )
         setSkus(skuList)
+        setProducts(products ?? [])
       }
     } catch (_e) {
       // silently fail — formulário mostra listas vazias
@@ -99,10 +102,12 @@ export function useOrders() {
     const q = filters.search.trim().toLowerCase()
     if (q) list = list.filter(o =>
       o.id.toLowerCase().includes(q) ||
+      String(o.number ?? '').includes(q) ||
       (o.customerName ?? '').toLowerCase().includes(q)
     )
     if (filters.status)  list = list.filter(o => o.status  === filters.status)
     if (filters.channel) list = list.filter(o => o.channel === filters.channel)
+    if (filters.customerId) list = list.filter(o => o.customerId === filters.customerId)
     if (filters.dateFrom) {
       const from = new Date(filters.dateFrom)
       list = list.filter(o => new Date(o.createdAt) >= from)
@@ -164,6 +169,16 @@ export function useOrders() {
     allOrders.find(o => o.id === orderId) ?? null,
   [allOrders])
 
+  /* ─── Cancelar item parcial ─── */
+  const cancelItem = useCallback(async (orderId, itemId) => {
+    const res = await authFetch(`/api/orders/${orderId}/items/${itemId}/cancel`, { method: 'PATCH' })
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}))
+      throw new Error(d.error || 'Erro ao cancelar item')
+    }
+    await fetchAll()
+  }, [fetchAll])
+
   return {
     orders: paginated,
     total:  filtered.length,
@@ -177,10 +192,12 @@ export function useOrders() {
     refetch: fetchAll,
     createOrder,
     updateStatus,
+    cancelItem,
     getOrder,
     stats,
     PAGE_SIZE,
     customers,
     skus,
+    products,
   }
 }

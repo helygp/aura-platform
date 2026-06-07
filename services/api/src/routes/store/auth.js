@@ -1,35 +1,29 @@
 /**
  * routes/store/auth.js
- * Autenticação do comprador B2B — completamente separada do ERP.
+ * Auth do portal B2B — usa a tabela customers (email é a chave de vínculo).
  *
- * Tabela no banco do tenant: buyer_accounts
- * Cookies httpOnly separados: store_access / store_refresh
- * JWT secret próprio: BUYER_JWT_SECRET (env)
- *
- * POST /store/auth/register  — cadastro do comprador
- * POST /store/auth/login     — login → seta cookies
+ * POST /store/auth/register  — auto-cadastro → cria customer + ativa portal
+ * POST /store/auth/login     — autentica → seta cookies
  * POST /store/auth/logout    — limpa cookies
- * GET  /store/auth/me        — dados da sessão
+ * GET  /store/auth/me        — dados da sessão + crédito
+ * POST /store/auth/change-password
  */
 
-import { Router }   from 'express'
-import bcrypt       from 'bcryptjs'
+import { Router }            from 'express'
+import bcrypt                from 'bcryptjs'
 import { SignJWT, jwtVerify } from 'jose'
-import { query, getClient }   from '../../lib/tenantDb.js'
-import { ENV }      from '../../lib/env.js'
+import { query, getClient }  from '../../lib/tenantDb.js'
+import { ENV }               from '../../lib/env.js'
 
 export const storeAuthRouter = Router()
 
-// ─── Constantes ───────────────────────────────────────────────────────────────
-
-const ACCESS_TTL  = 60 * 60 * 2          // 2h em segundos
-const REFRESH_TTL = 60 * 60 * 24 * 30    // 30d
+const ACCESS_TTL  = 60 * 60 * 2
+const REFRESH_TTL = 60 * 60 * 24 * 30
+const IS_PROD     = process.env.NODE_ENV === 'production'
 
 const secret = () => new TextEncoder().encode(
   ENV.BUYER_JWT_SECRET ?? ENV.JWT_SECRET + '_buyer'
 )
-
-const IS_PROD = process.env.NODE_ENV === 'production'
 
 const COOKIE_OPTS = {
   httpOnly: true,
@@ -38,122 +32,134 @@ const COOKIE_OPTS = {
   path:     '/',
 }
 
-// ─── Helpers JWT ──────────────────────────────────────────────────────────────
-
-async function signBuyerToken(buyerTokenId, tenantSlug, ttl) {
+async function signToken(tokenId, tenantSlug, ttl) {
   return new SignJWT({ tenantSlug, type: 'buyer' })
     .setProtectedHeader({ alg: 'HS256' })
-    .setSubject(buyerTokenId)
+    .setSubject(tokenId)
     .setIssuedAt()
     .setExpirationTime(Math.floor(Date.now() / 1000) + ttl)
     .sign(secret())
 }
 
-async function verifyBuyerToken(token) {
-  const { payload } = await jwtVerify(token, secret())
-  if (payload.type !== 'buyer') throw new Error('Token inválido.')
-  return payload
+function setCookies(res, { accessToken, refreshToken }) {
+  res.cookie('store_access',   accessToken,  { ...COOKIE_OPTS, maxAge: ACCESS_TTL  * 1000 })
+  res.cookie('store_refresh',  refreshToken, { ...COOKIE_OPTS, maxAge: REFRESH_TTL * 1000 })
 }
 
-function setBuyerCookies(res, { accessToken, refreshToken }) {
-  res.cookie('store_access', accessToken, { ...COOKIE_OPTS, maxAge: ACCESS_TTL * 1000 })
-  res.cookie('store_refresh', refreshToken, { ...COOKIE_OPTS, maxAge: REFRESH_TTL * 1000 })
+function clearCookies(res) {
+  res.clearCookie('store_access',  { ...COOKIE_OPTS, maxAge: 0 })
+  res.clearCookie('store_refresh', { ...COOKIE_OPTS, maxAge: 0 })
 }
 
-function clearBuyerCookies(res) {
-  res.clearCookie('store_access',  { ...COOKIE_OPTS })
-  res.clearCookie('store_refresh', { ...COOKIE_OPTS })
-}
-
-
-// ─── POST /store/auth/register ────────────────────────────────────────────────
-
+/* ── POST /store/auth/register ───────────────────────────────────────────────── */
 storeAuthRouter.post('/register', async (req, res) => {
-  const { name, email, password, companyName, phone } = req.body ?? {}
+  const { name, email, password, companyName, document, phone } = req.body ?? {}
 
-  if (!name?.trim() || !email?.trim() || !password) {
+  if (!name?.trim() || !email?.trim() || !password)
     return res.status(400).json({ error: 'Nome, e-mail e senha são obrigatórios.' })
-  }
-  if (password.length < 8) {
+  if (password.length < 8)
     return res.status(400).json({ error: 'A senha deve ter no mínimo 8 caracteres.' })
-  }
+
+  const emailNorm = email.toLowerCase().trim()
 
   try {
-    // Verifica duplicidade
     const { rows: [existing] } = await query(
-      'SELECT id FROM buyer_accounts WHERE email = $1',
-      [email.toLowerCase().trim()],
-      req.tenantSlug
+      'SELECT id, portal_active FROM customers WHERE email = $1', [emailNorm]
     )
+
     if (existing) {
-      return res.status(409).json({ error: 'Este e-mail já está cadastrado.' })
+      if (existing.portal_active)
+        return res.status(409).json({ error: 'Este e-mail já possui cadastro. Faça login.' })
+      // Pré-cadastrado pelo lojista mas sem acesso: ativa portal
+      const hash    = await bcrypt.hash(password, 12)
+      const tokenId = `cst_${Buffer.from(crypto.getRandomValues(new Uint8Array(12))).toString('hex')}`
+      await query(
+        `UPDATE customers SET password_hash=$1, token_id=$2, portal_active=true, updated_at=NOW() WHERE id=$3`,
+        [hash, tokenId, existing.id]
+      )
+      const [at, rt] = await Promise.all([
+        signToken(tokenId, req.tenantSlug, ACCESS_TTL),
+        signToken(tokenId, req.tenantSlug, REFRESH_TTL),
+      ])
+      setCookies(res, { accessToken: at, refreshToken: rt })
+      return res.status(201).json({ name: name.trim(), email: emailNorm })
     }
 
-    const hash      = await bcrypt.hash(password, 12)
-    const tokenId   = `buy_${Buffer.from(crypto.getRandomValues(new Uint8Array(12))).toString('hex')}`
+    // Novo cliente: cria em customers
+    const hash    = await bcrypt.hash(password, 12)
+    const tokenId = `cst_${Buffer.from(crypto.getRandomValues(new Uint8Array(12))).toString('hex')}`
 
-    const { rows: [buyer] } = await query(`
-      INSERT INTO buyer_accounts (token_id, name, email, password_hash, company_name, phone, active, created_at)
-      VALUES ($1, $2, $3, $4, $5, $6, true, NOW())
-      RETURNING token_id, name, email, company_name
-    `, [tokenId, name.trim(), email.toLowerCase().trim(), hash, companyName?.trim() ?? null, phone?.trim() ?? null],
-    req.tenantSlug)
-
-    const [accessToken, refreshToken] = await Promise.all([
-      signBuyerToken(buyer.token_id, req.tenantSlug, ACCESS_TTL),
-      signBuyerToken(buyer.token_id, req.tenantSlug, REFRESH_TTL),
+    const { rows: [customer] } = await query(`
+      INSERT INTO customers
+        (name, email, password_hash, token_id, portal_active, whatsapp, document, created_at, updated_at)
+      VALUES ($1,$2,$3,$4,true,$5,$6,NOW(),NOW())
+      RETURNING id, name, email
+    `, [
+      name.trim(), emailNorm, hash, tokenId,
+      phone?.trim() ?? null,
+      document?.trim() ?? null,
     ])
 
-    setBuyerCookies(res, { accessToken, refreshToken })
+    const [at, rt] = await Promise.all([
+      signToken(tokenId, req.tenantSlug, ACCESS_TTL),
+      signToken(tokenId, req.tenantSlug, REFRESH_TTL),
+    ])
+    setCookies(res, { accessToken: at, refreshToken: rt })
 
     res.status(201).json({
-      name:        buyer.name,
-      email:       buyer.email,
-      companyName: buyer.company_name,
+      name:  customer.name,
+      email: customer.email,
     })
   } catch (err) {
     console.error('[store/auth/register]', err.message)
-    res.status(500).json({ error: 'Erro interno.' })
+    res.status(500).json({ error: 'Erro ao criar conta.' })
   }
 })
 
-// ─── POST /store/auth/login ───────────────────────────────────────────────────
-
+/* ── POST /store/auth/login ──────────────────────────────────────────────────── */
 storeAuthRouter.post('/login', async (req, res) => {
   const { email, password } = req.body ?? {}
-
-  if (!email || !password) {
+  if (!email || !password)
     return res.status(400).json({ error: 'E-mail e senha são obrigatórios.' })
-  }
 
   try {
-    const { rows: [buyer] } = await query(`
-      SELECT token_id, name, email, password_hash, company_name, active
-      FROM buyer_accounts
-      WHERE email = $1
-    `, [email.toLowerCase().trim()], req.tenantSlug)
+    const { rows: [customer] } = await query(
+      `SELECT id, token_id, name, email, password_hash, portal_active,
+              credit_limit, credit_balance, document
+       FROM customers WHERE email = $1`,
+      [email.toLowerCase().trim()]
+    )
 
-    // Resposta genérica — não vaza se o email existe
-    if (!buyer || !buyer.active) {
+    if (!customer || !customer.portal_active || !customer.password_hash)
       return res.status(401).json({ error: 'E-mail ou senha incorretos.' })
-    }
 
-    const valid = await bcrypt.compare(password, buyer.password_hash)
-    if (!valid) {
+    const ok = await bcrypt.compare(password, customer.password_hash)
+    if (!ok)
       return res.status(401).json({ error: 'E-mail ou senha incorretos.' })
-    }
 
-    const [accessToken, refreshToken] = await Promise.all([
-      signBuyerToken(buyer.token_id, req.tenantSlug, ACCESS_TTL),
-      signBuyerToken(buyer.token_id, req.tenantSlug, REFRESH_TTL),
+    // Regenera token_id a cada login para invalidar sessões antigas
+    const tokenId = `cst_${Buffer.from(crypto.getRandomValues(new Uint8Array(12))).toString('hex')}`
+    await query(
+      'UPDATE customers SET token_id=$1, updated_at=NOW() WHERE id=$2',
+      [tokenId, customer.id]
+    )
+
+    const [at, rt] = await Promise.all([
+      signToken(tokenId, req.tenantSlug, ACCESS_TTL),
+      signToken(tokenId, req.tenantSlug, REFRESH_TTL),
     ])
+    setCookies(res, { accessToken: at, refreshToken: rt })
 
-    setBuyerCookies(res, { accessToken, refreshToken })
+    const limitCents   = Math.round(parseFloat(customer.credit_limit)   * 100)
+    const balanceCents = Math.round(parseFloat(customer.credit_balance)  * 100)
 
     res.json({
-      name:        buyer.name,
-      email:       buyer.email,
-      companyName: buyer.company_name ?? null,
+      name:            customer.name,
+      email:           customer.email,
+      document:        customer.document ?? null,
+      creditLimit:     limitCents,
+      creditBalance:   balanceCents,
+      creditAvailable: limitCents - balanceCents,
     })
   } catch (err) {
     console.error('[store/auth/login]', err.message)
@@ -161,49 +167,76 @@ storeAuthRouter.post('/login', async (req, res) => {
   }
 })
 
-// ─── POST /store/auth/logout ──────────────────────────────────────────────────
-
+/* ── POST /store/auth/logout ─────────────────────────────────────────────────── */
 storeAuthRouter.post('/logout', (req, res) => {
-  clearBuyerCookies(res)
-  res.status(204).end()
+  clearCookies(res)
+  res.json({ ok: true })
 })
 
-// ─── GET /store/auth/me ───────────────────────────────────────────────────────
-
+/* ── GET /store/auth/me ──────────────────────────────────────────────────────── */
 storeAuthRouter.get('/me', async (req, res) => {
   const token = req.cookies?.store_access
-  if (!token) return res.status(401).json({ error: 'Não autenticado.' })
+  if (!token) return res.json({ buyer: null })
 
   try {
-    const payload = await verifyBuyerToken(token)
+    const { payload } = await jwtVerify(token, secret())
+    if (payload.type !== 'buyer') throw new Error('Token inválido.')
 
-    const { rows: [buyer] } = await query(`
-      SELECT name, email, company_name FROM buyer_accounts
-      WHERE token_id = $1 AND active = true
-    `, [payload.sub], req.tenantSlug)
+    const { rows: [customer] } = await query(
+      `SELECT id, name, email, document, whatsapp,
+              credit_limit, credit_balance, portal_active
+       FROM customers WHERE token_id = $1 AND portal_active = true`,
+      [payload.sub]
+    )
+    if (!customer) return res.status(401).json({ error: 'Sessão inválida.' })
 
-    if (!buyer) return res.status(401).json({ error: 'Sessão inválida.' })
+    const limitCents   = Math.round(parseFloat(customer.credit_limit)   * 100)
+    const balanceCents = Math.round(parseFloat(customer.credit_balance)  * 100)
 
-    res.json({ name: buyer.name, email: buyer.email, companyName: buyer.company_name ?? null })
+    res.json({ buyer: {
+      id:              customer.id,
+      name:            customer.name,
+      email:           customer.email,
+      document:        customer.document ?? null,
+      whatsapp:        customer.whatsapp ?? null,
+      creditLimit:     limitCents,
+      creditBalance:   balanceCents,
+      creditAvailable: limitCents - balanceCents,
+    }})
   } catch {
-    clearBuyerCookies(res)
-    res.status(401).json({ error: 'Sessão expirada.' })
+    clearCookies(res)
+    res.json({ buyer: null })
   }
 })
 
-// ─── POST /store/auth/refresh ─────────────────────────────────────────────────
-
-storeAuthRouter.post('/refresh', async (req, res) => {
-  const token = req.cookies?.store_refresh
+/* ── POST /store/auth/change-password ───────────────────────────────────────── */
+storeAuthRouter.post('/change-password', async (req, res) => {
+  const token = req.cookies?.store_access
   if (!token) return res.status(401).json({ error: 'Não autenticado.' })
 
+  const { currentPassword, newPassword } = req.body ?? {}
+  if (!currentPassword || !newPassword)
+    return res.status(400).json({ error: 'Preencha todos os campos.' })
+  if (newPassword.length < 8)
+    return res.status(400).json({ error: 'Nova senha deve ter no mínimo 8 caracteres.' })
+
   try {
-    const payload   = await verifyBuyerToken(token)
-    const accessToken = await signBuyerToken(payload.sub, req.tenantSlug, ACCESS_TTL)
-    res.cookie('store_access', accessToken, { ...COOKIE_OPTS, maxAge: ACCESS_TTL * 1000 })
-    res.status(204).end()
-  } catch {
-    clearBuyerCookies(res)
-    res.status(401).json({ error: 'Sessão expirada. Faça login novamente.' })
+    const { payload } = await jwtVerify(token, secret())
+    const { rows: [customer] } = await query(
+      'SELECT id, password_hash FROM customers WHERE token_id = $1 AND portal_active = true',
+      [payload.sub]
+    )
+    if (!customer) return res.status(401).json({ error: 'Sessão inválida.' })
+
+    const ok = await bcrypt.compare(currentPassword, customer.password_hash)
+    if (!ok) return res.status(401).json({ error: 'Senha atual incorreta.' })
+
+    const hash = await bcrypt.hash(newPassword, 12)
+    await query('UPDATE customers SET password_hash=$1, updated_at=NOW() WHERE id=$2', [hash, customer.id])
+
+    res.json({ ok: true })
+  } catch (err) {
+    console.error('[store/auth/change-password]', err.message)
+    res.status(500).json({ error: 'Erro interno.' })
   }
 })

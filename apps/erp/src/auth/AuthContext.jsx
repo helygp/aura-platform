@@ -13,7 +13,8 @@
  *   No boot chama /auth/me. Se o cookie aura_access ainda for válido
  *   o usuário é restaurado sem nova tela de login.
  *   Se expirado, tenta /auth/refresh automaticamente (cookie aura_refresh).
- *   Se ambos falharem → usuário null → ProtectedRoute redireciona.
+ *   Se ambos falharem OU se o token for de outro tenant (TENANT_MISMATCH)
+ *   → usuário null → ProtectedRoute redireciona para login.
  */
 
 import React, {
@@ -24,9 +25,14 @@ import React, {
   useCallback,
   useMemo,
 } from 'react'
-import { apiLogin, apiLogout, apiMe, apiRefresh , setMemToken } from './api.js'
+import { apiLogin, apiLogout, apiMe, apiRefresh, setMemToken } from './api.js'
 
 const AuthContext = createContext(null)
+
+/** Erros que indicam sessão de outro tenant — não tentar refresh, ir direto para login */
+function isTenantMismatch(err) {
+  return err?.code === 'TENANT_MISMATCH'
+}
 
 export function AuthProvider({ children }) {
   const [user,      setUser]      = useState(null)
@@ -41,12 +47,22 @@ export function AuthProvider({ children }) {
         setUser(data.auth)
       } catch (err) {
         if (err.status === 401) {
-          // Access token expirado — tenta refresh
-          try {
-            const refreshed = await apiRefresh()
-            setUser(refreshed.user)
-          } catch {
-            setUser(null)  // sem sessão válida
+          // Se for mismatch de tenant, não tenta refresh — vai para login
+          if (isTenantMismatch(err)) {
+            setUser(null)
+          } else {
+            // Access token expirado — tenta refresh
+            try {
+              const refreshed = await apiRefresh()
+              // Refresh retornou mas pode ser de outro tenant — verificar
+              if (isTenantMismatch(refreshed)) {
+                setUser(null)
+              } else {
+                setUser(refreshed.user)
+              }
+            } catch (refreshErr) {
+              setUser(null)  // sem sessão válida
+            }
           }
         } else {
           setUser(null)
@@ -62,7 +78,7 @@ export function AuthProvider({ children }) {
   const login = useCallback(async (email, password) => {
     const data = await apiLogin({ email, password }) // lança se erro
     setUser(data.user)
-      if (data.accessToken) setMemToken(data.accessToken)
+    if (data.accessToken) setMemToken(data.accessToken)
   }, [])
 
   /* ─── logout() ─── */

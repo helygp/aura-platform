@@ -17,12 +17,13 @@
  *   - Papel editável por dropdown inline na linha da tabela
  */
 
+import { useSortable } from '../../hooks/useSortable.js'
 import React, { useState, useCallback } from 'react'
 import {
-  UserPlus, RefreshCw, MoreVertical,
-  ShieldCheck, Mail, Ban, RotateCcw,
-  ChevronDown, Users, UserCheck, Clock,
-  ChevronUp,
+  UserPlus, RefreshCw, MoreVertical, ShieldCheck,
+  Mail, Ban, RotateCcw, ChevronDown,
+  Users, UserCheck, Clock, ChevronUp,
+  ChevronsUpDown,
 } from 'lucide-react'
 import { Card, Skeleton, Button, Modal } from '@aura/ui'
 import { InviteModal }       from './components/InviteModal.jsx'
@@ -40,7 +41,7 @@ function TableSkeleton() {
         <table className="w-full">
           <thead className="bg-[var(--color-bg-subtle)] border-b border-[var(--color-border)]">
             <tr>
-              {['Usuário','Papel','Status','Último acesso',''].map(h => (
+              {['Usuário','Papel','WhatsApp','Status','Último acesso',''].map(h => (
                 <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap">{h}</th>
               ))}
             </tr>
@@ -244,6 +245,10 @@ function UserRow({ user, onChangeRole, onRevoke, onReactivate, onResend }) {
       <td className="px-4 py-3">
         <RoleDropdown user={user} onChangeRole={onChangeRole} />
       </td>
+      {/* WhatsApp */}
+      <td className="px-4 py-3">
+        <span className="text-xs text-[var(--color-text-muted)]">{user.whatsapp || '—'}</span>
+      </td>
       {/* Status */}
       <td className="px-4 py-3">
         <StatusBadge status={user.status} />
@@ -301,12 +306,37 @@ function UserCard({ user, onChangeRole, onRevoke, onReactivate, onResend }) {
 }
 
 /* ─── Página ─── */
+const USER_COLS = [
+  { label: 'Usuário',       key: 'name',      sortable: true },
+  { label: 'Papel',         key: 'role',      sortable: true },
+  { label: 'Status',        key: 'status',    sortable: true },
+  { label: 'Último acesso', key: 'lastLogin', sortable: true },
+  { label: '',              key: '_act',       sortable: false },
+]
+function SortableTh({ col, sortKey, sortDir, onSort }) {
+  const active = sortKey === (col.sortKey ?? col.key)
+  const align  = col.align === 'right' ? 'text-right' : 'text-left'
+  return (
+    <th onClick={() => col.sortable && onSort(col)}
+      className={`px-4 py-3 text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap select-none ${align} ${col.sortable ? 'cursor-pointer hover:text-[var(--color-text)] hover:bg-[var(--color-bg-subtle)] transition-colors' : ''}`}
+    >
+      <span className="inline-flex items-center gap-1">
+        {col.label}
+        {col.sortable && (active
+          ? sortDir === 'asc' ? <ChevronUp size={11} className="shrink-0" /> : <ChevronDown size={11} className="shrink-0" />
+          : <ChevronsUpDown size={11} className="shrink-0 opacity-30" />
+        )}
+      </span>
+    </th>
+  )
+}
 export function UsersPage() {
   const {
-    users, isLoading, refetch,
-    inviteUser, updateRole, revokeUser, reactivate, resendInvite,
+    users, isLoading, refetch, customers,
+    inviteUser, updateUser, updateRole, revokeUser, reactivate, resendInvite,
     stats,
   } = useUsers()
+  const { sorted: sortedUsers, sortKey: uSortKey, sortDir: uSortDir, handleSort: uHandleSort } = useSortable(users, 'name')
 
   const [inviteOpen,    setInviteOpen]    = useState(false)
   const [showMatrix,    setShowMatrix]    = useState(false)
@@ -377,13 +407,13 @@ export function UsersPage() {
               <table className="w-full text-sm">
                 <thead className="bg-[var(--color-bg-subtle)] border-b border-[var(--color-border)]">
                   <tr>
-                    {['Usuário', 'Papel', 'Status', 'Último acesso', ''].map(h => (
-                      <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap">{h}</th>
+                    {USER_COLS.map(col => (
+                      <SortableTh key={col.key} col={col} sortKey={uSortKey} sortDir={uSortDir} onSort={uHandleSort} />
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {users.map(u => (
+                  {sortedUsers.map(u => (
                     <UserRow
                       key={u.id}
                       user={u}
@@ -431,7 +461,8 @@ export function UsersPage() {
       <InviteModal
         open={inviteOpen}
         onClose={() => setInviteOpen(false)}
-        onInvite={inviteUser}
+        customers={customers ?? []}
+        onInvite={async () => { refetch(); setInviteOpen(false) }}
       />
 
       {/* ── Modal confirm revogar ── */}

@@ -106,3 +106,68 @@ function normalizeCust(c) {
     createdAt:   c.created_at,
   }
 }
+
+/* ── POST /api/customers/:id/send-portal-access ────────────────────────────────
+ * Gera acesso ao portal para um cliente pré-cadastrado no ERP.
+ * Cria senha padrão, ativa portal_active e envia email.
+ */
+customersRouter.post('/:id/send-portal-access', authorize('admin', 'gerente'), async (req, res) => {
+  try {
+    const { rows: [customer] } = await query(
+      'SELECT id, name, email FROM customers WHERE id = $1',
+      [req.params.id]
+    )
+    if (!customer) return res.status(404).json({ error: 'Cliente não encontrado.' })
+    if (!customer.email) return res.status(422).json({ error: 'Cliente sem e-mail cadastrado.' })
+
+    const bcrypt  = (await import('bcryptjs')).default
+    const { prisma } = await import('../lib/prisma.js')
+
+    // Gera senha temporária legível
+    const chars    = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789'
+    const tempPass = Array.from(crypto.getRandomValues(new Uint8Array(10)))
+      .map(b => chars[b % chars.length]).join('')
+
+    const hash    = await bcrypt.hash(tempPass, 12)
+    const tokenId = `cst_${Buffer.from(crypto.getRandomValues(new Uint8Array(12))).toString('hex')}`
+
+    await query(
+      'UPDATE customers SET password_hash=$1, token_id=$2, portal_active=true, updated_at=NOW() WHERE id=$3',
+      [hash, tokenId, customer.id]
+    )
+
+    // Busca dados do tenant para montar a URL da loja
+    const tenant = await prisma.tenant.findUnique({
+      where:  { slug: req.tenantSlug },
+      select: { name: true, slug: true },
+    })
+
+    const storeUrl  = `https://loja.${req.tenantSlug}.aurabr.app`
+    const { sendEmail } = await import('../../../notify/src/email.js').catch(() => ({ sendEmail: null }))
+
+    if (sendEmail) {
+      await sendEmail({
+        to:      customer.email,
+        subject: `Seu acesso ao portal ${tenant?.name ?? ''}`,
+        html:    `
+          <p>Olá, <strong>${customer.name}</strong>!</p>
+          <p>Seu acesso ao portal foi criado.</p>
+          <p><strong>E-mail:</strong> ${customer.email}<br/>
+          <strong>Senha:</strong> ${tempPass}</p>
+          <p>Acesse: <a href="${storeUrl}">${storeUrl}</a></p>
+          <p><em>Recomendamos trocar sua senha após o primeiro acesso.</em></p>
+        `,
+      })
+    }
+
+    res.json({
+      ok:        true,
+      email:     customer.email,
+      tempPass:  sendEmail ? undefined : tempPass, // só retorna se email não enviado
+      storeUrl,
+    })
+  } catch (err) {
+    console.error('[customers/send-portal-access]', err.message)
+    res.status(500).json({ error: 'Erro ao criar acesso.' })
+  }
+})

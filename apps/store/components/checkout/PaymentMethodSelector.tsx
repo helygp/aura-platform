@@ -2,11 +2,13 @@
 
 /**
  * components/checkout/PaymentMethodSelector.tsx
- * Seletor de forma de pagamento: Pix / Boleto / A combinar.
- * Visual em cards — não radio buttons nativos.
+ * Seletor de forma de pagamento: Pix / Boleto / A combinar / Crédito.
+ * A opção Crédito só aparece se o cliente tiver crédito disponível.
  */
 
-type PaymentMethod = 'pix' | 'boleto' | 'a_combinar'
+import { formatPrice } from '@/lib/cart'
+
+export type PaymentMethod = 'pix' | 'boleto' | 'a_combinar' | 'credito'
 
 interface Option {
   value:       PaymentMethod
@@ -15,7 +17,7 @@ interface Option {
   icon:        () => JSX.Element
 }
 
-const OPTIONS: Option[] = [
+const BASE_OPTIONS: Option[] = [
   {
     value:       'pix',
     label:       'Pix',
@@ -31,20 +33,33 @@ const OPTIONS: Option[] = [
   {
     value:       'a_combinar',
     label:       'A combinar',
-    description: 'Faturamento ou outra condição',
+    description: 'Faturamento ou outra condição acordada',
     icon:        HandshakeIcon,
   },
 ]
 
 interface Props {
-  value:    PaymentMethod
-  onChange: (v: PaymentMethod) => void
+  value:            PaymentMethod
+  onChange:         (v: PaymentMethod) => void
+  creditAvailable?: number   // centavos — se > 0 e >= total, mostra opção crédito
+  orderTotal?:      number   // centavos
 }
 
-export default function PaymentMethodSelector({ value, onChange }: Props) {
+export default function PaymentMethodSelector({ value, onChange, creditAvailable = 0, orderTotal = 0 }: Props) {
+  const showCredit = creditAvailable > 0 && creditAvailable >= orderTotal
+
+  const options: Option[] = showCredit
+    ? [...BASE_OPTIONS, {
+        value:       'credito' as PaymentMethod,
+        label:       'Crédito',
+        description: `Disponível: ${formatPrice(creditAvailable)}`,
+        icon:        CreditIcon,
+      }]
+    : BASE_OPTIONS
+
   return (
     <div className="flex flex-col gap-2">
-      {OPTIONS.map((opt) => {
+      {options.map((opt) => {
         const selected = value === opt.value
         return (
           <button
@@ -59,28 +74,19 @@ export default function PaymentMethodSelector({ value, onChange }: Props) {
             ].join(' ')}
             aria-pressed={selected}
           >
-            {/* Radio visual */}
-            <span
-              className={[
-                'flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2 transition',
-                selected ? 'border-primary' : 'border-border',
-              ].join(' ')}
-            >
-              {selected && (
-                <span className="h-2 w-2 rounded-full bg-primary" />
-              )}
+            <span className={[
+              'flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2 transition',
+              selected ? 'border-primary' : 'border-border',
+            ].join(' ')}>
+              {selected && <span className="h-2 w-2 rounded-full bg-primary" />}
             </span>
 
-            {/* Ícone */}
             <span className={selected ? 'text-primary' : 'text-muted-foreground'}>
               <opt.icon />
             </span>
 
-            {/* Texto */}
             <span className="flex flex-col gap-0.5">
-              <span className={`text-sm font-medium ${selected ? 'text-foreground' : 'text-foreground'}`}>
-                {opt.label}
-              </span>
+              <span className="text-sm font-medium text-foreground">{opt.label}</span>
               <span className="text-xs text-muted-foreground">{opt.description}</span>
             </span>
           </button>
@@ -89,8 +95,6 @@ export default function PaymentMethodSelector({ value, onChange }: Props) {
     </div>
   )
 }
-
-// ─── Ícones ───────────────────────────────────────────────────────────────────
 
 function PixIcon() {
   return (
@@ -114,9 +118,16 @@ function HandshakeIcon() {
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
       <path d="m11 17 2 2a1 1 0 1 0 3-3" />
       <path d="m14 14 2.5 2.5a1 1 0 1 0 3-3l-3.88-3.88a3 3 0 0 0-4.24 0l-.88.88a1 1 0 1 1-3-3l2.81-2.81a5.79 5.79 0 0 1 7.06-.87l.47.28a2 2 0 0 0 1.42.25L21 4" />
-      <path d="m21 3 1 11h-2" />
-      <path d="M3 3 2 14l6.5 6.5a1 1 0 1 0 3-3" />
+      <path d="m21 3 1 11h-2" /><path d="M3 3 2 14l6.5 6.5a1 1 0 1 0 3-3" />
       <path d="M3 4h8" />
+    </svg>
+  )
+}
+function CreditIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="1" y="4" width="22" height="16" rx="2" ry="2" />
+      <line x1="1" y1="10" x2="23" y2="10" />
     </svg>
   )
 }

@@ -197,28 +197,32 @@ const QUICK_ACTIONS = [
     icon:  ShoppingCart,
     label: 'Novo pedido',
     desc:  'Criar pedido manual',
-    path:  '/orders/new',
+    path:  '/orders',
+    state: { openNew: true },
     color: 'text-blue-600 bg-blue-50 dark:bg-blue-950 dark:text-blue-400',
   },
   {
     icon:  Package,
     label: 'Novo produto',
     desc:  'Cadastrar produto ou variante',
-    path:  '/products/new',
+    path:  '/products',
+    state: { openNew: true },
     color: 'text-violet-600 bg-violet-50 dark:bg-violet-950 dark:text-violet-400',
   },
   {
     icon:  Users,
     label: 'Novo cliente',
     desc:  'Cadastrar atacadista',
-    path:  '/customers/new',
+    path:  '/customers',
+    state: { openNew: true },
     color: 'text-emerald-600 bg-emerald-50 dark:bg-emerald-950 dark:text-emerald-400',
   },
   {
     icon:  AlertTriangle,
     label: 'Estoque crítico',
     desc:  'Ver SKUs em alerta',
-    path:  '/inventory?filter=critical',
+    path:  '/inventory',
+    state: { status: 'critico' },
     color: 'text-amber-600 bg-amber-50 dark:bg-amber-950 dark:text-amber-400',
   },
 ]
@@ -248,7 +252,7 @@ function QuickActions({ isLoading }) {
           return (
             <button
               key={action.label}
-              onClick={() => navigate(action.path)}
+              onClick={() => navigate(action.path, { state: action.state })}
               className="
                 group flex flex-col items-start gap-2 p-3.5
                 rounded-xl border border-[var(--color-border)]

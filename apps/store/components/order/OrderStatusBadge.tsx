@@ -1,55 +1,51 @@
 /**
  * components/order/OrderStatusBadge.tsx
- * Badge colorido para cada status do pedido.
- * RSC-safe — sem 'use client'.
+ * Badge de status com alto contraste — usa cores sólidas com texto branco/escuro.
  */
 
-type OrderStatusValue =
-  | 'aguardando_confirmacao'
-  | 'confirmado'
-  | 'em_separacao'
-  | 'enviado'
-  | 'entregue'
-  | 'cancelado'
-
 interface Props {
-  status: OrderStatusValue | string
+  status: string
   size?: 'sm' | 'md'
 }
 
-const CONFIG: Record<string, { label: string; className: string }> = {
-  aguardando_confirmacao: {
-    label: 'Aguardando confirmação',
-    className: 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300',
-  },
-  confirmado: {
-    label: 'Confirmado',
-    className: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300',
-  },
-  em_separacao: {
-    label: 'Em separação',
-    className: 'bg-violet-100 text-violet-800 dark:bg-violet-900/30 dark:text-violet-300',
-  },
-  enviado: {
-    label: 'Enviado',
-    className: 'bg-sky-100 text-sky-800 dark:bg-sky-900/30 dark:text-sky-300',
-  },
-  entregue: {
-    label: 'Entregue',
-    className: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300',
-  },
-  cancelado: {
-    label: 'Cancelado',
-    className: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300',
-  },
+interface BadgeConfig {
+  label:   string
+  bg:      string
+  color:   string
+  dot:     string
+}
+
+const CONFIG: Record<string, BadgeConfig> = {
+  pendente:   { label: 'Aguardando',   bg: '#92400e', color: '#fff', dot: '#fbbf24' },
+  confirmado: { label: 'Confirmado',   bg: '#1e40af', color: '#fff', dot: '#60a5fa' },
+  separando:  { label: 'Em separação', bg: '#5b21b6', color: '#fff', dot: '#a78bfa' },
+  enviado:    { label: 'Enviado',      bg: '#0e7490', color: '#fff', dot: '#38bdf8' },
+  entregue:   { label: 'Entregue',     bg: '#166534', color: '#fff', dot: '#4ade80' },
+  cancelado:  { label: 'Cancelado',    bg: '#991b1b', color: '#fff', dot: '#f87171' },
 }
 
 export default function OrderStatusBadge({ status, size = 'md' }: Props) {
-  const cfg = CONFIG[status] ?? { label: status, className: 'bg-muted text-muted-foreground' }
-  const sizeClass = size === 'sm' ? 'px-2 py-0.5 text-[11px]' : 'px-2.5 py-1 text-xs'
+  const cfg = CONFIG[status.toLowerCase()] ?? {
+    label: status, bg: '#374151', color: '#fff', dot: '#9ca3af'
+  }
+
+  const pad    = size === 'sm' ? '2px 9px' : '3px 11px'
+  const fsize  = size === 'sm' ? 11         : 12
+  const dotSz  = size === 'sm' ? 5          : 6
 
   return (
-    <span className={`inline-flex items-center rounded-full font-semibold ${sizeClass} ${cfg.className}`}>
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: 6,
+      padding: pad, borderRadius: 999,
+      background: cfg.bg, color: cfg.color,
+      fontSize: fsize, fontWeight: 600, letterSpacing: '.01em',
+      lineHeight: 1.5, whiteSpace: 'nowrap',
+    }}>
+      <span style={{
+        width: dotSz, height: dotSz, borderRadius: '50%',
+        background: cfg.dot, flexShrink: 0,
+        boxShadow: `0 0 0 1.5px ${cfg.dot}40`,
+      }} />
       {cfg.label}
     </span>
   )

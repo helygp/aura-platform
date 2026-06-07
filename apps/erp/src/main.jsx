@@ -27,7 +27,8 @@ import { ProtectedRoute } from './routes/ProtectedRoute.jsx'
 import { AppLayout }      from './layout/AppLayout.jsx'
 import { LoginPage }      from './pages/LoginPage.jsx'
 import { DashboardPage }  from './pages/DashboardPage.jsx'
-import { ProductsPage }   from './pages/products/ProductsPage.jsx'
+import { ProductsPage }       from './pages/products/ProductsPage.jsx'
+import { ProductDetailPage }   from './pages/products/ProductDetailPage.jsx'
 import { InventoryPage }  from './pages/inventory/InventoryPage.jsx'
 import { OrdersPage }     from './pages/orders/OrdersPage.jsx'
 import { CustomersPage }  from './pages/customers/CustomersPage.jsx'
@@ -37,6 +38,8 @@ import { UsersPage }      from './pages/users/UsersPage.jsx'
 import { ProfilePage }    from './pages/ProfilePage.jsx'
 import { BillingPage }    from './pages/billing/BillingPage.jsx'
 import { ReportsPage }    from './pages/reports/ReportsPage.jsx'
+import { ReceivablesPage }  from './pages/receivables/ReceivablesPage.jsx'
+import { StockPanelPage }   from './pages/inventory/StockPanelPage.jsx'
 import { NotFoundPage, ForbiddenPage } from './pages/ErrorPages.jsx'
 
 /* ─── Tema inicial (será sobrescrito pelo AppLayout via API) ─── */
@@ -53,6 +56,11 @@ function App() {
       {/* ── Rota pública ── */}
       <Route path="/login" element={<LoginPage />} />
 
+      {/* ── Painel tela cheia (sem AppLayout) ── */}
+      <Route element={<ProtectedRoute />}>
+        <Route path="/stock-panel" element={<StockPanelPage />} />
+      </Route>
+
       {/* ── Rotas protegidas com AppLayout ── */}
       <Route element={<ProtectedRoute />}>
         <Route element={<AppLayout />}>
@@ -62,7 +70,8 @@ function App() {
           {/* Módulos — qualquer usuário autenticado */}
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/orders"    element={<OrdersPage />} />
-          <Route path="/products"  element={<ProductsPage />} />
+          <Route path="/products"      element={<ProductsPage />} />
+          <Route path="/products/:id"  element={<ProductDetailPage />} />
           <Route path="/customers" element={<CustomersPage />} />
           <Route path="/profile"   element={<ProfilePage />} />
 
@@ -77,6 +86,10 @@ function App() {
 
           <Route element={<ProtectedRoute roles={['admin', 'financeiro']} />}>
             <Route path="/reports"   element={<ReportsPage />} />
+          </Route>
+
+          <Route element={<ProtectedRoute roles={['admin', 'financeiro']} />}>
+            <Route path='/receivables' element={<ReceivablesPage />} />
           </Route>
 
           <Route element={<ProtectedRoute roles={['admin']} />}>

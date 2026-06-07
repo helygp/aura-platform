@@ -1,15 +1,17 @@
 /**
  * middleware/authenticate.js
  *
- * Valida o access token (httpOnly cookie aura_access).
- * Injeta req.user = { tokenId, tenantId, tenantSlug, role, email, name }
+ * Valida o access token (httpOnly cookie aura_access ou Bearer header).
+ * Injeta req.user = { id, tokenId, tenantId, tenantSlug, role, email, name }
  *
- * Uso:
- *   router.get('/me', authenticate, handler)
+ * Garante que o token pertence ao tenant deste container (TENANT_SLUG).
+ * Impede que tokens de outros tenants sejam usados cruzados.
  */
 
 import { verifyAccessToken } from '../lib/tokens.js'
-import { prismaMaster as prisma }            from '../lib/prisma-master.js'
+import { prismaMaster as prisma } from '../lib/prisma-master.js'
+
+const CONTAINER_TENANT = process.env.TENANT_SLUG ?? null
 
 export async function authenticate(req, res, next) {
   // Aceita cookie httpOnly OU header Authorization: Bearer
@@ -26,7 +28,14 @@ export async function authenticate(req, res, next) {
   try {
     const payload = await verifyAccessToken(token)
 
-    /* Busca dados completos do usuário (para tenantId, name, email) */
+    // ── Validação de tenant: bloqueia tokens de outros tenants ──
+    if (CONTAINER_TENANT && payload.tenantSlug !== CONTAINER_TENANT) {
+      return res.status(401).json({
+        error:  'Sessão inválida para este tenant.',
+        code:   'TENANT_MISMATCH',
+      })
+    }
+
     const user = await prisma.user.findUnique({
       where:  { tokenId: payload.sub },
       select: { id:true, tokenId:true, tenantId:true, email:true, name:true, role:true, active:true,
@@ -37,11 +46,20 @@ export async function authenticate(req, res, next) {
       return res.status(401).json({ error: 'Sessão inválida.' })
     }
 
+    // Dupla verificação: slug do usuário no DB também tem que bater
+    const userTenantSlug = user.tenant?.slug ?? payload.tenantSlug
+    if (CONTAINER_TENANT && userTenantSlug !== CONTAINER_TENANT) {
+      return res.status(401).json({
+        error: 'Sessão inválida para este tenant.',
+        code:  'TENANT_MISMATCH',
+      })
+    }
+
     req.user = req.auth = {
       id:         user.id,
       tokenId:    user.tokenId,
       tenantId:   user.tenantId,
-      tenantSlug: user.tenant?.slug ?? payload.tenantSlug,
+      tenantSlug: userTenantSlug,
       role:       user.role,
       email:      user.email,
       name:       user.name,

@@ -10,6 +10,7 @@
  */
 
 import React from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Package, Edit2, Trash2 } from 'lucide-react'
 import { Badge } from '@aura/ui'
 import { PRODUCT_TYPES, STOCK_STATUS, fmtBRL } from '../productsTypes.js'
@@ -31,6 +32,7 @@ const STOCK_BADGE = {
 }
 
 export function ProductCard({ product, onEdit, onDelete }) {
+  const navigate = useNavigate()
   const status  = productStockStatus(product.skus)
   const badge   = STOCK_BADGE[status]
   const minPrice = product.skus?.length
@@ -97,8 +99,11 @@ export function ProductCard({ product, onEdit, onDelete }) {
         </div>
       </div>
 
-      {/* Info */}
-      <div className="p-3 flex flex-col gap-1.5 flex-1">
+      {/* Info — clicável para página de detalhe */}
+      <div
+        className="p-3 flex flex-col gap-1.5 flex-1 cursor-pointer hover:bg-[var(--color-bg-subtle)] transition-colors"
+        onClick={() => navigate(`/products/${product.id}`)}
+      >
         <p className="text-xs text-[var(--color-text-muted)] font-mono">{product.code}</p>
         <p className="text-sm font-semibold text-[var(--color-text)] leading-tight line-clamp-2">
           {product.name}

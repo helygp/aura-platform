@@ -33,6 +33,21 @@ export const STATUS_META = {
   [ORDER_STATUS.CANCELLED]: { label: 'Cancelado',  color: 'text-red-500',     bg: 'bg-red-50    dark:bg-red-950',    border: 'border-red-300   dark:border-red-700',    dot: 'bg-red-500'    },
 }
 
+/* ─── Método de pagamento ─── */
+export const PAYMENT_METHOD = {
+  PIX:        'pix',
+  BOLETO:     'boleto',
+  CREDITO:    'credito',
+  A_COMBINAR: 'a_combinar',
+}
+
+export const PAYMENT_METHOD_META = {
+  [PAYMENT_METHOD.PIX]:        { label: 'Pix',        icon: '⚡', color: 'text-emerald-600', bg: 'bg-emerald-50 dark:bg-emerald-950', border: 'border-emerald-300 dark:border-emerald-700' },
+  [PAYMENT_METHOD.BOLETO]:     { label: 'Boleto',     icon: '🧾', color: 'text-orange-600',  bg: 'bg-orange-50  dark:bg-orange-950',  border: 'border-orange-300  dark:border-orange-700'  },
+  [PAYMENT_METHOD.CREDITO]:    { label: 'Crédito',    icon: '💳', color: 'text-violet-600',  bg: 'bg-violet-50  dark:bg-violet-950',  border: 'border-violet-300  dark:border-violet-700'  },
+  [PAYMENT_METHOD.A_COMBINAR]: { label: 'A combinar', icon: '🤝', color: 'text-slate-500',   bg: 'bg-slate-50   dark:bg-slate-900',   border: 'border-slate-300   dark:border-slate-700'   },
+}
+
 /* ─── Canal de origem ─── */
 export const ORDER_CHANNEL = {
   WHATSAPP: 'whatsapp',
@@ -67,6 +82,7 @@ export function calcOrderTotals(items) {
 }
 
 /* ─── Gera número de pedido legível ─── */
-export function orderNumber(id) {
+export function orderNumber(id, number) {
+  if (number != null) return `#${number}`
   return `#${String(id).slice(-6).toUpperCase()}`
 }

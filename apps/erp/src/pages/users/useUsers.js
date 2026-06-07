@@ -15,6 +15,19 @@
  */
 
 import { useState, useEffect, useCallback } from 'react'
+
+function authFetch(url, opts = {}) {
+  const token = window.__aura_mem_token__ || ''
+  return fetch(url, {
+    ...opts,
+    credentials: 'include',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: 'Bearer ' + token } : {}),
+      ...(opts.headers ?? {}),
+    },
+  })
+}
 import { USER_STATUS } from './usersTypes.js'
 
 /* ─── Mock ─── */
@@ -87,18 +100,23 @@ let MOCK_DB = buildMock()
 
 export function useUsers() {
   const [users,     setUsers]     = useState([])
+  const [customers, setCustomers] = useState([])
   const [isLoading, setIsLoading] = useState(true)
 
   const fetchAll = useCallback(async () => {
     setIsLoading(true)
     try {
-      const res = await fetch('/api/users', { credentials: 'include' })
+      const [res, resC] = await Promise.all([
+        authFetch('/api/users'),
+        authFetch('/api/customers'),
+      ])
       if (!res.ok) throw new Error()
       const json = await res.json()
       setUsers(json.users ?? [])
-    } catch {
-      await new Promise(r => setTimeout(r, 350))
-      setUsers([...MOCK_DB])
+      if (resC.ok) { const dc = await resC.json(); setCustomers(dc.customers ?? []) }
+    } catch (e) {
+      console.error('[useUsers]', e.message)
+      setUsers([])
     } finally {
       setIsLoading(false)
     }
@@ -107,29 +125,21 @@ export function useUsers() {
   useEffect(() => { fetchAll() }, [fetchAll])
 
   /* ─── Convidar ─── */
-  const inviteUser = useCallback(async ({ name, email, role }) => {
-    try {
-      const res = await fetch('/api/users/invite', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ name, email, role }),
-      })
-      if (!res.ok) throw new Error()
-      await fetchAll()
-    } catch {
-      MOCK_DB = [...MOCK_DB, {
-        id:        `usr-${Date.now()}`,
-        name,
-        email,
-        role,
-        status:    USER_STATUS.INVITED,
-        createdAt: new Date().toISOString(),
-        lastLogin: null,
-        isSelf:    false,
-      }]
-      setUsers([...MOCK_DB])
-    }
+  const updateUser = useCallback(async (userId, data) => {
+    const res = await authFetch(`/api/users/${userId}`, { method: 'PUT', body: JSON.stringify(data) })
+    if (!res.ok) { const d = await res.json().catch(()=>({})); throw new Error(d.error || 'Erro ao atualizar') }
+    await fetchAll()
+  }, [fetchAll])
+
+  const inviteUser = useCallback(async (payload) => {
+    const res = await authFetch('/api/users/invite', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+    const d = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(d.error || 'Erro ao criar usuário')
+    await fetchAll()
+    return d
   }, [fetchAll])
 
   /* ─── Alterar papel ─── */
@@ -198,7 +208,9 @@ export function useUsers() {
     users,
     isLoading,
     refetch: fetchAll,
+    customers,
     inviteUser,
+    updateUser,
     updateRole,
     revokeUser,
     reactivate,

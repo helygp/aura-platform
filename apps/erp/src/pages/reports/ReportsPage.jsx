@@ -7,11 +7,12 @@
  *  - Exportação CSV e PDF com logo da empresa
  */
 
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import {
   BarChart2, Package, AlertTriangle, TrendingDown,
   ArrowLeftRight, Calendar, Download, FileText,
-  RefreshCw, ChevronDown, Filter, Search
+  RefreshCw, ChevronDown, ChevronUp, ChevronsUpDown,
+  Filter, Search, Users, Eye
 } from 'lucide-react'
 import {
   AreaChart, Area, BarChart, Bar,
@@ -24,7 +25,22 @@ import { exportCSV, exportPDF }           from './exportUtils.js'
 /* ─── formatadores ─── */
 const R$ = v => new Intl.NumberFormat('pt-BR', { style:'currency', currency:'BRL' }).format(+v||0)
 const N  = v => new Intl.NumberFormat('pt-BR').format(+v||0)
-const D  = iso => iso ? new Date(iso+'T12:00:00').toLocaleDateString('pt-BR') : '—'
+// T3.3 — formatador de data robusto: nunca retorna "Invalid Date"
+const D  = v => {
+  if (v == null || v === '' || v === 'Invalid Date') return '—'
+  try {
+    let d
+    if (typeof v === 'number')   d = new Date(v)
+    else if (v instanceof Date)  d = v
+    else {
+      const s = String(v).trim()
+      // apenas data (YYYY-MM-DD) → adiciona meio-dia UTC para evitar off-by-one de timezone
+      d = /^\d{4}-\d{2}-\d{2}$/.test(s) ? new Date(s + 'T12:00:00') : new Date(s)
+    }
+    if (isNaN(d.getTime())) return '—'
+    return d.toLocaleDateString('pt-BR')
+  } catch { return '—' }
+}
 const PCT= (a,b) => b ? ((+a/+b)*100).toFixed(1)+'%' : '—'
 
 const STATUS_COLORS = {
@@ -61,9 +77,64 @@ function DateRange({ start, end, onStart, onEnd }) {
   )
 }
 
-function ExportBar({ onCSV, onPDF, loading }) {
+/* Abre preview HTML em nova aba — o usuário pode imprimir de lá */
+function openPreview({ title, subtitle, companyName, columns, rows, summary }) {
+  const fmt = v => v ?? '—'
+  const hdr = columns.map(c => `<th>${c.label}</th>`).join('')
+  const body = rows.map(r => {
+    const cells = columns.map(c => {
+      const v = c.get ? c.get(r) : r[c.key] ?? '—'
+      return `<td style="text-align:${c.align==='right'?'right':'left'}">${fmt(v)}</td>`
+    }).join('')
+    return `<tr>${cells}</tr>`
+  }).join('')
+  const sumHtml = (summary||[]).map(s=>`<div><strong>${s.label}:</strong> ${s.value}</div>`).join('')
+  const win = window.open('','_blank')
+  win.document.write(`<!DOCTYPE html><html><head>
+    <meta charset="utf-8"><title>${title}</title>
+    <style>
+      body{font-family:sans-serif;padding:24px;color:#111;font-size:13px}
+      h1{font-size:18px;margin:0 0 4px}
+      .sub{color:#666;font-size:12px;margin-bottom:8px}
+      .summary{display:flex;gap:24px;margin:12px 0;padding:10px;background:#f5f5f5;border-radius:6px;font-size:12px}
+      table{width:100%;border-collapse:collapse;margin-top:12px}
+      th{background:#f0f0f0;padding:6px 10px;text-align:left;font-size:12px;font-weight:600;border:1px solid #ddd}
+      td{padding:5px 10px;border:1px solid #ddd;font-size:12px}
+      tr:nth-child(even) td{background:#fafafa}
+      .print-btn{position:fixed;top:12px;right:12px;padding:8px 16px;background:#0070f3;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px}
+      @media print{.print-btn{display:none}}
+    </style></head><body>
+    <button class="print-btn" onclick="window.print()">🖨️ Imprimir / PDF</button>
+    <h1>${companyName ? companyName+' — ':''}${title}</h1>
+    <div class="sub">${subtitle||''}</div>
+    <div class="summary">${sumHtml}</div>
+    <table><thead><tr>${hdr}</tr></thead><tbody>${body}</tbody></table>
+  </body></html>`)
+  win.document.close()
+}
+
+function FilterBtn({ onClick, loading, dirty }) {
+  return (
+    <button onClick={onClick} disabled={loading}
+      className={`flex items-center gap-1.5 h-8 px-3 text-xs font-medium rounded-lg transition-colors disabled:opacity-40
+        ${dirty
+          ? 'bg-[var(--color-primary)] text-white hover:opacity-90'
+          : 'border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface)]'
+        }`}>
+      <Filter size={13}/> {loading ? 'Buscando…' : 'Filtrar'}
+    </button>
+  )
+}
+
+function ExportBar({ onCSV, onPDF, onPreview, loading }) {
   return (
     <div className="flex items-center gap-2">
+      {onPreview && (
+        <button onClick={onPreview} disabled={loading}
+          className="flex items-center gap-1.5 h-8 px-3 text-xs font-medium rounded-lg border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface)] disabled:opacity-40 transition-colors">
+          <Eye size={13}/> Visualizar
+        </button>
+      )}
       <button onClick={onCSV} disabled={loading}
         className="flex items-center gap-1.5 h-8 px-3 text-xs font-medium rounded-lg border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface)] disabled:opacity-40 transition-colors">
         <Download size={13}/> CSV
@@ -86,13 +157,47 @@ function KpiCard({ label, value, sub, color='text-[var(--color-primary)]' }) {
   )
 }
 
+function SortIcon({ dir }) {
+  if (dir === 'asc')  return <ChevronUp   size={11} className="shrink-0" />
+  if (dir === 'desc') return <ChevronDown size={11} className="shrink-0" />
+  return <ChevronsUpDown size={11} className="shrink-0 opacity-30" />
+}
+
 function TableShell({ headers, rows, loading, empty }) {
+  const [sortKey, setSortKey] = useState(null)
+  const [sortDir, setSortDir] = useState('asc')
+
+  const handleSort = (h) => {
+    if (!h.sortable) return
+    const key = h.sortKey ?? h.key
+    if (sortKey === key) {
+      if (sortDir === 'asc') { setSortDir('desc') }
+      else { setSortKey(null); setSortDir('asc') }
+    } else {
+      setSortKey(key); setSortDir('asc')
+    }
+  }
+
+  const sortedRows = useMemo(() => {
+    if (!sortKey || !rows?.length) return rows ?? []
+    return [...rows].sort((a, b) => {
+      const va = a[sortKey] ?? ''
+      const vb = b[sortKey] ?? ''
+      const na = parseFloat(String(va).replace(',', '.'))
+      const nb = parseFloat(String(vb).replace(',', '.'))
+      const cmp = (!isNaN(na) && !isNaN(nb))
+        ? na - nb
+        : String(va).localeCompare(String(vb), 'pt-BR', { sensitivity: 'base' })
+      return sortDir === 'asc' ? cmp : -cmp
+    })
+  }, [rows, sortKey, sortDir])
+
   if (loading) return (
     <div className="flex items-center justify-center py-16">
       <RefreshCw size={24} className="animate-spin text-[var(--color-primary)]" />
     </div>
   )
-  if (!rows?.length) return (
+  if (!sortedRows.length) return (
     <div className="flex flex-col items-center justify-center py-16 gap-2 text-[var(--color-text-muted)]">
       <BarChart2 size={32} />
       <p className="text-sm">{empty || 'Nenhum dado encontrado.'}</p>
@@ -103,19 +208,30 @@ function TableShell({ headers, rows, loading, empty }) {
       <table className="w-full text-xs">
         <thead>
           <tr className="bg-[var(--color-surface)] border-b border-[var(--color-border)]">
-            {headers.map((h,i) => (
-              <th key={i} className={`px-3 py-2.5 font-semibold text-[var(--color-text-muted)] whitespace-nowrap ${h.align==='right'?'text-right':h.align==='center'?'text-center':'text-left'}`}>
-                {h.label}
-              </th>
-            ))}
+            {headers.map((h,i) => {
+              const key = h.sortKey ?? h.key
+              const active = sortKey === key
+              return (
+                <th
+                  key={i}
+                  onClick={() => handleSort(h)}
+                  className={`px-3 py-2.5 font-semibold text-[var(--color-text-muted)] whitespace-nowrap select-none ${h.align==='right'?'text-right':h.align==='center'?'text-center':'text-left'} ${h.sortable ? 'cursor-pointer hover:text-[var(--color-text)] hover:bg-[var(--color-bg-subtle)] transition-colors' : ''}`}
+                >
+                  <span className={`inline-flex items-center gap-1 ${h.align==='right'?'flex-row-reverse':''}`}>
+                    {h.label}
+                    {h.sortable && <SortIcon dir={active ? sortDir : null} />}
+                  </span>
+                </th>
+              )
+            })}
           </tr>
         </thead>
         <tbody>
-          {rows.map((row, i) => (
+          {sortedRows.map((row, i) => (
             <tr key={i} className="border-t border-[var(--color-border)] hover:bg-[var(--color-bg-subtle)] transition-colors">
               {headers.map((h, j) => (
                 <td key={j} className={`px-3 py-2 text-[var(--color-text)] ${h.align==='right'?'text-right':h.align==='center'?'text-center':''}`}>
-                  {h.render ? h.render(row) : (row[h.key] ?? '—')}
+                  {h.render ? h.render(row, i) : (row[h.key] ?? '—')}
                 </td>
               ))}
             </tr>
@@ -206,11 +322,27 @@ export function ReportsPage() {
    1. VENDAS
 ═══════════════════════════════════════════ */
 function SalesReport({ companyName }) {
-  const [start, setStart] = useState(firstOfMonth())
-  const [end,   setEnd]   = useState(today())
+  const [start, setStart]         = useState(firstOfMonth())
+  const [end,   setEnd]           = useState(today())
+  const [customerId, setCustomerId] = useState('')
+  const [customers,  setCustomers]  = useState([])
   const { data, loading, error, fetch: load } = useReport('sales')
 
-  useEffect(() => { load({ start, end }) }, [start, end])
+  useEffect(() => {
+    const tok = window.__aura_mem_token__ || ''
+    fetch('/api/customers?limit=999', {
+      credentials: 'include',
+      headers: tok ? { Authorization: 'Bearer ' + tok } : {},
+    })
+      .then(r => r.json())
+      .then(d => setCustomers(d.customers ?? []))
+      .catch(() => {})
+  }, [])
+
+  const [dirty, setDirty] = useState(false)
+  const doLoad = () => { const p={start,end}; if(customerId) p.customer_id=customerId; load(p); setDirty(false) }
+  useEffect(() => { doLoad() }, []) // eslint-disable-line
+  useEffect(() => { setDirty(true) }, [start, end, customerId])
 
   const kpi  = data?.kpi  || {}
   const rows = data?.byDay || []
@@ -224,10 +356,28 @@ function SalesReport({ companyName }) {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <DateRange start={start} end={end} onStart={setStart} onEnd={setEnd} />
-        <ExportBar loading={loading}
-          onCSV={() => exportCSV('vendas', pdfCols, rows)}
-          onPDF={() => exportPDF({
+        <div className="flex flex-wrap items-center gap-2">
+          <DateRange start={start} end={end} onStart={setStart} onEnd={setEnd} />
+          <div className="relative">
+            <Users size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)] pointer-events-none" />
+            <select
+              value={customerId}
+              onChange={e => setCustomerId(e.target.value)}
+              className="h-8 pl-8 pr-3 text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-subtle)] text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
+            >
+              <option value="">Todos os clientes</option>
+              {customers.map(c => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <FilterBtn onClick={doLoad} loading={loading} dirty={dirty} />
+          <ExportBar loading={loading}
+            onPreview={() => openPreview({ title:'Relatório de Vendas', subtitle:`Período: ${D(start)} a ${D(end)}`, companyName, columns:pdfCols, rows, summary:[{label:'Faturamento',value:R$(kpi.faturamento)},{label:'Pedidos',value:N(kpi.total_pedidos)},{label:'Ticket Médio',value:R$(kpi.ticket_medio)}] })}
+            onCSV={() => exportCSV('vendas', pdfCols, rows)}
+            onPDF={() => exportPDF({
             title: 'Relatório de Vendas',
             subtitle: `Período: ${D(start)} a ${D(end)}`,
             companyName,
@@ -240,7 +390,8 @@ function SalesReport({ companyName }) {
               { label:'Cancelados',    value: N(kpi.pedidos_cancelados) },
             ],
           })}
-        />
+          />
+        </div>
       </div>
 
       {/* KPIs */}
@@ -298,7 +449,10 @@ function ProductsReport({ companyName }) {
   const [end,   setEnd]   = useState(today())
   const { data, loading, error, fetch: load } = useReport('products')
 
-  useEffect(() => { load({ start, end }) }, [start, end])
+  const [dirty2, setDirty2] = useState(false)
+  const doLoadProd = () => { load({ start, end }); setDirty2(false) }
+  useEffect(() => { doLoadProd() }, []) // eslint-disable-line
+  useEffect(() => { setDirty2(true) }, [start, end])
   const rows = data?.rows || []
 
   const cols = [
@@ -315,13 +469,13 @@ function ProductsReport({ companyName }) {
 
   const headers = [
     { label:'#',            render:(r,i)=>i+1,                              align:'center' },
-    { label:'Produto',      render: r => r.produto },
-    { label:'SKU',          key:'sku' },
+    { label:'Produto',      render: r => r.produto,            sortable:true, sortKey:'produto' },
+    { label:'SKU',          key:'sku',                          sortable:true },
     { label:'Variação',     render: r => attrStr(r.atributos) || '—' },
-    { label:'Qtd',          key:'qtd_vendida',   align:'right' },
-    { label:'Valor Vendido',render: r => R$(r.valor_vendido), align:'right' },
-    { label:'Preço Médio',  render: r => R$(r.preco_medio),   align:'right' },
-    { label:'Estoque',      key:'estoque_atual', align:'right' },
+    { label:'Qtd',          key:'qtd_vendida',    align:'right', sortable:true },
+    { label:'Valor Vendido',render: r => R$(r.valor_vendido),  align:'right', sortable:true, sortKey:'valor_vendido' },
+    { label:'Preço Médio',  render: r => R$(r.preco_medio),    align:'right', sortable:true, sortKey:'preco_medio' },
+    { label:'Estoque',      key:'estoque_atual',  align:'right', sortable:true },
     { label:'Status',       render: r => (
         <Badge text={r.status_estoque} color={STATUS_COLORS[r.status_estoque] || ''} />
       )},
@@ -331,8 +485,11 @@ function ProductsReport({ companyName }) {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <DateRange start={start} end={end} onStart={setStart} onEnd={setEnd} />
-        <ExportBar loading={loading}
-          onCSV={() => exportCSV('ranking-produtos', cols, rows)}
+        <div className="flex items-center gap-2">
+          <FilterBtn onClick={doLoadProd} loading={loading} dirty={dirty2} />
+          <ExportBar loading={loading}
+            onPreview={() => openPreview({ title:'Ranking de Produtos', subtitle:`Período: ${D(start)} a ${D(end)}`, companyName, columns:cols, rows, summary:[{label:'SKUs vendidos',value:N(rows.length)},{label:'Total vendido',value:R$(rows.reduce((a,r)=>a+(+r.valor_vendido||0),0))}] })}
+            onCSV={() => exportCSV('ranking-produtos', cols, rows)}
           onPDF={() => exportPDF({
             title:'Ranking de Produtos',
             subtitle:`Período: ${D(start)} a ${D(end)} · Top ${rows.length} SKUs`,
@@ -342,7 +499,8 @@ function ProductsReport({ companyName }) {
               { label:'Total vendido', value: R$(rows.reduce((a,r)=>a+(+r.valor_vendido||0),0)) },
             ],
           })}
-        />
+          />
+        </div>
       </div>
       <TableShell headers={headers} rows={rows} loading={loading} empty="Nenhuma venda no período." />
     </div>
@@ -380,14 +538,14 @@ function StockReport({ companyName }) {
   ]
 
   const headers = [
-    { label:'Produto',      key:'produto' },
-    { label:'SKU',          key:'sku' },
+    { label:'Produto',      key:'produto',         sortable:true },
+    { label:'SKU',          key:'sku',             sortable:true },
     { label:'Variação',     render: r => attrStr(r.atributos) || '—' },
-    { label:'Categoria',    key:'categoria' },
-    { label:'Estoque',      key:'estoque',    align:'right' },
-    { label:'Mínimo',       key:'estoque_minimo', align:'right' },
-    { label:'Preço',        render: r => R$(r.preco), align:'right' },
-    { label:'Val. Estoque', render: r => R$(r.valor_em_estoque), align:'right' },
+    { label:'Categoria',    key:'categoria',       sortable:true },
+    { label:'Estoque',      key:'estoque',    align:'right', sortable:true },
+    { label:'Mínimo',       key:'estoque_minimo', align:'right', sortable:true },
+    { label:'Preço',        render: r => R$(r.preco), align:'right', sortable:true, sortKey:'preco' },
+    { label:'Val. Estoque', render: r => R$(r.valor_em_estoque), align:'right', sortable:true, sortKey:'valor_em_estoque' },
     { label:'Status',       render: r => <Badge text={r.status} color={STATUS_COLORS[r.status]||''} /> },
   ]
 
@@ -441,17 +599,17 @@ function StockCritical({ companyName }) {
     { label:'Última Venda',    key:'ultima_venda',     get: r => D(r.ultima_venda) },
   ]
   const headers = [
-    { label:'Produto',       key:'produto' },
-    { label:'SKU',           key:'sku' },
+    { label:'Produto',       key:'produto',        sortable:true },
+    { label:'SKU',           key:'sku',            sortable:true },
     { label:'Variação',      render: r => attrStr(r.atributos)||'—' },
-    { label:'Categoria',     key:'categoria' },
-    { label:'Atual',         key:'estoque_atual',   align:'right' },
-    { label:'Mínimo',        key:'estoque_minimo',  align:'right' },
+    { label:'Categoria',     key:'categoria',      sortable:true },
+    { label:'Atual',         key:'estoque_atual',  align:'right', sortable:true },
+    { label:'Mínimo',        key:'estoque_minimo', align:'right', sortable:true },
     { label:'Falta',         render: r => (
         <span className="font-semibold text-red-500">+{r.diferenca}</span>
-      ), align:'right' },
+      ), align:'right', sortable:true, sortKey:'diferenca' },
     { label:'Status',        render: r => <Badge text={r.status} color={STATUS_COLORS[r.status]||''} /> },
-    { label:'Última Venda',  render: r => D(r.ultima_venda) },
+    { label:'Última Venda',  render: r => D(r.ultima_venda), sortable:true, sortKey:'ultima_venda' },
   ]
 
   return (
@@ -469,7 +627,7 @@ function StockCritical({ companyName }) {
               { label:'SKUs baixos',  value: N(rows.filter(r=>r.status==='baixo').length) },
             ],
           })}
-        />
+          />
       </div>
       {rows.length > 0 && !loading && (
         <div className="p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-subtle)]">
@@ -501,7 +659,10 @@ function StockIdle({ companyName }) {
   const [dias, setDias] = useState(30)
   const { data, loading, error, fetch: load } = useReport('stock-idle')
 
-  useEffect(() => { load({ dias }) }, [dias])
+  const [dirtyIdle, setDirtyIdle] = useState(false)
+  const doLoadIdle = () => { load({ dias }); setDirtyIdle(false) }
+  useEffect(() => { doLoadIdle() }, []) // eslint-disable-line
+  useEffect(() => { setDirtyIdle(true) }, [dias])
   const rows = data?.rows || []
 
   const cols = [
@@ -515,17 +676,17 @@ function StockIdle({ companyName }) {
     { label:'Dias Parado',    key:'dias_sem_venda', align:'right' },
   ]
   const headers = [
-    { label:'Produto',      key:'produto' },
-    { label:'SKU',          key:'sku' },
+    { label:'Produto',      key:'produto',        sortable:true },
+    { label:'SKU',          key:'sku',            sortable:true },
     { label:'Variação',     render: r => attrStr(r.atributos)||'—' },
-    { label:'Estoque',      key:'estoque_atual', align:'right' },
-    { label:'Valor Parado', render: r => R$(r.valor_parado), align:'right' },
-    { label:'Última Venda', render: r => r.ultima_venda ? D(r.ultima_venda) : <span className="text-amber-500">Nunca</span> },
+    { label:'Estoque',      key:'estoque_atual',  align:'right', sortable:true },
+    { label:'Valor Parado', render: r => R$(r.valor_parado), align:'right', sortable:true, sortKey:'valor_parado' },
+    { label:'Última Venda', render: r => r.ultima_venda ? D(r.ultima_venda) : <span className="text-amber-500">Nunca</span>, sortable:true, sortKey:'ultima_venda' },
     { label:'Dias Parado',  render: r => (
         <span className={r.dias_sem_venda>60?'text-red-500 font-semibold':r.dias_sem_venda>30?'text-amber-500':''}>
           {r.dias_sem_venda >= 9999 ? '∞' : r.dias_sem_venda}d
         </span>
-      ), align:'right'},
+      ), align:'right', sortable:true, sortKey:'dias_sem_venda'},
   ]
 
   return (
@@ -538,8 +699,11 @@ function StockIdle({ companyName }) {
             {[15,30,60,90,180].map(d=><option key={d} value={d}>{d} dias</option>)}
           </select>
         </div>
-        <ExportBar loading={loading}
-          onCSV={()=>exportCSV('produtos-parados', cols, rows)}
+        <div className="flex items-center gap-2">
+          <FilterBtn onClick={doLoadIdle} loading={loading} dirty={dirtyIdle} />
+          <ExportBar loading={loading}
+            onPreview={() => openPreview({ title:'Produtos Parados', subtitle:`Sem venda há mais de ${dias} dias`, companyName, columns:cols, rows, summary:[{label:'SKUs parados',value:N(rows.length)},{label:'Valor parado',value:R$(data?.valor_total)}] })}
+            onCSV={()=>exportCSV('produtos-parados', cols, rows)}
           onPDF={()=>exportPDF({
             title:'Produtos Parados', companyName,
             subtitle:`Sem venda há mais de ${dias} dias`,
@@ -549,7 +713,8 @@ function StockIdle({ companyName }) {
               { label:'Valor parado',  value: R$(data?.valor_total) },
             ],
           })}
-        />
+          />
+        </div>
       </div>
       {rows.length > 0 && !loading && (
         <div className="p-3.5 rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 flex items-center gap-3">
@@ -572,7 +737,10 @@ function MovementsReport({ companyName }) {
   const [end,   setEnd]   = useState(today())
   const { data, loading, error, fetch: load } = useReport('movements')
 
-  useEffect(() => { load({ start, end }) }, [start, end])
+  const [dirtyMov, setDirtyMov] = useState(false)
+  const doLoadMov = () => { load({ start, end }); setDirtyMov(false) }
+  useEffect(() => { doLoadMov() }, []) // eslint-disable-line
+  useEffect(() => { setDirtyMov(true) }, [start, end])
 
   const rows    = data?.rows    || []
   const summary = data?.summary || {}
@@ -587,37 +755,44 @@ function MovementsReport({ companyName }) {
     { label:'Saldo Anterior',key:'saldo_anterior', align:'right' },
     { label:'Saldo Atual',   key:'saldo_atual',  align:'right' },
     { label:'Motivo',        key:'motivo' },
+    { label:'Cliente',       key:'cliente' },
+    { label:'Nº Pedido',     key:'pedido_numero' },
     { label:'Usuário',       key:'usuario' },
   ]
   const MOV_COLOR = { entrada:'text-green-600', saida:'text-red-500', ajuste:'text-blue-500' }
 
   const headers = [
-    { label:'Data',     render: r => D(r.data) },
-    { label:'Produto',  key:'produto' },
-    { label:'SKU',      key:'sku' },
+    { label:'Data',     render: r => D(r.data), sortable:true, sortKey:'data' },
+    { label:'Produto',  key:'produto',  sortable:true },
+    { label:'SKU',      key:'sku',      sortable:true },
     { label:'Variação', render: r => attrStr(r.atributos)||'—' },
     { label:'Tipo',     render: r => (
         <span className={`font-medium ${MOV_COLOR[r.tipo]||''}`}>
           {MOV_LABEL[r.tipo]||r.tipo}
         </span>
-      )},
+      ), sortable:true, sortKey:'tipo'},
     { label:'Qtd',      render: r => (
         <span className={`font-semibold ${MOV_COLOR[r.tipo]||''}`}>
           {r.tipo==='saida'?'-':r.tipo==='entrada'?'+':''}{r.quantidade}
         </span>
-      ), align:'right'},
-    { label:'Ant.',     key:'saldo_anterior', align:'right' },
-    { label:'Atual',    key:'saldo_atual',    align:'right' },
+      ), align:'right', sortable:true, sortKey:'quantidade'},
+    { label:'Ant.',     key:'saldo_anterior', align:'right', sortable:true },
+    { label:'Atual',    key:'saldo_atual',    align:'right', sortable:true },
     { label:'Motivo',   key:'motivo' },
-    { label:'Usuário',  key:'usuario' },
+    { label:'Cliente',  key:'cliente', sortable:true },
+    { label:'Pedido',   render: r => r.pedido_numero ? `#${r.pedido_numero}` : (r.pedido_id ? r.pedido_id.slice(-6).toUpperCase() : '—') },
+    { label:'Usuário',  key:'usuario', sortable:true },
   ]
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <DateRange start={start} end={end} onStart={setStart} onEnd={setEnd} />
-        <ExportBar loading={loading}
-          onCSV={()=>exportCSV('movimentacao', cols, rows)}
+        <div className="flex items-center gap-2">
+          <FilterBtn onClick={doLoadMov} loading={loading} dirty={dirtyMov} />
+          <ExportBar loading={loading}
+            onPreview={() => openPreview({ title:'Movimentação de Estoque', subtitle:`Período: ${D(start)} a ${D(end)}`, companyName, columns:cols, rows, summary:[{label:'Entradas',value:N(summary.entradas)},{label:'Saídas',value:N(summary.saidas)},{label:'Ajustes',value:N(summary.ajustes)}] })}
+            onCSV={()=>exportCSV('movimentacao', cols, rows)}
           onPDF={()=>exportPDF({
             title:'Movimentação de Estoque',
             subtitle:`Período: ${D(start)} a ${D(end)}`,
@@ -628,7 +803,8 @@ function MovementsReport({ companyName }) {
               { label:'Ajustes',  value: N(summary.ajustes) },
             ],
           })}
-        />
+          />
+        </div>
       </div>
       <div className="grid grid-cols-3 gap-3">
         <KpiCard label="Entradas"  value={N(summary.entradas)} color="text-green-500" />

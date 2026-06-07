@@ -7,6 +7,7 @@
  * POST /api/orders/:id/items          — adiciona item ao pedido
  * PUT  /api/orders/:id/items/:itemId  — edita quantidade do item
  * DELETE /api/orders/:id/items/:itemId — remove item do pedido
+ * DELETE /api/orders/:id/items/:itemId/cancel — cancela item (mantém no pedido, devolve estoque)
  */
 
 import { Router } from 'express'
@@ -14,6 +15,17 @@ import { authenticate } from '../middleware/authenticate.js'
 import { authorize }    from '../middleware/authorize.js'
 import { query, getClient } from '../lib/tenantDb.js'
 import { dispatch } from '../lib/webhookDispatcher.js'
+
+const VALID_PAYMENT_METHODS = ['pix', 'boleto', 'a_combinar', 'credito']
+
+/* ── helper: registra movimentação de estoque ── */
+async function logMovement(client, { skuId, type, qty, qtyBefore, reason, userName, orderId, customerName }) {
+  await client.query(`
+    INSERT INTO stock_movements (sku_id, type, qty, qty_before, qty_after, reason, user_name, order_id, customer_name)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+  `, [skuId, type, Math.abs(qty), qtyBefore, qtyBefore + (type === 'saida' ? -Math.abs(qty) : Math.abs(qty)),
+      reason, userName, orderId ?? null, customerName ?? null])
+}
 
 export const ordersRouter = Router()
 ordersRouter.use(authenticate)
@@ -37,12 +49,13 @@ ordersRouter.get('/', async (req, res) => {
     const wClause = where.length ? 'WHERE ' + where.join(' AND ') : ''
 
     const { rows: orders } = await query(`
-      SELECT o.*,
+      SELECT o.*, COALESCE(NULLIF(o.customer_name,''), c.name) AS resolved_customer_name,
         json_agg(
           json_build_object(
             'id', oi.id, 'skuId', oi.sku_id, 'skuCode', oi.sku_code,
             'productName', oi.product_name, 'attributes', oi.attributes,
-            'qty', oi.qty, 'priceUnit', oi.price_unit
+            'qty', oi.qty, 'priceUnit', oi.price_unit,
+            'status', COALESCE(oi.status, 'ativo')
           )
         ) FILTER (WHERE oi.id IS NOT NULL) AS items,
         (SELECT json_agg(json_build_object(
@@ -53,8 +66,9 @@ ordersRouter.get('/', async (req, res) => {
         ) AS history
       FROM orders o
       LEFT JOIN order_items oi ON oi.order_id = o.id
+      LEFT JOIN customers c ON c.id = o.customer_id
       ${wClause}
-      GROUP BY o.id
+      GROUP BY o.id, c.name
       ORDER BY o.created_at DESC
       LIMIT 200
     `, params)
@@ -72,15 +86,19 @@ ordersRouter.post('/', authorize('admin','operador'), async (req, res) => {
   try {
     await client.query('BEGIN')
 
-    const { customerId, customerName, customerWhatsapp, channel='manual', items=[], notes='' } = req.body
+    const {
+      customerId, customerName, customerWhatsapp,
+      channel='manual', items=[], notes='',
+      paymentMethod='credito',
+    } = req.body
     const userName = req.user?.name ?? req.user?.email ?? 'operador'
 
-    // ── Validação: verificar se items não está vazio ──
+    const pm = VALID_PAYMENT_METHODS.includes(paymentMethod) ? paymentMethod : 'credito'
+
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: 'Adicione pelo menos 1 item ao pedido.' })
     }
 
-    // ── Validar e resolver todos os SKUs + estoque ──
     const resolvedItems = []
     let total = 0
 
@@ -90,44 +108,48 @@ ordersRouter.post('/', authorize('admin','operador'), async (req, res) => {
         return res.status(400).json({ error: 'SKU inválido ou quantidade incorreta.' })
       }
 
-      // Buscar SKU no banco — usar dados confiáveis
       const { rows: [sku] } = await client.query(`
-        SELECT id, produto_id, codigo, atributos, preco_atacado, estoque,
-               (SELECT nome FROM produtos WHERE id = skus.produto_id) AS product_name
-        FROM skus
-        WHERE id = $1 AND ativo = true
+        SELECT s.id, s.code, s.attributes, s.price_wholesale, s.stock,
+               p.name AS product_name
+        FROM skus s
+        JOIN products p ON p.id = s.product_id
+        WHERE s.id = $1
       `, [item.skuId])
 
-      if (!sku) {
-        return res.status(404).json({ error: `SKU ${item.skuId} não encontrado ou inativo.` })
-      }
+      if (!sku) return res.status(404).json({ error: `SKU ${item.skuId} não encontrado.` })
 
-      if (sku.estoque < qty) {
+      if (sku.stock < qty) {
         return res.status(422).json({
-          error: `Estoque insuficiente para ${sku.product_name} (${sku.codigo}). Disponível: ${sku.estoque}.`,
+          error: `Estoque insuficiente para "${sku.product_name}" (${sku.code}). Disponível: ${sku.stock}.`,
         })
       }
 
-      const itemTotal = sku.preco_atacado * qty
-      total += itemTotal
+      if (sku.stock <= 0) {
+        return res.status(422).json({
+          error: `Produto "${sku.product_name}" (${sku.code}) sem estoque disponível.`,
+        })
+      }
+
+      total += parseFloat(sku.price_wholesale) * qty
 
       resolvedItems.push({
-        skuId: sku.id,
-        skuCode: sku.codigo,
+        skuId:       sku.id,
+        skuCode:     sku.code,
         productName: sku.product_name,
-        attributes: sku.atributos,
+        attributes:  sku.attributes,
+        stock:       sku.stock,
         qty,
-        priceUnit: parseFloat(sku.preco_atacado),
+        priceUnit:   parseFloat(sku.price_wholesale),
       })
     }
 
-    // ── Criar pedido ──
+    // Criar pedido
     const { rows:[order] } = await client.query(`
-      INSERT INTO orders (customer_id, customer_name, customer_whatsapp, channel, total, notes)
-      VALUES ($1,$2,$3,$4,$5,$6) RETURNING *
-    `, [customerId||null, customerName, customerWhatsapp||null, channel, total, notes])
+      INSERT INTO orders (customer_id, customer_name, customer_whatsapp, channel, total, notes, payment_method)
+      VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *
+    `, [customerId||null, customerName, customerWhatsapp||null, channel, total, notes, pm])
 
-    // ── Inserir itens e atualizar estoque ──
+    // Inserir itens, decrementar estoque e registrar movimentação
     for (const item of resolvedItems) {
       await client.query(`
         INSERT INTO order_items (order_id, sku_id, sku_code, product_name, attributes, qty, price_unit)
@@ -135,22 +157,40 @@ ordersRouter.post('/', authorize('admin','operador'), async (req, res) => {
       `, [order.id, item.skuId, item.skuCode, item.productName,
           JSON.stringify(item.attributes ?? {}), item.qty, item.priceUnit])
 
-      // Decrementa estoque
       await client.query(
-        'UPDATE skus SET estoque = estoque - $1, updated_at = NOW() WHERE id = $2',
+        'UPDATE skus SET stock = stock - $1, updated_at = NOW() WHERE id = $2',
         [item.qty, item.skuId]
       )
+
+      await logMovement(client, {
+        skuId: item.skuId, type: 'saida', qty: item.qty,
+        qtyBefore: item.stock,
+        reason: `Pedido ${order.id.slice(-6).toUpperCase()}`,
+        userName, orderId: order.id, customerName: customerName ?? null,
+      })
     }
 
-    // ── Inserir histórico ──
     await client.query(`
       INSERT INTO order_history (order_id, status, note, user_name)
       VALUES ($1,'pendente','Pedido criado.',$2)
     `, [order.id, userName])
 
+    // Wallet: débito automático se pagamento = crédito e tem cliente
+    if (pm === 'credito' && customerId) {
+      await client.query(`
+        INSERT INTO wallet_transactions (customer_id, type, amount, description, order_ref, created_by)
+        VALUES ($1, 'debit', $2, $3, $4, 'erp')
+      `, [customerId, total.toFixed(2), `Pedido ERP ${order.id}`, order.id])
+
+      await client.query(
+        'UPDATE customers SET credit_balance = credit_balance + $1, updated_at = NOW() WHERE id = $2',
+        [total.toFixed(2), customerId]
+      )
+    }
+
     await client.query('COMMIT')
-    res.status(201).json({ id: order.id, message: 'Pedido criado.', total })
-    // Webhook: order.created (fire & forget)
+    res.status(201).json({ id: order.id, message: 'Pedido criado.', total, paymentMethod: pm })
+
     dispatch(req.tenantSlug ?? process.env.TENANT_SLUG, 'order.created', {
       id: order.id, customer_name: order.customer_name,
       total: parseFloat(total), status: 'pendente', channel: order.channel,
@@ -182,7 +222,6 @@ ordersRouter.put('/:id/status', async (req, res) => {
 
     await client.query('COMMIT')
     res.json({ ok: true })
-    // Webhook: order.status_changed (fire & forget)
     dispatch(req.tenantSlug ?? process.env.TENANT_SLUG, 'order.status_changed', {
       id: req.params.id, new_status: status, note,
     })
@@ -200,54 +239,53 @@ ordersRouter.post('/:id/items', authorize('admin','operador'), async (req, res) 
     await client.query('BEGIN')
 
     const { skuId, qty } = req.body
-    const orderId = req.params.id
+    const orderId  = req.params.id
     const userName = req.user?.name ?? req.user?.email ?? 'operador'
 
-    // Validar pedido existe
     const { rows: [order] } = await client.query(
-      'SELECT id, total FROM orders WHERE id = $1',
-      [orderId]
+      'SELECT id, total, customer_name FROM orders WHERE id = $1', [orderId]
     )
     if (!order) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Pedido não encontrado.' }) }
 
-    // Validar SKU
     const qtyInt = parseInt(qty)
     if (!skuId || qtyInt < 1) {
       return res.status(400).json({ error: 'SKU inválido ou quantidade incorreta.' })
     }
 
     const { rows: [sku] } = await client.query(`
-      SELECT id, codigo, atributos, preco_atacado, estoque,
-             (SELECT nome FROM produtos WHERE id = skus.produto_id) AS product_name
-      FROM skus
-      WHERE id = $1 AND ativo = true
+      SELECT s.id, s.code, s.attributes, s.price_wholesale, s.stock,
+             p.name AS product_name
+      FROM skus s
+      JOIN products p ON p.id = s.product_id
+      WHERE s.id = $1
     `, [skuId])
 
-    if (!sku) {
-      return res.status(404).json({ error: `SKU ${skuId} não encontrado ou inativo.` })
-    }
+    if (!sku) return res.status(404).json({ error: `SKU ${skuId} não encontrado.` })
 
-    if (sku.estoque < qtyInt) {
+    if (sku.stock < qtyInt) {
       return res.status(422).json({
-        error: `Estoque insuficiente para ${sku.product_name}. Disponível: ${sku.estoque}.`,
+        error: `Estoque insuficiente para "${sku.product_name}". Disponível: ${sku.stock}.`,
       })
     }
 
-    // Inserir item
-    const itemTotal = parseFloat(sku.preco_atacado) * qtyInt
+    const itemTotal = parseFloat(sku.price_wholesale) * qtyInt
     await client.query(`
       INSERT INTO order_items (order_id, sku_id, sku_code, product_name, attributes, qty, price_unit)
       VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7)
-    `, [orderId, sku.id, sku.codigo, sku.product_name,
-        JSON.stringify(sku.atributos ?? {}), qtyInt, parseFloat(sku.preco_atacado)])
+    `, [orderId, sku.id, sku.code, sku.product_name,
+        JSON.stringify(sku.attributes ?? {}), qtyInt, parseFloat(sku.price_wholesale)])
 
-    // Atualizar estoque
     await client.query(
-      'UPDATE skus SET estoque = estoque - $1, updated_at = NOW() WHERE id = $2',
+      'UPDATE skus SET stock = stock - $1, updated_at = NOW() WHERE id = $2',
       [qtyInt, sku.id]
     )
 
-    // Recalcular total do pedido
+    await logMovement(client, {
+      skuId: sku.id, type: 'saida', qty: qtyInt, qtyBefore: sku.stock,
+      reason: `Item adicionado pedido ${orderId.slice(-6).toUpperCase()}`,
+      userName, orderId, customerName: order.customer_name,
+    })
+
     const { rows: [totals] } = await client.query(`
       SELECT COALESCE(SUM(qty * price_unit), 0) AS new_total FROM order_items WHERE order_id = $1
     `, [orderId])
@@ -257,7 +295,6 @@ ordersRouter.post('/:id/items', authorize('admin','operador'), async (req, res) 
       [parseFloat(totals.new_total), orderId]
     )
 
-    // Histórico
     await client.query(`
       INSERT INTO order_history (order_id, status, note, user_name)
       VALUES ($1, 'item_adicionado', $2, $3)
@@ -283,43 +320,47 @@ ordersRouter.put('/:id/items/:itemId', authorize('admin','operador'), async (req
     const userName = req.user?.name ?? req.user?.email ?? 'operador'
 
     const qtyInt = parseInt(qty)
-    if (qtyInt < 1) {
-      return res.status(400).json({ error: 'Quantidade deve ser >= 1.' })
-    }
+    if (qtyInt < 1) return res.status(400).json({ error: 'Quantidade deve ser >= 1.' })
 
-    // Buscar item e SKU
     const { rows: [item] } = await client.query(`
-      SELECT oi.id, oi.sku_id, oi.qty AS old_qty, oi.product_name, s.estoque
+      SELECT oi.id, oi.sku_id, oi.qty AS old_qty, oi.product_name, s.stock,
+             o.customer_name
       FROM order_items oi
       JOIN skus s ON s.id = oi.sku_id
+      JOIN orders o ON o.id = oi.order_id
       WHERE oi.id = $1 AND oi.order_id = $2
     `, [itemId, orderId])
 
-    if (!item) {
-      return res.status(404).json({ error: 'Item não encontrado.' })
-    }
+    if (!item) return res.status(404).json({ error: 'Item não encontrado.' })
 
     const qtyDiff = qtyInt - item.old_qty
-    // Se aumentou, validar estoque
-    if (qtyDiff > 0 && item.estoque < qtyDiff) {
+    if (qtyDiff > 0 && item.stock < qtyDiff) {
       return res.status(422).json({
-        error: `Estoque insuficiente. Disponível para adicionar: ${item.estoque}.`,
+        error: `Estoque insuficiente. Disponível para adicionar: ${item.stock}.`,
       })
     }
 
-    // Atualizar item
     await client.query(
       'UPDATE order_items SET qty = $1, updated_at = NOW() WHERE id = $2',
       [qtyInt, itemId]
     )
 
-    // Ajustar estoque
     await client.query(
-      'UPDATE skus SET estoque = estoque - $1, updated_at = NOW() WHERE id = $2',
+      'UPDATE skus SET stock = stock - $1, updated_at = NOW() WHERE id = $2',
       [qtyDiff, item.sku_id]
     )
 
-    // Recalcular total
+    if (qtyDiff !== 0) {
+      await logMovement(client, {
+        skuId: item.sku_id,
+        type: qtyDiff > 0 ? 'saida' : 'entrada',
+        qty: Math.abs(qtyDiff),
+        qtyBefore: item.stock,
+        reason: `Ajuste pedido ${orderId.slice(-6).toUpperCase()}: ${item.old_qty}x→${qtyInt}x`,
+        userName, orderId, customerName: item.customer_name,
+      })
+    }
+
     const { rows: [totals] } = await client.query(`
       SELECT COALESCE(SUM(qty * price_unit), 0) AS new_total FROM order_items WHERE order_id = $1
     `, [orderId])
@@ -329,7 +370,6 @@ ordersRouter.put('/:id/items/:itemId', authorize('admin','operador'), async (req
       [parseFloat(totals.new_total), orderId]
     )
 
-    // Histórico
     await client.query(`
       INSERT INTO order_history (order_id, status, note, user_name)
       VALUES ($1, 'item_editado', $2, $3)
@@ -344,6 +384,82 @@ ordersRouter.put('/:id/items/:itemId', authorize('admin','operador'), async (req
   } finally { client.release() }
 })
 
+/* ── PATCH /api/orders/:id/items/:itemId/cancel — cancela item parcial ── */
+ordersRouter.patch('/:id/items/:itemId/cancel', authorize('admin','operador'), async (req, res) => {
+  const client = await getClient()
+  try {
+    await client.query('BEGIN')
+
+    const { id: orderId, itemId } = req.params
+    const userName = req.user?.name ?? req.user?.email ?? 'operador'
+
+    // Busca item + status do pedido (T1.3: bloqueia cancel a partir de separando)
+    const { rows: [item] } = await client.query(`
+      SELECT oi.id, oi.sku_id, oi.qty, oi.product_name, oi.price_unit,
+             COALESCE(oi.status, 'ativo') AS status,
+             s.stock, o.customer_name, o.status AS order_status
+      FROM order_items oi
+      JOIN skus s ON s.id = oi.sku_id
+      JOIN orders o ON o.id = oi.order_id
+      WHERE oi.id = $1 AND oi.order_id = $2
+    `, [itemId, orderId])
+
+    if (!item) return res.status(404).json({ error: 'Item não encontrado.' })
+    if (item.status === 'cancelado') return res.status(400).json({ error: 'Item já cancelado.' })
+
+    // T1.3 — permite cancelar apenas em: pendente, confirmado, separando
+    const ALLOWED_STATUSES = ['pendente', 'confirmado', 'separando']
+    if (!ALLOWED_STATUSES.includes(item.order_status)) {
+      await client.query('ROLLBACK')
+      return res.status(422).json({
+        error: `Cancelamento de item não permitido: pedido está "${item.order_status}". Só é possível cancelar itens em pedidos pendentes, confirmados ou em separação.`,
+      })
+    }
+
+    // Marca item como cancelado (não remove)
+    await client.query(
+      "UPDATE order_items SET status='cancelado', updated_at=NOW() WHERE id=$1",
+      [itemId]
+    )
+
+    // Devolve estoque
+    await client.query(
+      'UPDATE skus SET stock = stock + $1, updated_at = NOW() WHERE id = $2',
+      [item.qty, item.sku_id]
+    )
+
+    await logMovement(client, {
+      skuId: item.sku_id, type: 'entrada', qty: item.qty,
+      qtyBefore: item.stock,
+      reason: `Cancelamento item pedido ${orderId.slice(-6).toUpperCase()}`,
+      userName, orderId, customerName: item.customer_name,
+    })
+
+    // Recalcula total do pedido (sem itens cancelados)
+    const { rows: [totals] } = await client.query(`
+      SELECT COALESCE(SUM(qty * price_unit), 0) AS new_total
+      FROM order_items WHERE order_id = $1 AND COALESCE(status,'ativo') != 'cancelado'
+    `, [orderId])
+
+    await client.query(
+      'UPDATE orders SET total = $1, updated_at = NOW() WHERE id = $2',
+      [parseFloat(totals.new_total) || 0, orderId]
+    )
+
+    await client.query(`
+      INSERT INTO order_history (order_id, status, note, user_name)
+      VALUES ($1, 'item_cancelado', $2, $3)
+    `, [orderId, `Item cancelado: ${item.product_name} (${item.qty}x) — estoque devolvido`, userName])
+
+    await client.query('COMMIT')
+    res.json({ ok: true, newOrderTotal: parseFloat(totals.new_total) || 0 })
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {})
+    console.error('[orders/items/cancel]', err.message)
+    res.status(500).json({ error: 'Erro ao cancelar item.' })
+  } finally { client.release() }
+})
+
 /* ── DELETE /api/orders/:id/items/:itemId — remove item ── */
 ordersRouter.delete('/:id/items/:itemId', authorize('admin','operador'), async (req, res) => {
   const client = await getClient()
@@ -353,32 +469,37 @@ ordersRouter.delete('/:id/items/:itemId', authorize('admin','operador'), async (
     const { id: orderId, itemId } = req.params
     const userName = req.user?.name ?? req.user?.email ?? 'operador'
 
-    // Buscar item antes de deletar
     const { rows: [item] } = await client.query(`
-      SELECT oi.id, oi.sku_id, oi.qty, oi.product_name
+      SELECT oi.id, oi.sku_id, oi.qty, oi.product_name,
+             COALESCE(oi.status,'ativo') AS status, s.stock, o.customer_name
       FROM order_items oi
+      JOIN skus s ON s.id = oi.sku_id
+      JOIN orders o ON o.id = oi.order_id
       WHERE oi.id = $1 AND oi.order_id = $2
     `, [itemId, orderId])
 
-    if (!item) {
-      return res.status(404).json({ error: 'Item não encontrado.' })
+    if (!item) return res.status(404).json({ error: 'Item não encontrado.' })
+
+    await client.query('DELETE FROM order_items WHERE id = $1', [itemId])
+
+    // Só devolve estoque se item não estava já cancelado
+    if (item.status !== 'cancelado') {
+      await client.query(
+        'UPDATE skus SET stock = stock + $1, updated_at = NOW() WHERE id = $2',
+        [item.qty, item.sku_id]
+      )
+
+      await logMovement(client, {
+        skuId: item.sku_id, type: 'entrada', qty: item.qty,
+        qtyBefore: item.stock,
+        reason: `Item removido pedido ${orderId.slice(-6).toUpperCase()}`,
+        userName, orderId, customerName: item.customer_name,
+      })
     }
 
-    // Deletar item
-    await client.query(
-      'DELETE FROM order_items WHERE id = $1',
-      [itemId]
-    )
-
-    // Devolver estoque
-    await client.query(
-      'UPDATE skus SET estoque = estoque + $1, updated_at = NOW() WHERE id = $2',
-      [item.qty, item.sku_id]
-    )
-
-    // Recalcular total
     const { rows: [totals] } = await client.query(`
-      SELECT COALESCE(SUM(qty * price_unit), 0) AS new_total FROM order_items WHERE order_id = $1
+      SELECT COALESCE(SUM(qty * price_unit), 0) AS new_total
+      FROM order_items WHERE order_id = $1 AND COALESCE(status,'ativo') != 'cancelado'
     `, [orderId])
 
     await client.query(
@@ -386,7 +507,6 @@ ordersRouter.delete('/:id/items/:itemId', authorize('admin','operador'), async (
       [parseFloat(totals.new_total) || 0, orderId]
     )
 
-    // Histórico
     await client.query(`
       INSERT INTO order_history (order_id, status, note, user_name)
       VALUES ($1, 'item_removido', $2, $3)
@@ -404,10 +524,12 @@ ordersRouter.delete('/:id/items/:itemId', authorize('admin','operador'), async (
 function normalizeOrder(o) {
   return {
     id:               o.id,
+    number:           o.number,
     customerId:       o.customer_id,
-    customerName:     o.customer_name,
+    customerName:     o.resolved_customer_name ?? o.customer_name,
     customerWhatsapp: o.customer_whatsapp,
     channel:          o.channel,
+    paymentMethod:    o.payment_method ?? 'a_combinar',
     status:           o.status,
     total:            parseFloat(o.total ?? 0),
     notes:            o.notes,

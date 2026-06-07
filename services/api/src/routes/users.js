@@ -27,7 +27,7 @@ usersRouter.get('/', authorize('admin'), async (req, res) => {
   try {
     const users = await prisma.user.findMany({
       where:   { tenantId: req.user.tenantId },
-      select:  { id:true, tokenId:true, email:true, name:true, role:true, active:true, createdAt:true, lastLoginAt:true },
+      select:  { id:true, tokenId:true, email:true, name:true, role:true, active:true, createdAt:true, lastLoginAt:true, whatsapp:true, customerIds:true },
       orderBy: { createdAt: 'asc' },
     })
     res.json({
@@ -39,7 +39,9 @@ usersRouter.get('/', authorize('admin'), async (req, res) => {
         status:    u.active ? 'ativo' : 'revogado',
         createdAt: u.createdAt,
         lastLogin: u.lastLoginAt,
-        isSelf:    u.tokenId === req.user.tokenId,
+        isSelf:      u.tokenId === req.user.tokenId,
+        whatsapp:    u.whatsapp ?? null,
+        customerIds: u.customerIds ?? [],
       })),
     })
   } catch (err) {
@@ -51,14 +53,19 @@ usersRouter.get('/', authorize('admin'), async (req, res) => {
 /* ── POST /api/users/invite ── */
 usersRouter.post('/invite', authorize('admin'), async (req, res) => {
   try {
-    const { name, email, role } = req.body
+    const { name, email, role, password, whatsapp, customerIds = [] } = req.body
+    if (!name?.trim())  return res.status(400).json({ error: 'Nome é obrigatório.' })
+    if (!email?.trim()) return res.status(400).json({ error: 'E-mail é obrigatório.' })
+    if (!role)          return res.status(400).json({ error: 'Papel é obrigatório.' })
+
     const tenant = await prisma.tenant.findUnique({ where: { slug: req.user.tenantSlug } })
     if (!tenant) return res.status(404).json({ error: 'Tenant não encontrado.' })
 
-    const tempPass = `Aura@${randomUUID().slice(0,8)}`
-    const hash     = await bcrypt.hash(tempPass, 10)
+    // Usa senha fornecida ou gera temporária
+    const finalPass = password?.trim() || `Aura@${randomUUID().slice(0,8)}`
+    const hash      = await bcrypt.hash(finalPass, 10)
 
-    await prisma.user.create({
+    const user = await prisma.user.create({
       data: {
         tenantId:     tenant.id,
         email:        email.toLowerCase().trim(),
@@ -66,13 +73,21 @@ usersRouter.post('/invite', authorize('admin'), async (req, res) => {
         passwordHash: hash,
         role:         role.toUpperCase(),
         active:       true,
+        whatsapp:     whatsapp?.trim() || null,
+        customerIds:  Array.isArray(customerIds) ? customerIds : [],
       },
     })
 
-    // Em produção: enviar e-mail com tempPass via services/notify
-    res.status(201).json({ ok: true, message: `Convite enviado para ${email}.` })
+    res.status(201).json({
+      ok: true,
+      id: user.id,
+      message: password
+        ? `Usuário ${name} criado com sucesso.`
+        : `Usuário criado. Senha temporária: ${finalPass}`,
+      tempPassword: password ? null : finalPass,
+    })
   } catch (err) {
-    if (err.code === 'P2002') return res.status(409).json({ error: 'E-mail já cadastrado.' })
+    if (err.code === 'P2002') return res.status(409).json({ error: 'E-mail já cadastrado neste tenant.' })
     console.error('[users/invite]', err.message)
     res.status(500).json({ error: 'Erro interno.' })
   }
@@ -142,6 +157,25 @@ usersRouter.put('/:id/reactivate', authorize('admin'), async (req, res) => {
     await prisma.user.update({ where: { id: req.params.id }, data: { active: true, updatedAt: new Date() } })
     res.json({ ok: true })
   } catch (err) {
+    res.status(500).json({ error: 'Erro interno.' })
+  }
+})
+
+/* ── PUT /api/users/:id — atualiza dados do usuário ── */
+usersRouter.put('/:id', authorize('admin'), async (req, res) => {
+  try {
+    const { name, whatsapp, customerIds, password } = req.body
+    const data = {}
+    if (name)        data.name        = name.trim()
+    if (whatsapp !== undefined) data.whatsapp = whatsapp?.trim() || null
+    if (customerIds) data.customerIds = Array.isArray(customerIds) ? customerIds : []
+    if (password?.trim()) data.passwordHash = await bcrypt.hash(password.trim(), 10)
+    data.updatedAt = new Date()
+
+    await prisma.user.update({ where: { id: req.params.id }, data })
+    res.json({ ok: true })
+  } catch (err) {
+    console.error('[users/update]', err.message)
     res.status(500).json({ error: 'Erro interno.' })
   }
 })

@@ -4,12 +4,16 @@
  * Busca tema e info do tenant na API.
  * Cacheia em sessionStorage por 5 min para evitar flash de tema.
  * Se a API falhar, usa defaults Aura sem quebrar a UI.
+ *
+ * O cache é invalidado automaticamente quando o slug do tenant muda
+ * (evita mostrar nome errado ao trocar entre tenants no mesmo browser).
  */
 
 import { useState, useEffect } from 'react'
 
-const CACHE_KEY = 'aura-tenant-theme'
-const CACHE_TTL = 5 * 60 * 1000
+const CACHE_KEY    = 'aura-tenant-theme'
+const CACHE_TTL    = 5 * 60 * 1000
+const CURRENT_HOST = window.location.hostname // ex: fastmalhas.aurabr.app
 
 const DEFAULT_THEME = {
   primaryColor: '#0284C7',
@@ -28,14 +32,22 @@ function readCache() {
   try {
     const raw = sessionStorage.getItem(CACHE_KEY)
     if (!raw) return null
-    const { data, ts } = JSON.parse(raw)
+    const { data, ts, host } = JSON.parse(raw)
+    // Invalida se expirou OU se o hostname mudou (troca de tenant no mesmo browser)
     if (Date.now() - ts > CACHE_TTL) return null
+    if (host && host !== CURRENT_HOST) return null
     return data
   } catch { return null }
 }
 
 function writeCache(data) {
-  try { sessionStorage.setItem(CACHE_KEY, JSON.stringify({ data, ts: Date.now() })) } catch {}
+  try {
+    sessionStorage.setItem(CACHE_KEY, JSON.stringify({
+      data,
+      ts:   Date.now(),
+      host: CURRENT_HOST,
+    }))
+  } catch {}
 }
 
 export function useTenantTheme() {

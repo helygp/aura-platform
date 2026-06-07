@@ -22,8 +22,8 @@
 import React, { useState, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
-  X, Printer, ChevronRight, MessageCircle,
-  User, Clock, Package, CheckCircle2,
+  X, Printer, ChevronRight, MessageCircle, Send,
+  User, Clock, Package, CheckCircle2, XCircle, Ban,
 } from 'lucide-react'
 import { Button } from '@aura/ui'
 import { StatusBadge } from './StatusBadge.jsx'
@@ -33,24 +33,37 @@ import {
 } from '../ordersTypes.js'
 
 /* ─── Linha de item ─── */
-function OrderItem({ item }) {
-  const attrStr = Object.values(item.attributes ?? {}).join(' / ')
+function OrderItem({ item, onCancel, cancelling }) {
+  const attrStr   = Object.values(item.attributes ?? {}).join(' / ')
+  const cancelled = item.status === 'cancelado'
   return (
-    <div className="flex items-start gap-3 py-2.5 border-b border-[var(--color-border)] last:border-0">
-      <div className="w-8 h-8 rounded-lg bg-[var(--color-surface)] flex items-center justify-center shrink-0">
-        <Package size={14} className="text-[var(--color-text-muted)]" />
+    <div className={`flex items-start gap-3 py-2.5 border-b border-[var(--color-border)] last:border-0 ${cancelled ? 'opacity-60' : ''}`}>
+      <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${cancelled ? 'bg-red-50 dark:bg-red-950/30' : 'bg-[var(--color-surface)]'}`}>
+        {cancelled
+          ? <Ban size={14} className="text-red-400" />
+          : <Package size={14} className="text-[var(--color-text-muted)]" />}
       </div>
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-[var(--color-text)] truncate">{item.productName}</p>
+        <div className="flex items-center gap-2">
+          <p className={`text-sm font-medium text-[var(--color-text)] truncate ${cancelled ? 'line-through' : ''}`}>{item.productName}</p>
+          {cancelled && <span className="text-[10px] font-semibold bg-red-100 dark:bg-red-950/40 text-red-600 dark:text-red-400 px-1.5 py-0.5 rounded-full shrink-0">Cancelado</span>}
+        </div>
         <div className="flex items-center gap-2 mt-0.5">
           {attrStr && <span className="text-xs text-[var(--color-text-muted)]">{attrStr}</span>}
           <span className="text-[10px] font-mono text-[var(--color-text-disabled)]">{item.skuCode}</span>
         </div>
       </div>
       <div className="text-right shrink-0">
-        <p className="text-sm font-semibold text-[var(--color-text)]">{fmtBRL(item.priceUnit * item.qty)}</p>
+        <p className={`text-sm font-semibold ${cancelled ? 'text-[var(--color-text-muted)] line-through' : 'text-[var(--color-text)]'}`}>{fmtBRL(item.priceUnit * item.qty)}</p>
         <p className="text-xs text-[var(--color-text-muted)]">{item.qty}x {fmtBRL(item.priceUnit)}</p>
       </div>
+      {onCancel && !cancelled && (
+        <button onClick={onCancel} disabled={cancelling}
+          title="Cancelar item (devolve ao estoque)"
+          className="w-7 h-7 flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors shrink-0 disabled:opacity-40">
+          <XCircle size={14} />
+        </button>
+      )}
     </div>
   )
 }
@@ -83,7 +96,7 @@ function printOrder(order) {
   const { subtotal } = calcOrderTotals(order.items)
   const win = window.open('', '_blank')
   win.document.write(`
-    <html><head><title>Pedido ${orderNumber(order.id)}</title>
+    <html><head><title>Pedido ${orderNumber(order.id, order.number)}</title>
     <style>
       body { font-family: sans-serif; padding: 24px; max-width: 480px; margin: 0 auto; }
       h1 { font-size: 18px; margin-bottom: 4px; }
@@ -94,7 +107,7 @@ function printOrder(order) {
       .total { font-size: 15px; font-weight: bold; text-align: right; margin-top: 8px; }
       .footer { margin-top: 24px; font-size: 11px; color: #999; }
     </style></head><body>
-    <h1>Pedido ${orderNumber(order.id)}</h1>
+    <h1>Pedido ${orderNumber(order.id, order.number)}</h1>
     <div class="sub">${order.customerName} · ${fmtDate(order.createdAt)}</div>
     <table>
       <tr><th>Produto</th><th>Qtd</th><th>Unit.</th><th>Total</th></tr>
@@ -116,13 +129,89 @@ function printOrder(order) {
   win.print()
 }
 
-export function OrderDetail({ order, onClose, onStatusChange }) {
-  const [changingStatus, setChangingStatus] = useState(false)
-  const [confirmStatus,  setConfirmStatus]  = useState(null)
+/* ── Compõe mensagem de confirmação WhatsApp ── */
+function composeWhatsAppMessage(order) {
+  const { subtotal } = calcOrderTotals(order.items)
+  const num  = orderNumber(order.id, order.number)
+  const date = fmtDate(order.createdAt)
+
+  const itemLines = (order.items ?? []).map(i => {
+    const attrs = Object.values(i.attributes ?? {}).filter(Boolean).join('/')
+    const label = attrs ? `${i.productName} (${attrs})` : i.productName
+    return `• ${label} — ${i.qty}x ${fmtBRL(i.priceUnit)} = ${fmtBRL(i.priceUnit * i.qty)}`
+  }).join('\n')
+
+  return [
+    `Olá, ${order.customerName}! 👋`,
+    ``,
+    `Seu pedido *${num}* de ${date} foi recebido.`,
+    ``,
+    `*Itens:*`,
+    itemLines,
+    ``,
+    `*Total: ${fmtBRL(subtotal)}*`,
+    ``,
+    `Para confirmar responda *SIM*, para cancelar responda *NÃO*.`,
+    `Obrigado pela preferência! 🙏`,
+  ].join('\n')
+}
+
+async function sendWhatsAppConfirmation(order) {
+  const msg   = composeWhatsAppMessage(order)
+  const phone = order.customerWhatsapp?.replace(/\D/g,'')
+  if (!phone) return
+
+  const token = window.__aura_mem_token__ || ''
+  try {
+    const res = await fetch('/api/whatsapp/send', {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: 'Bearer ' + token } : {}),
+      },
+      body: JSON.stringify({ to: phone, message: msg }),
+    })
+    if (res.ok) return { ok: true }
+    throw new Error((await res.json().catch(()=>({}))).error || 'Erro WAHA')
+  } catch (e) {
+    // Fallback: abre wa.me com texto pré-preenchido
+    const url = `https://wa.me/55${phone}?text=${encodeURIComponent(msg)}`
+    window.open(url, '_blank')
+    return { ok: true, fallback: true }
+  }
+}
+
+export function OrderDetail({ order, onClose, onStatusChange, onItemCancel }) {
+  const [changingStatus,  setChangingStatus]  = useState(false)
+  const [confirmStatus,   setConfirmStatus]   = useState(null)
+  const [wppSending,      setWppSending]      = useState(false)
+  const [wppSent,         setWppSent]         = useState(false)
+  const [cancellingItem,  setCancellingItem]  = useState(null)
+  const [confirmCancelId, setConfirmCancelId] = useState(null)
+
+  const handleSendWhatsApp = async () => {
+    setWppSending(true)
+    try {
+      await sendWhatsAppConfirmation(order)
+      setWppSent(true)
+      setTimeout(() => setWppSent(false), 3000)
+    } finally {
+      setWppSending(false)
+    }
+  }
 
   const transitions = order ? STATUS_TRANSITIONS[order.status] ?? [] : []
   const { subtotal } = order ? calcOrderTotals(order.items) : { subtotal: 0 }
   const channelMeta = CHANNEL_META[order?.channel] ?? { label: order?.channel, icon: '•' }
+
+  const handleCancelItem = async (itemId) => {
+    if (!onItemCancel) return
+    setCancellingItem(itemId)
+    try { await onItemCancel(order.id, itemId) }
+    catch (e) { console.error('cancelItem', e.message) }
+    finally { setCancellingItem(null); setConfirmCancelId(null) }
+  }
 
   const handleStatusClick = (newStatus) => setConfirmStatus(newStatus)
 
@@ -165,7 +254,7 @@ export function OrderDetail({ order, onClose, onStatusChange }) {
             <div className="flex items-start justify-between gap-3 p-4 border-b border-[var(--color-border)] shrink-0">
               <div>
                 <div className="flex items-center gap-2 mb-1">
-                  <span className="text-lg font-bold text-[var(--color-text)]">{orderNumber(order.id)}</span>
+                  <span className="text-lg font-bold text-[var(--color-text)]">{orderNumber(order.id, order.number)}</span>
                   <span className="text-sm text-[var(--color-text-muted)]">{channelMeta.icon} {channelMeta.label}</span>
                 </div>
                 <div className="flex items-center gap-2">
@@ -203,15 +292,31 @@ export function OrderDetail({ order, onClose, onStatusChange }) {
                   <div>
                     <p className="text-sm font-semibold text-[var(--color-text)]">{order.customerName}</p>
                     {order.customerWhatsapp && (
-                      <a
-                        href={`https://wa.me/55${order.customerWhatsapp}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="flex items-center gap-1 text-xs text-green-600 hover:underline mt-0.5"
-                      >
-                        <MessageCircle size={11} />
-                        {order.customerWhatsapp}
-                      </a>
+                      <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                        <a
+                          href={`https://wa.me/55${order.customerWhatsapp}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="flex items-center gap-1 text-xs text-green-600 hover:underline"
+                        >
+                          <MessageCircle size={11} />
+                          {order.customerWhatsapp}
+                        </a>
+                        <button
+                          type="button"
+                          onClick={handleSendWhatsApp}
+                          disabled={wppSending}
+                          className={[
+                            'flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full transition-colors',
+                            wppSent
+                              ? 'bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-300'
+                              : 'bg-green-50 text-green-700 hover:bg-green-100 dark:bg-green-950/50 dark:text-green-400',
+                          ].join(' ')}
+                        >
+                          <Send size={10} />
+                          {wppSent ? 'Enviado!' : wppSending ? 'Enviando…' : 'Enviar confirmação'}
+                        </button>
+                      </div>
                     )}
                   </div>
                 </div>
@@ -263,9 +368,24 @@ export function OrderDetail({ order, onClose, onStatusChange }) {
               {/* ── Itens ── */}
               <div className="p-4 border-b border-[var(--color-border)]">
                 <p className="text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wide mb-2">
-                  Itens ({order.items.length})
+                  Itens ({order.items.filter(i=>i.status!=='cancelado').length}{order.items.some(i=>i.status==='cancelado')?` (+${order.items.filter(i=>i.status==='cancelado').length} cancelado${order.items.filter(i=>i.status==='cancelado').length>1?'s':''})`:''}) 
                 </p>
-                {order.items.map(item => <OrderItem key={item.id} item={item} />)}
+                {order.items.map(item => (
+                  confirmCancelId === item.id ? (
+                    <div key={item.id} className="flex items-center gap-2 py-2.5 border-b border-[var(--color-border)] last:border-0 bg-red-50 dark:bg-red-950/20 rounded-lg px-2">
+                      <p className="text-xs text-red-600 flex-1">Cancelar <strong>{item.productName}</strong>? Estoque devolvido.</p>
+                      <button onClick={() => setConfirmCancelId(null)} className="text-xs px-2 py-1 rounded border border-[var(--color-border)] hover:bg-[var(--color-surface)]">Não</button>
+                      <button onClick={() => handleCancelItem(item.id)} disabled={cancellingItem === item.id}
+                        className="text-xs px-2 py-1 rounded bg-red-500 text-white hover:bg-red-600 disabled:opacity-50">
+                        {cancellingItem === item.id ? '…' : 'Sim'}
+                      </button>
+                    </div>
+                  ) : (
+                    <OrderItem key={item.id} item={item}
+                      onCancel={onItemCancel && item.status !== 'cancelado' && ['pendente','confirmado','separando'].includes(order.status) ? () => setConfirmCancelId(item.id) : null}
+                      cancelling={cancellingItem === item.id} />
+                  )
+                ))}
               </div>
 
               {/* ── Resumo financeiro ── */}

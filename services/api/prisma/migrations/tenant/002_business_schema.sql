@@ -144,3 +144,31 @@ CREATE TABLE IF NOT EXISTS bot_orders (
 );
 CREATE INDEX IF NOT EXISTS idx_bo_status ON bot_orders(status);
 CREATE INDEX IF NOT EXISTS idx_bo_date   ON bot_orders(received_at DESC);
+
+-- ─── DOMÍNIO DE ATRIBUTOS DA GRADE ─────────────────────────────
+
+CREATE TABLE IF NOT EXISTS product_attribute_defs (
+  id         TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  name       TEXT NOT NULL UNIQUE,
+  values     JSONB NOT NULL DEFAULT '[]',
+  sort_order INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_attr_def_name ON product_attribute_defs(name);
+
+-- ─── DOMÍNIO DE CATEGORIAS DE PRODUTO ──────────────────────────
+
+CREATE TABLE IF NOT EXISTS product_category_defs (
+  id         TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  name       TEXT NOT NULL UNIQUE,
+  sort_order INT  NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_cat_def_name ON product_category_defs(name);
+
+-- ─── NÚMERO SEQUENCIAL DE PEDIDO ────────────────────────────────
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS number INTEGER;
+CREATE SEQUENCE IF NOT EXISTS orders_number_seq START WITH 1000;
+ALTER TABLE orders ALTER COLUMN number SET DEFAULT nextval('orders_number_seq');

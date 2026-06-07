@@ -13,15 +13,18 @@
  *   7. Confirm modal — exclusão
  */
 
-import React, { useState, useCallback } from 'react'
-import {
+import { useSortable } from '../../hooks/useSortable.js'
+import React, { useState, useCallback, useEffect } from 'react'
+import { useLocation } from 'react-router-dom'
+import { Printer,
   Plus, Search, RefreshCw, X,
-  Users, UserCheck, UserX,
-  ChevronLeft, ChevronRight,
-  Building2, User, Edit2, Trash2, Eye,
-  AlertTriangle,
+  Users, UserCheck, UserX, ChevronLeft,
+  ChevronRight, Building2, User, Edit2,
+  Trash2, Eye, ChevronUp, ChevronDown,
+  ChevronsUpDown, AlertTriangle,
 } from 'lucide-react'
 import { Card, Skeleton, Button, Modal } from '@aura/ui'
+import { printList } from '../../utils/printList.js'
 import { CustomerForm }   from './components/CustomerForm.jsx'
 import { CustomerDetail } from './components/CustomerDetail.jsx'
 import { useCustomers }   from './useCustomers.js'
@@ -255,6 +258,32 @@ function DeleteModal({ customer, onConfirm, onCancel }) {
 }
 
 /* ─── Página ─── */
+const CUST_COLS = [
+  { label: 'Cliente',   key: 'name',         sortable: true },
+  { label: 'Documento', key: 'document',      sortable: true },
+  { label: 'WhatsApp',  key: 'whatsapp',      sortable: true },
+  { label: 'Limite',    key: 'credit_limit',  sortable: true, align: 'right' },
+  { label: 'Status',    key: 'portal_active', sortable: false },
+  { label: 'Pedidos',   key: 'orders_count',  sortable: true, align: 'right' },
+  { label: '',          key: '_act',           sortable: false },
+]
+function SortableTh({ col, sortKey, sortDir, onSort }) {
+  const active = sortKey === (col.sortKey ?? col.key)
+  const align  = col.align === 'right' ? 'text-right' : 'text-left'
+  return (
+    <th onClick={() => col.sortable && onSort(col)}
+      className={`px-4 py-3 text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap select-none ${align} ${col.sortable ? 'cursor-pointer hover:text-[var(--color-text)] hover:bg-[var(--color-bg-subtle)] transition-colors' : ''}`}
+    >
+      <span className="inline-flex items-center gap-1">
+        {col.label}
+        {col.sortable && (active
+          ? sortDir === 'asc' ? <ChevronUp size={11} className="shrink-0" /> : <ChevronDown size={11} className="shrink-0" />
+          : <ChevronsUpDown size={11} className="shrink-0 opacity-30" />
+        )}
+      </span>
+    </th>
+  )
+}
 export function CustomersPage() {
   const {
     customers, total, totalPages, isLoading,
@@ -262,11 +291,17 @@ export function CustomersPage() {
     refetch, saveCustomer, deleteCustomer,
     getCustomerOrders, stats, PAGE_SIZE,
   } = useCustomers()
+  const { sorted: sortedCustomers, sortKey: cSortKey, sortDir: cSortDir, handleSort: cHandleSort } = useSortable(customers, 'name')
 
+  const location = useLocation()
   const [detailCustomer,  setDetailCustomer]  = useState(null)
   const [editingCustomer, setEditingCustomer] = useState(null)
   const [formOpen,        setFormOpen]        = useState(false)
   const [deletingCustomer, setDeletingCustomer] = useState(null)
+
+  useEffect(() => {
+    if (location.state?.openNew) { setEditingCustomer(null); setFormOpen(true); window.history.replaceState({}, '') }
+  }, []) // eslint-disable-line
 
   const openNew   = () => { setEditingCustomer(null); setFormOpen(true) }
   const openEdit  = useCallback((c) => { setEditingCustomer(c); setFormOpen(true) }, [])
@@ -282,6 +317,29 @@ export function CustomersPage() {
     setDeletingCustomer(null)
     if (detailCustomer?.id === id) setDetailCustomer(null)
   }, [deleteCustomer, detailCustomer])
+
+  /* ─── Bug1 fix: handlePrintCustomers estava undefined ─── */
+  const handlePrintCustomers = useCallback(() => {
+    printList({
+      title: 'Clientes',
+      subtitle: filters.status ? `Filtro: ${filters.status}` : '',
+      columns: [
+        { label: 'Cliente',   get: c => c.name },
+        { label: 'Tipo',      get: c => c.personType === 'pf' ? 'PF' : 'PJ' },
+        { label: 'Documento', get: c => c.document || '—' },
+        { label: 'WhatsApp',  get: c => c.whatsapp  || '—' },
+        { label: 'Limite',    get: c => c.creditLimit ? fmtBRL(c.creditLimit) : '—', align: 'right' },
+        { label: 'Status',    get: c => STATUS_META[c.status]?.label || c.status },
+        { label: 'Pedidos',   get: c => c.orders?.length ?? 0, align: 'right' },
+      ],
+      rows: sortedCustomers,
+      summary: [
+        { label: 'Total',    value: stats.total },
+        { label: 'Ativos',   value: stats.active },
+        { label: 'Bloqueados', value: stats.blocked },
+      ],
+    })
+  }, [sortedCustomers, filters, stats])
 
   const hasFilters = filters.search || filters.status
   const clearFilters = () => setFilters({ search: '', status: '' })
@@ -310,6 +368,10 @@ export function CustomersPage() {
             className="w-9 h-9 flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface)] disabled:opacity-40 transition-colors"
           >
             <RefreshCw size={16} className={isLoading ? 'animate-spin' : ''} />
+          </button>
+          <button onClick={handlePrintCustomers}
+            className="flex items-center gap-1.5 h-9 px-3 text-sm font-medium rounded-lg border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface)] transition-colors">
+            <Printer size={14} /> Imprimir
           </button>
           <Button size="sm" onClick={openNew}>
             <Plus size={15} /> Novo cliente
@@ -380,13 +442,13 @@ export function CustomersPage() {
               <table className="w-full text-sm">
                 <thead className="bg-[var(--color-bg-subtle)] border-b border-[var(--color-border)]">
                   <tr>
-                    {['Cliente', 'Documento', 'WhatsApp', 'Limite', 'Status', 'Pedidos', ''].map(h => (
-                      <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap">{h}</th>
+                    {CUST_COLS.map(col => (
+                      <SortableTh key={col.key} col={col} sortKey={cSortKey} sortDir={cSortDir} onSort={cHandleSort} />
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {customers.map(c => (
+                  {sortedCustomers.map(c => (
                     <CustomerRow
                       key={c.id}
                       customer={c}

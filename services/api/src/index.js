@@ -18,12 +18,16 @@ import { tenantRouter }    from './routes/tenant.js'
 import { dashboardRouter } from './routes/dashboard.js'
 import { productsRouter }       from './routes/products.js'
 import { productsImportRouter } from './routes/productsImport.js'
+import { productAttributesRouter }  from './routes/productAttributes.js'
+import { productCategoriesRouter }  from './routes/productCategories.js'
+import { separationSheetRouter }     from './routes/separationSheet.js'
 import { inventoryRouter } from './routes/inventory.js'
 import { ordersRouter }    from './routes/orders.js'
 import { customersRouter } from './routes/customers.js'
 import { usersRouter }     from './routes/users.js'
 import { whatsappRouter }  from './routes/whatsapp.js'
 import { reportsRouter }    from './routes/reports.js'
+import { walletRouter }     from './routes/wallet.js'
 
 /* ─── Rotas Store ─── */
 import { storeTenantRouter }     from './routes/store/tenant.js'
@@ -176,6 +180,9 @@ app.use('/auth',          authRouter)
 app.use('/api/tenant',    tenantRouter)
 app.use('/api/dashboard', dashboardRouter)
 app.use('/api/products/import', productsImportRouter)
+app.use('/api/product-attributes', productAttributesRouter)
+app.use('/api/product-categories', productCategoriesRouter)
+app.use('/api/orders/separation-sheet', separationSheetRouter)
 app.use('/api/products',  productsRouter)
 app.use('/api/inventory', inventoryRouter)
 app.use('/api/orders',    ordersRouter)
@@ -183,6 +190,7 @@ app.use('/api/customers', customersRouter)
 app.use('/api/users',     usersRouter)
 app.use('/api/whatsapp',  whatsappRouter)
 app.use('/api/reports',   reportsRouter)
+app.use('/api/wallet',    walletRouter)
 app.use('/master',         masterRouter)
 app.use('/store/auth',     storeAuthRouter)
 app.use('/store/catalog',  storeCatalogRouter)

@@ -12,21 +12,38 @@
  *   6. OrderForm modal — criação manual
  */
 
-import React, { useState, useCallback } from 'react'
+import { useSortable } from '../../hooks/useSortable.js'
+import React, { useState, useCallback, useEffect } from 'react'
+import { useLocation } from 'react-router-dom'
 import {
   Plus, Search, RefreshCw, X,
-  ShoppingCart, Clock, CalendarDays,
-  ChevronLeft, ChevronRight,
+  Printer, ShoppingCart, Clock, CalendarDays,
+  ChevronUp, ChevronDown, ChevronsUpDown, ChevronLeft,
+  ChevronRight,
 } from 'lucide-react'
+import { printList } from '../../utils/printList.js'
 import { Card, Skeleton, Button } from '@aura/ui'
 import { StatusBadge }  from './components/StatusBadge.jsx'
 import { OrderDetail }  from './components/OrderDetail.jsx'
-import { OrderForm }    from './components/OrderForm.jsx'
+import { OrderForm }       from './components/OrderForm.jsx'
+import { SeparationSheet } from './components/SeparationSheet.jsx'
 import { useOrders }    from './useOrders.js'
 import {
   ORDER_STATUS, ORDER_CHANNEL, CHANNEL_META,
+  PAYMENT_METHOD_META,
   fmtBRL, fmtDateShort, orderNumber,
 } from './ordersTypes.js'
+
+/* ─── PaymentBadge ─── */
+function PaymentBadge({ method }) {
+  const meta = PAYMENT_METHOD_META[method] ?? PAYMENT_METHOD_META['a_combinar']
+  return (
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${meta.color} ${meta.bg} ${meta.border}`}>
+      <span>{meta.icon}</span>
+      <span>{meta.label}</span>
+    </span>
+  )
+}
 
 /* ─── Skeleton ─── */
 function OrdersSkeleton() {
@@ -36,7 +53,7 @@ function OrdersSkeleton() {
         <table className="w-full text-sm">
           <thead className="bg-[var(--color-bg-subtle)] border-b border-[var(--color-border)]">
             <tr>
-              {['Pedido', 'Cliente', 'Canal', 'Itens', 'Total', 'Status', 'Data', ''].map(h => (
+              {['Pedido', 'Cliente', 'Canal', 'Pagamento', 'Itens', 'Total', 'Status', 'Data', ''].map(h => (
                 <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap">{h}</th>
               ))}
             </tr>
@@ -47,6 +64,7 @@ function OrdersSkeleton() {
                 <td className="px-4 py-3"><Skeleton width={80} height={12} /></td>
                 <td className="px-4 py-3"><Skeleton width={140} height={12} /></td>
                 <td className="px-4 py-3"><Skeleton width={60}  height={12} /></td>
+                <td className="px-4 py-3"><Skeleton width={80}  height={20} /></td>
                 <td className="px-4 py-3"><Skeleton width={30}  height={12} /></td>
                 <td className="px-4 py-3"><Skeleton width={80}  height={12} /></td>
                 <td className="px-4 py-3"><Skeleton width={90}  height={22} /></td>
@@ -86,7 +104,7 @@ function OrderRow({ order, onClick }) {
     >
       <td className="px-4 py-3">
         <span className="text-sm font-bold text-[var(--color-primary)] font-mono">
-          {orderNumber(order.id)}
+          {orderNumber(order.id, order.number)}
         </span>
       </td>
       <td className="px-4 py-3">
@@ -94,6 +112,9 @@ function OrderRow({ order, onClick }) {
       </td>
       <td className="px-4 py-3">
         <span className="text-xs text-[var(--color-text-muted)]">{ch.icon} {ch.label}</span>
+      </td>
+      <td className="px-4 py-3">
+        <PaymentBadge method={order.paymentMethod} />
       </td>
       <td className="px-4 py-3">
         <span className="text-sm text-[var(--color-text-muted)] tabular-nums">{order.items.length}</span>
@@ -128,14 +149,15 @@ function OrderCard({ order, onClick }) {
       className="p-4 border-b border-[var(--color-border)] last:border-0 hover:bg-[var(--color-bg-subtle)] cursor-pointer transition-colors"
     >
       <div className="flex items-start justify-between gap-2 mb-2">
-        <span className="text-sm font-bold text-[var(--color-primary)] font-mono">{orderNumber(order.id)}</span>
+        <span className="text-sm font-bold text-[var(--color-primary)] font-mono">{orderNumber(order.id, order.number)}</span>
         <StatusBadge status={order.status} size="sm" />
       </div>
       <p className="text-sm font-medium text-[var(--color-text)] truncate mb-1">{order.customerName}</p>
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex items-center justify-between gap-2 mb-1.5">
         <span className="text-xs text-[var(--color-text-muted)]">{ch.icon} {ch.label} · {order.items.length} item{order.items.length !== 1 ? 's' : ''} · {fmtDateShort(order.createdAt)}</span>
         <span className="text-sm font-bold text-[var(--color-text)] shrink-0">{fmtBRL(order.total)}</span>
       </div>
+      <PaymentBadge method={order.paymentMethod} />
     </div>
   )
 }
@@ -164,20 +186,77 @@ function Pagination({ page, totalPages, onPage, total, pageSize }) {
 }
 
 /* ─── Página ─── */
+const ORDER_COLS = [
+  { label: 'Pedido',    key: 'number',        sortable: true },
+  { label: 'Cliente',   key: 'customerName',  sortable: true },
+  { label: 'Canal',     key: 'channel',       sortable: true },
+  { label: 'Pagamento', key: 'paymentMethod', sortable: true },
+  { label: 'Itens',     key: '_items',        sortable: false, align: 'right' },
+  { label: 'Total',     key: 'total',         sortable: true,  align: 'right' },
+  { label: 'Status',    key: 'status',        sortable: true },
+  { label: 'Data',      key: 'createdAt',     sortable: true },
+  { label: '',          key: '_act',          sortable: false },
+]
+function SortableTh({ col, sortKey, sortDir, onSort }) {
+  const active = sortKey === (col.sortKey ?? col.key)
+  const align  = col.align === 'right' ? 'text-right' : 'text-left'
+  return (
+    <th onClick={() => col.sortable && onSort(col)}
+      className={`px-4 py-3 text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap select-none ${align} ${col.sortable ? 'cursor-pointer hover:text-[var(--color-text)] hover:bg-[var(--color-bg-subtle)] transition-colors' : ''}`}
+    >
+      <span className="inline-flex items-center gap-1">
+        {col.label}
+        {col.sortable && (active
+          ? sortDir === 'asc' ? <ChevronUp size={11} className="shrink-0" /> : <ChevronDown size={11} className="shrink-0" />
+          : <ChevronsUpDown size={11} className="shrink-0 opacity-30" />
+        )}
+      </span>
+    </th>
+  )
+}
 export function OrdersPage() {
   const {
     orders, total, totalPages, isLoading, error,
     filters, setFilters, page, setPage,
-    refetch, createOrder, updateStatus,
+    refetch, createOrder, updateStatus, cancelItem,
     stats, PAGE_SIZE,
-    customers, skus,
+    customers, skus, products,
   } = useOrders()
+  const { sorted: sortedOrders, sortKey: oSortKey, sortDir: oSortDir, handleSort: oHandleSort } = useSortable(orders, 'createdAt', 'desc')
 
+  const location = useLocation()
   const [detailOrder, setDetailOrder] = useState(null)
-  const [formOpen,    setFormOpen]    = useState(false)
+  const [formOpen,        setFormOpen]        = useState(false)
+  const [sheetOpen,       setSheetOpen]       = useState(false)
+  const [sheetFilters,    setSheetFilters]    = useState({})
+
+  useEffect(() => {
+    if (location.state?.openNew) { setFormOpen(true); window.history.replaceState({}, '') }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const openDetail = useCallback((order) => setDetailOrder(order), [])
   const closeDetail = useCallback(() => setDetailOrder(null), [])
+
+  const handlePrintOrders = () => {
+    printList({
+      title: 'Pedidos',
+      subtitle: filters.status ? `Status: ${filters.status}` : 'Todos os status',
+      columns: [
+        { label: 'Nº',       get: o => o.number ? `#${o.number}` : o.id.slice(-6).toUpperCase() },
+        { label: 'Cliente',  key: 'customerName' },
+        { label: 'Status',   key: 'status' },
+        { label: 'Canal',    key: 'channel' },
+        { label: 'Itens',    get: o => (o.items ?? []).length, align: 'right' },
+        { label: 'Total',    get: o => `R$ ${Number(o.total).toFixed(2)}`, align: 'right' },
+        { label: 'Data',     get: o => o.createdAt ? new Date(o.createdAt).toLocaleDateString('pt-BR') : '—' },
+      ],
+      rows: orders,
+      summary: [
+        { label: 'Pedidos',       value: stats.total },
+        { label: 'Pendentes',     value: stats.pending },
+      ],
+    })
+  }
 
   const handleStatusChange = useCallback(async (orderId, newStatus) => {
     await updateStatus(orderId, newStatus)
@@ -198,8 +277,8 @@ export function OrdersPage() {
     await createOrder(payload)
   }, [createOrder])
 
-  const hasFilters = filters.search || filters.status || filters.channel || filters.dateFrom || filters.dateTo
-  const clearFilters = () => setFilters({ search: '', status: '', channel: '', dateFrom: '', dateTo: '' })
+  const hasFilters = filters.search || filters.status || filters.channel || filters.dateFrom || filters.dateTo || filters.customerId
+  const clearFilters = () => setFilters({ search: '', status: '', channel: '', dateFrom: '', dateTo: '', customerId: '' })
 
   const STATUS_FILTER_OPTIONS = [
     { value: '', label: 'Todos' },
@@ -234,6 +313,20 @@ export function OrdersPage() {
           >
             <RefreshCw size={16} className={isLoading ? 'animate-spin' : ''} />
           </button>
+          <button
+              onClick={() => {
+                setSheetFilters({
+                  customerId: filters.customerId || '',
+                  dateFrom:   filters.dateFrom   || '',
+                  dateTo:     filters.dateTo     || '',
+                  status:     filters.status     || '',
+                })
+                setSheetOpen(true)
+              }}
+              className="flex items-center gap-2 h-9 px-3 text-sm font-medium rounded-lg border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface)] transition-colors"
+            >
+              <Printer size={14} /> Ficha de Separação
+            </button>
           <Button size="sm" onClick={() => setFormOpen(true)}>
             <Plus size={15} /> Novo pedido
           </Button>
@@ -247,12 +340,22 @@ export function OrdersPage() {
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)] pointer-events-none" />
             <input
               type="text"
-              placeholder="Buscar por número ou cliente…"
+              placeholder="Buscar por #1001 ou nome do cliente…"
               value={filters.search}
               onChange={e => setFilters({ search: e.target.value })}
               className="w-full h-9 pl-8 pr-3 rounded-lg text-sm bg-[var(--color-bg-subtle)] border border-[var(--color-border)] text-[var(--color-text)] placeholder:text-[var(--color-text-disabled)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:bg-[var(--color-bg)]"
             />
           </div>
+          {customers.length > 0 && (
+            <select
+              value={filters.customerId || ''}
+              onChange={e => setFilters({ customerId: e.target.value })}
+              className="h-9 px-2 rounded-lg text-sm bg-[var(--color-bg-subtle)] border border-[var(--color-border)] text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
+            >
+              <option value="">Todos clientes</option>
+              {customers.map(cu => <option key={cu.id} value={cu.id}>{cu.name}</option>)}
+            </select>
+          )}
           <select
             value={filters.channel}
             onChange={e => setFilters({ channel: e.target.value })}
@@ -327,13 +430,13 @@ export function OrdersPage() {
               <table className="w-full text-sm">
                 <thead className="bg-[var(--color-bg-subtle)] border-b border-[var(--color-border)]">
                   <tr>
-                    {['Pedido', 'Cliente', 'Canal', 'Itens', 'Total', 'Status', 'Data', ''].map(h => (
-                      <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap">{h}</th>
+                    {ORDER_COLS.map(col => (
+                      <SortableTh key={col.key} col={col} sortKey={oSortKey} sortDir={oSortDir} onSort={oHandleSort} />
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {orders.map(o => <OrderRow key={o.id} order={o} onClick={openDetail} />)}
+                  {sortedOrders.map(o => <OrderRow key={o.id} order={o} onClick={openDetail} />)}
                 </tbody>
               </table>
             </div>
@@ -353,15 +456,23 @@ export function OrdersPage() {
         order={detailOrder}
         onClose={closeDetail}
         onStatusChange={handleStatusChange}
+        onItemCancel={cancelItem}
       />
 
       {/* ── Formulário de criação ── */}
+      <SeparationSheet
+        open={sheetOpen}
+        onClose={() => setSheetOpen(false)}
+        filters={sheetFilters}
+        customers={customers}
+      />
       <OrderForm
         open={formOpen}
         onClose={() => setFormOpen(false)}
         onSave={handleCreate}
         customers={customers}
         skus={skus}
+        products={products}
       />
     </div>
   )

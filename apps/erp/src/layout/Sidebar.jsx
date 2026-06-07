@@ -4,6 +4,7 @@
  * Sidebar desktop — visível apenas em md+.
  * Colapsa para ícones (w-16) ou expande com texto (w-56).
  * Estado de colapso persistido em localStorage.
+ * Itens com newTab:true abrem em nova aba.
  *
  * Props:
  *   tenantInfo : { name, logoUrl }
@@ -14,17 +15,17 @@ import { NavLink, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
-  LayoutDashboard, Package, Warehouse, ShoppingCart,
-  Users, MessageCircle, Settings, CreditCard, BarChart2, ChevronLeft,
-  ChevronRight, LogOut,
+  LayoutDashboard, Package, Warehouse, ShoppingCart, UserCog,
+  Users, MessageCircle, Settings, CreditCard, BarChart2, Wallet, ChevronLeft,
+  ChevronRight, LogOut, Monitor,
 } from 'lucide-react'
 import { useAuth } from '../auth/AuthContext.jsx'
 import { NAV_ITEMS } from './navItems.js'
 
 /* ─── Mapa ícone → componente ─── */
 const ICONS = {
-  LayoutDashboard, Package, Warehouse, ShoppingCart,
-  Users, MessageCircle, Settings, CreditCard, BarChart2,
+  LayoutDashboard, Package, Warehouse, ShoppingCart, UserCog,
+  Users, MessageCircle, Settings, CreditCard, BarChart2, Wallet, Monitor,
 }
 
 const SIDEBAR_KEY = 'aura-sidebar-collapsed'
@@ -32,6 +33,13 @@ const SIDEBAR_KEY = 'aura-sidebar-collapsed'
 function readCollapsed() {
   try { return localStorage.getItem(SIDEBAR_KEY) === 'true' } catch { return false }
 }
+
+/* Classes compartilhadas para os itens de nav */
+const NAV_CLS_BASE = `
+  flex items-center gap-3 rounded-lg px-3 py-2.5
+  text-sm font-medium transition-colors duration-150
+  text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)]
+`
 
 export function Sidebar({ tenantInfo }) {
   const { t }              = useTranslation()
@@ -103,6 +111,40 @@ export function Sidebar({ tenantInfo }) {
       <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-1">
         {visibleItems.map(item => {
           const Icon = ICONS[item.icon]
+
+          const labelNode = (
+            <AnimatePresence>
+              {!collapsed && (
+                <motion.span
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.1 }}
+                  className="truncate"
+                >
+                  {t(`nav.${item.key}`)}
+                </motion.span>
+              )}
+            </AnimatePresence>
+          )
+
+          /* newTab: abre em nova aba com <a> simples */
+          if (item.newTab) {
+            return (
+              <a
+                key={item.key}
+                href={item.path}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={NAV_CLS_BASE}
+                title={collapsed ? t(`nav.${item.key}`) : undefined}
+              >
+                <Icon size={20} className="shrink-0" />
+                {labelNode}
+              </a>
+            )
+          }
+
           return (
             <NavLink
               key={item.key}
@@ -118,19 +160,7 @@ export function Sidebar({ tenantInfo }) {
               title={collapsed ? t(`nav.${item.key}`) : undefined}
             >
               <Icon size={20} className="shrink-0" />
-              <AnimatePresence>
-                {!collapsed && (
-                  <motion.span
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.1 }}
-                    className="truncate"
-                  >
-                    {t(`nav.${item.key}`)}
-                  </motion.span>
-                )}
-              </AnimatePresence>
+              {labelNode}
             </NavLink>
           )
         })}

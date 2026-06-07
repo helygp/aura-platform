@@ -12,6 +12,15 @@ import { authenticate } from '../middleware/authenticate.js'
 import { authorize }    from '../middleware/authorize.js'
 import { query, getClient } from '../lib/tenantDb.js'
 
+
+/* Normaliza valor BRL: aceita "32,90" e "32.90" → 32.9 */
+function parseBRL(v) {
+  if (v == null || v === '') return 0;
+  const s = String(v).trim().replace(/\./g, '').replace(',', '.');
+  const n = parseFloat(s);
+  return isNaN(n) ? 0 : n;
+}
+
 export const productsRouter = Router()
 productsRouter.use(authenticate)
 
@@ -73,7 +82,7 @@ productsRouter.post('/', authorize('admin', 'estoque'), async (req, res) => {
         VALUES ($1, $2, $3::jsonb, $4, $5)
         RETURNING *
       `, [product.id, sku.code, JSON.stringify(sku.attributes ?? {}),
-          parseFloat(sku.priceWholesale) || 0, parseInt(sku.stockMin) || 0])
+          parseBRL(sku.priceWholesale) || 0, parseInt(sku.stockMin) || 0])
       insertedSkus.push(s)
     }
 
@@ -89,20 +98,61 @@ productsRouter.post('/', authorize('admin', 'estoque'), async (req, res) => {
   }
 })
 
+/* ── GET /api/products/:id ── */
+productsRouter.get('/:id', async (req, res) => {
+  try {
+    const { rows: [product] } = await query(
+      'SELECT * FROM products WHERE id=$1', [req.params.id]
+    )
+    if (!product) return res.status(404).json({ error: 'Produto não encontrado.' })
+
+    const { rows: skus } = await query(
+      'SELECT * FROM skus WHERE product_id=$1 ORDER BY code', [req.params.id]
+    )
+    res.json(normalizeProduct({ ...product, skus }))
+  } catch (err) {
+    console.error('[products/get-by-id]', err.message)
+    res.status(500).json({ error: 'Erro interno.' })
+  }
+})
+
 /* ── PUT /api/products/:id ── */
 productsRouter.put('/:id', authorize('admin', 'estoque'), async (req, res) => {
+  const client = await getClient()
   try {
-    const { name, code, category, imageUrl, attributes } = req.body
-    const { rows: [product] } = await query(`
+    await client.query('BEGIN')
+    const { name, code, category, imageUrl, attributes, skus = [] } = req.body
+
+    const { rows: [product] } = await client.query(`
       UPDATE products SET name=$1, code=$2, category=$3, image_url=$4,
              attributes=$5::jsonb, updated_at=now()
       WHERE id=$6 RETURNING *
     `, [name, code, category, imageUrl, JSON.stringify(attributes ?? []), req.params.id])
-    if (!product) return res.status(404).json({ error: 'Produto não encontrado.' })
-    res.json(normalizeProduct(product))
+    if (!product) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Produto não encontrado.' }) }
+
+    /* Atualiza preço e estoque mínimo de SKUs existentes */
+    for (const sku of skus) {
+      if (!sku.id) continue
+      await client.query(`
+        UPDATE skus SET price_wholesale=$1, stock_min=$2, updated_at=now()
+        WHERE id=$3 AND product_id=$4
+      `, [parseBRL(sku.priceWholesale) || 0, parseInt(sku.stockMin) || 0, sku.id, req.params.id])
+    }
+
+    await client.query('COMMIT')
+
+    /* Retorna produto com SKUs atualizados */
+    const { rows: updatedSkus } = await client.query(
+      'SELECT * FROM skus WHERE product_id=$1 ORDER BY code', [req.params.id]
+    )
+    res.json(normalizeProduct({ ...product, skus: updatedSkus }))
   } catch (err) {
+    await client.query('ROLLBACK')
     if (err.code === '23505') return res.status(409).json({ error: 'Código já existe.' })
+    console.error('[products/update]', err.message)
     res.status(500).json({ error: 'Erro interno.' })
+  } finally {
+    client.release()
   }
 })
 

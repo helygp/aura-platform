@@ -62,7 +62,7 @@ export default function OrderStatusView({ initialOrder, tenantSlug }: Props) {
     }
   }
 
-  const canCancel = order.status === 'aguardando_confirmacao'
+  const canCancel = order.status === 'pendente'
   const isCancelled = order.status === 'cancelado'
 
   // ── Render ─────────────────────────────────────────────────────────────────
@@ -71,7 +71,7 @@ export default function OrderStatusView({ initialOrder, tenantSlug }: Props) {
     <div className="mx-auto max-w-3xl px-4 py-8 sm:px-6">
 
       {/* ── Confirmação (banner verde logo após criar pedido) ── */}
-      {order.status === 'aguardando_confirmacao' && (
+      {order.status === 'pendente' && (
         <div className="mb-6 flex items-start gap-3 rounded-[var(--radius-lg)] border border-green-200 bg-green-50 px-4 py-4 dark:border-green-900 dark:bg-green-950/30">
           <CheckCircleIcon className="mt-0.5 shrink-0 text-green-600 dark:text-green-400" />
           <div>
