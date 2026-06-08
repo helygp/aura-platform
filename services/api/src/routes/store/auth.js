@@ -43,6 +43,12 @@ async function signToken(tokenId, tenantSlug, ttl) {
 }
 
 function setCookies(res, { accessToken, refreshToken }) {
+  // Limpar cookies legados sem domain explícito (escopo = api.*.aurabr.app)
+  // para evitar conflito com os novos cookies de domain .aurabr.app
+  const legacyOpts = { httpOnly: true, secure: IS_PROD, sameSite: IS_PROD ? 'lax' : 'lax', path: '/' }
+  res.clearCookie('store_access',  legacyOpts)
+  res.clearCookie('store_refresh', legacyOpts)
+  // Setar novos com domain .aurabr.app
   res.cookie('store_access',   accessToken,  { ...COOKIE_OPTS, maxAge: ACCESS_TTL  * 1000 })
   res.cookie('store_refresh',  refreshToken, { ...COOKIE_OPTS, maxAge: REFRESH_TTL * 1000 })
 }

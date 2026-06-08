@@ -31,7 +31,9 @@ function LoginPageInner() {
   }, [buyer, router, redirectTo])
 
   function handleSuccess() {
-    refresh()
+    // Não chamar refresh() aqui — login() já populou buyer via setBuyer(session).
+    // refresh() chama me() que pode retornar null (cookie legado no browser)
+    // e sobrescreve o buyer com null, desfazendo o login.
     router.push(redirectTo)
   }
 
