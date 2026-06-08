@@ -8,22 +8,24 @@
  *   Toggles dark/lang ficam dentro do dropdown
  *
  * Desktop (md+):
- *   [Breadcrumb/Título da página]  ——  [Lang] [Dark] [Avatar dropdown]
+ *   [Atalhos globais: Cockpit ...]  ——  [Lang] [Dark] [Avatar dropdown]
+ *
+ * O título de cada página NÃO é repetido aqui — cada página já exibe
+ * seu próprio H1. Este espaço é reservado para ações cross-cutting.
  *
  * Props:
  *   tenantInfo : { name, logoUrl }
- *   pageTitle  : string (opcional, para breadcrumb)
  */
 
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { Sun, Moon, LogOut, User, ChevronDown } from 'lucide-react'
+import { Sun, Moon, LogOut, User, ChevronDown, Monitor } from 'lucide-react'
 import { useTheme }    from '@aura/theme'
 import { useLanguage } from '@aura/i18n'
 import { useAuth }     from '../auth/AuthContext.jsx'
 
-export function Header({ tenantInfo, pageTitle }) {
+export function Header({ tenantInfo }) {
   const { t }                   = useTranslation()
   const { isDark, toggleDark }  = useTheme()
   const { language, toggleLanguage } = useLanguage()
@@ -61,8 +63,9 @@ export function Header({ tenantInfo, pageTitle }) {
     ">
 
       {/* ── Esquerda ── */}
-      <div className="flex items-center gap-3 min-w-0">
-        {/* Logo/nome visível apenas no mobile (sidebar escondida) */}
+      <div className="flex items-center gap-2 min-w-0">
+
+        {/* Logo/nome — visível apenas no mobile (sidebar escondida) */}
         <div className="flex items-center gap-2 md:hidden min-w-0">
           {tenantInfo?.logoUrl ? (
             <img
@@ -83,12 +86,28 @@ export function Header({ tenantInfo, pageTitle }) {
           </span>
         </div>
 
-        {/* Título da página — desktop */}
-        {pageTitle && (
-          <h1 className="hidden md:block text-base font-semibold text-[var(--color-text-primary)] truncate">
-            {pageTitle}
-          </h1>
-        )}
+        {/* ── Atalhos globais — desktop ── */}
+        {/* Cockpit: painel de estoque em tela cheia, sempre em nova aba */}
+        <a
+          href="/stock-panel"
+          target="_blank"
+          rel="noopener noreferrer"
+          title="Abrir Cockpit em nova aba"
+          className="
+            hidden md:flex items-center gap-2
+            h-9 px-3 rounded-lg
+            text-sm font-medium
+            text-[var(--color-text-secondary)]
+            hover:bg-[var(--color-surface-hover)]
+            hover:text-[var(--color-text-primary)]
+            transition-colors duration-150
+          "
+        >
+          <Monitor size={16} className="shrink-0" />
+          <span>{t('nav.cockpit', 'Cockpit')}</span>
+        </a>
+
+        {/* Espaço reservado para futuros atalhos cross-cutting */}
       </div>
 
       {/* ── Direita ── */}
@@ -203,6 +222,23 @@ export function Header({ tenantInfo, pageTitle }) {
                     {language === 'pt' ? 'Switch to English' : 'Mudar para Português'}
                   </span>
                 </button>
+
+                {/* Cockpit — acesso rápido mobile */}
+                <a
+                  href="/stock-panel"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={() => setDropOpen(false)}
+                  className="
+                    w-full flex items-center gap-3 py-2 text-sm
+                    text-[var(--color-text-secondary)]
+                    hover:text-[var(--color-text-primary)]
+                    transition-colors duration-150
+                  "
+                >
+                  <Monitor size={16} />
+                  <span>{t('nav.cockpit', 'Cockpit')}</span>
+                </a>
               </div>
 
               <div className="border-t border-[var(--color-border)] pt-1">
