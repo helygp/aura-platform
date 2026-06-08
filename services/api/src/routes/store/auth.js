@@ -28,7 +28,8 @@ const secret = () => new TextEncoder().encode(
 const COOKIE_OPTS = {
   httpOnly: true,
   secure:   IS_PROD,
-  sameSite: IS_PROD ? 'strict' : 'lax',
+  sameSite: IS_PROD ? 'lax' : 'lax',   // strict bloqueia cookie entre subdomínios
+  domain:   IS_PROD ? '.aurabr.app' : undefined, // compartilha loja.* e api.* em prod
   path:     '/',
 }
 
