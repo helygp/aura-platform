@@ -2,9 +2,12 @@
 
 /**
  * components/checkout/PaymentMethodSelector.tsx
- * Seletor de forma de pagamento: Pix / Boleto / Crédito.
- * A opção Crédito só aparece se o cliente tiver crédito disponível (credit_limit > 0).
- * "A combinar" foi removido — pagamento deve ser confirmado na plataforma.
+ * Seletor de forma de pagamento.
+ *
+ * Estado atual da plataforma (Jun/2026):
+ *   - Crédito: ATIVO (clientes com credit_limit > 0)
+ *   - Pix / Boleto: implementados mas DESABILITADOS no UI (em breve)
+ *     Quando ativos, basta remover comingSoon: true das BASE_OPTIONS.
  */
 
 import { formatPrice } from '@/lib/cart'
@@ -16,6 +19,7 @@ interface Option {
   label:       string
   description: string
   icon:        () => JSX.Element
+  comingSoon?: boolean
 }
 
 const BASE_OPTIONS: Option[] = [
@@ -24,19 +28,21 @@ const BASE_OPTIONS: Option[] = [
     label:       'Pix',
     description: 'Chave enviada após confirmação do pedido',
     icon:        PixIcon,
+    comingSoon:  true,
   },
   {
     value:       'boleto',
     label:       'Boleto bancário',
     description: 'Vencimento em 3 dias úteis',
     icon:        BoletoIcon,
+    comingSoon:  true,
   },
 ]
 
 interface Props {
   value:            PaymentMethod
   onChange:         (v: PaymentMethod) => void
-  creditAvailable?: number   // centavos — se > 0 e >= total, mostra opção crédito
+  creditAvailable?: number   // centavos
   orderTotal?:      number   // centavos
 }
 
@@ -56,18 +62,23 @@ export default function PaymentMethodSelector({ value, onChange, creditAvailable
     <div className="flex flex-col gap-2">
       {options.map((opt) => {
         const selected = value === opt.value
+        const disabled = opt.comingSoon
         return (
           <button
             key={opt.value}
             type="button"
-            onClick={() => onChange(opt.value)}
+            onClick={() => disabled ? null : onChange(opt.value)}
+            disabled={disabled}
             className={[
               'flex items-center gap-3 rounded-[var(--radius)] border p-3.5 text-left transition',
-              selected
-                ? 'border-primary bg-primary/5 ring-1 ring-primary/30'
-                : 'border-border hover:border-primary/50',
+              disabled
+                ? 'cursor-not-allowed border-border bg-muted/30 opacity-55'
+                : selected
+                  ? 'border-primary bg-primary/5 ring-1 ring-primary/30'
+                  : 'border-border hover:border-primary/50',
             ].join(' ')}
             aria-pressed={selected}
+            aria-disabled={disabled}
           >
             <span className={[
               'flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2 transition',
@@ -80,13 +91,26 @@ export default function PaymentMethodSelector({ value, onChange, creditAvailable
               <opt.icon />
             </span>
 
-            <span className="flex flex-col gap-0.5">
-              <span className="text-sm font-medium text-foreground">{opt.label}</span>
+            <span className="flex flex-1 flex-col gap-0.5">
+              <span className="flex items-center gap-2 text-sm font-medium text-foreground">
+                {opt.label}
+                {disabled && (
+                  <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">
+                    em breve
+                  </span>
+                )}
+              </span>
               <span className="text-xs text-muted-foreground">{opt.description}</span>
             </span>
           </button>
         )
       })}
+
+      {!showCredit && (
+        <p className="mt-2 rounded-[var(--radius)] border border-dashed border-border bg-muted/30 p-3 text-xs text-muted-foreground">
+          Você ainda não tem crédito liberado. Pix e Boleto estarão disponíveis em breve — entre em contato pelo WhatsApp para confirmar pagamento manualmente.
+        </p>
+      )}
     </div>
   )
 }

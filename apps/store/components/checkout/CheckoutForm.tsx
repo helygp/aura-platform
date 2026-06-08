@@ -41,10 +41,12 @@ export default function CheckoutForm({ tenantSlug, minimumOrderAmount }: Props) 
   const router = useRouter()
   const { items, total, clear, isEmpty, isLoaded } = useCart()
   const { buyer } = useAuth()
+  // No estado atual só Crédito está ativo — sem crédito = sem checkout possível
+  const hasUsablePayment = (buyer?.creditAvailable ?? 0) >= total
 
   const [deliveryAddress, setDeliveryAddress] = useState('')
   const [notes,           setNotes]           = useState('')
-  const [paymentMethod,   setPaymentMethod]   = useState<PaymentMethod>('pix')
+  const [paymentMethod,   setPaymentMethod]   = useState<PaymentMethod>('credito')
   const [errors,          setErrors]          = useState<FormErrors>({})
   const [submitting,      setSubmitting]       = useState(false)
 
@@ -183,7 +185,7 @@ export default function CheckoutForm({ tenantSlug, minimumOrderAmount }: Props) 
 
           {/* CTA mobile (aparece abaixo do form em telas pequenas) */}
           <div className="lg:hidden">
-            <SubmitButton submitting={submitting} onSubmit={handleSubmit} />
+            <SubmitButton submitting={submitting} disabled={!hasUsablePayment} onSubmit={handleSubmit} />
           </div>
         </div>
 
@@ -191,7 +193,7 @@ export default function CheckoutForm({ tenantSlug, minimumOrderAmount }: Props) 
         <div className="flex flex-col gap-4 lg:sticky lg:top-20 lg:w-80 lg:shrink-0">
           <OrderSummaryPanel items={items} total={total} />
           <div className="hidden lg:block">
-            <SubmitButton submitting={submitting} onSubmit={handleSubmit} />
+            <SubmitButton submitting={submitting} disabled={!hasUsablePayment} onSubmit={handleSubmit} />
           </div>
         </div>
       </div>
@@ -201,12 +203,12 @@ export default function CheckoutForm({ tenantSlug, minimumOrderAmount }: Props) 
 
 // ─── Botão de submit extraído para não duplicar ────────────────────────────────
 
-function SubmitButton({ submitting, onSubmit }: { submitting: boolean; onSubmit: () => void }) {
+function SubmitButton({ submitting, disabled, onSubmit }: { submitting: boolean; disabled?: boolean; onSubmit: () => void }) {
   return (
     <button
       type="button"
       onClick={onSubmit}
-      disabled={submitting}
+      disabled={submitting || disabled}
       className="flex w-full items-center justify-center gap-2 rounded-[var(--radius)] bg-primary py-3.5 text-sm font-semibold text-primary-foreground shadow transition hover:opacity-90 active:scale-95 disabled:opacity-60"
     >
       {submitting ? (
