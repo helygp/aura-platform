@@ -148,17 +148,18 @@ storeOrdersRouter.get('/:ref', async (req, res) => {
       ORDER BY oi.id
     `, [ref])
 
+    // API/DB guarda valores em reais (NUMERIC). Store espera centavos para formatPrice.
     res.json({
       ref:           order.ref,
       status:        order.status,
       paymentMethod: order.paymentMethod,
-      total:         Number(order.total),
+      total:         Math.round(Number(order.total) * 100),
       createdAt:     order.createdAt,
       items:         items.map(i => ({
         name:        i.name,
         variant:     formatVariant(i.variant),
         quantity:    i.quantity,
-        price:       Number(i.price),
+        price:       Math.round(Number(i.price) * 100),
         skuId:       i.skuId ?? null,
         skuCode:     i.skuCode ?? null,
         productSlug: i.productSlug ?? null,
@@ -188,7 +189,7 @@ storeOrdersRouter.get('/', authenticateBuyer, async (req, res) => {
     )
     res.json(rows.map(r => ({
       ...r,
-      total: Number(r.total),
+      total: Math.round(Number(r.total) * 100),  // reais → centavos
       // items é esperado como array pelo frontend — retorna array vazio com length correto
       items: Array.from({ length: r.itemsCount ?? 0 }, (_, i) => ({ name: `item${i}` })),
       timeline: [],
