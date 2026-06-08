@@ -22,7 +22,7 @@ COPY apps/store/     apps/store/
 
 RUN mkdir -p apps/store/public
 
-ARG NEXT_PUBLIC_API_URL=https://api.aurabr.app
+ARG NEXT_PUBLIC_API_URL=https://api.fastmalhas.aurabr.app
 ARG NEXT_PUBLIC_DEFAULT_TENANT_SLUG=demo
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_DEFAULT_TENANT_SLUG=$NEXT_PUBLIC_DEFAULT_TENANT_SLUG
