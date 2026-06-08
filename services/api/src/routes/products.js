@@ -130,13 +130,20 @@ productsRouter.put('/:id', authorize('admin', 'estoque'), async (req, res) => {
     `, [name, code, category, imageUrl, JSON.stringify(attributes ?? []), req.params.id])
     if (!product) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Produto não encontrado.' }) }
 
-    /* Atualiza preço e estoque mínimo de SKUs existentes */
+    /* Atualiza SKUs existentes; insere novos (sem id) */
     for (const sku of skus) {
-      if (!sku.id) continue
-      await client.query(`
-        UPDATE skus SET price_wholesale=$1, stock_min=$2, updated_at=now()
-        WHERE id=$3 AND product_id=$4
-      `, [parseBRL(sku.priceWholesale) || 0, parseInt(sku.stockMin) || 0, sku.id, req.params.id])
+      if (sku.id) {
+        await client.query(`
+          UPDATE skus SET price_wholesale=$1, stock_min=$2, updated_at=now()
+          WHERE id=$3 AND product_id=$4
+        `, [parseBRL(sku.priceWholesale) || 0, parseInt(sku.stockMin) || 0, sku.id, req.params.id])
+      } else {
+        await client.query(`
+          INSERT INTO skus (product_id, code, attributes, price_wholesale, stock_min)
+          VALUES ($1, $2, $3::jsonb, $4, $5)
+        `, [req.params.id, sku.code, JSON.stringify(sku.attributes ?? {}),
+            parseBRL(sku.priceWholesale) || 0, parseInt(sku.stockMin) || 0])
+      }
     }
 
     await client.query('COMMIT')

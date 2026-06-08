@@ -10,6 +10,7 @@
  * Modo EDIÇÃO:
  *   Aba "Informações" — nome, código, categoria, foto
  *   Aba "SKUs (N)"    — tabela compacta editável (preço + estoque mín por SKU)
+ *                      + busca, sort, ações em massa e adicionar SKU
  *
  * Props:
  *   open       : boolean
@@ -18,9 +19,9 @@
  *   onSave     : (data) => Promise<void>
  */
 
-import React, { useState, useEffect, useCallback, useRef } from 'react'
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Upload, X, RefreshCw, Info, ChevronDown } from 'lucide-react'
+import { Upload, X, RefreshCw, Info, ChevronDown, Search, Plus } from 'lucide-react'
 import { Button, Input, Badge } from '@aura/ui'
 import { AttributeBuilder } from './AttributeBuilder.jsx'
 import { SkuGrid }           from './SkuGrid.jsx'
@@ -95,12 +96,190 @@ function sortSkusForDisplay(skus, attrKeys) {
   })
 }
 
+/* ── Formulário inline para adicionar novo SKU ── */
+function SkuAddForm({ attrKeys, existingSkus, productCode, onAdd, onCancel }) {
+  const [values,   setValues]   = useState({})
+  const [code,     setCode]     = useState('')
+  const [price,    setPrice]    = useState('')
+  const [stockMin, setStockMin] = useState('0')
+  const [codeEdited, setCodeEdited] = useState(false)
+
+  // Valores existentes por atributo, ordenados
+  const existingValues = useMemo(() => {
+    const m = {}
+    attrKeys.forEach(k => {
+      const isSz = _FORM_ROWS.includes(k)
+      const vals = [...new Set(existingSkus.map(s => s.attributes?.[k]).filter(Boolean).map(String))]
+      m[k] = isSz
+        ? vals.sort((a, b) => _formSzKey(a).localeCompare(_formSzKey(b)))
+        : vals.sort((a, b) => a.localeCompare(b, 'pt-BR'))
+    })
+    return m
+  }, [attrKeys, existingSkus])
+
+  // Sugere código automaticamente
+  useEffect(() => {
+    if (codeEdited) return
+    if (!productCode) return
+    if (!attrKeys.every(k => values[k])) { setCode(''); return }
+    const parts = attrKeys.map(k => {
+      const s = String(values[k] ?? '').trim()
+      if (/^\d+$/.test(s)) return s.padStart(2, '0')
+      if (/^[A-Z]+$/i.test(s) && s.length <= 4) return s.toUpperCase()
+      return s.split(/\s+/).map(w => w[0]).join('').toUpperCase().slice(0, 3)
+    })
+    setCode(`${productCode}-${parts.join('-')}`)
+  }, [values, attrKeys, productCode, codeEdited])
+
+  const isDuplicateAttrs = useMemo(() => {
+    if (!attrKeys.every(k => values[k])) return false
+    return existingSkus.some(s =>
+      attrKeys.every(k =>
+        String(s.attributes?.[k] ?? '').toLowerCase().trim() ===
+        String(values[k] ?? '').toLowerCase().trim()
+      )
+    )
+  }, [existingSkus, values, attrKeys])
+
+  const isDuplicateCode = useMemo(() => {
+    if (!code) return false
+    return existingSkus.some(s => (s.code ?? '').toLowerCase() === code.toLowerCase())
+  }, [existingSkus, code])
+
+  const canAdd = attrKeys.every(k => values[k]) && code && !isDuplicateAttrs && !isDuplicateCode
+
+  const handleAdd = () => {
+    if (!canAdd) return
+    onAdd({
+      _tempId:        `new-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      code,
+      attributes:     { ...values },
+      priceWholesale: parseFloat(price) || 0,
+      stockMin:       parseInt(stockMin) || 0,
+      stock:          0,
+    })
+  }
+
+  return (
+    <div className="p-3 mb-2 bg-blue-50 dark:bg-blue-950/30 rounded-xl border border-blue-200 dark:border-blue-900 space-y-2">
+      <div className="flex items-center justify-between">
+        <p className="text-xs font-semibold text-[var(--color-text)]">Adicionar novo SKU</p>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="w-5 h-5 flex items-center justify-center rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg)] transition-colors"
+        >
+          <X size={12} />
+        </button>
+      </div>
+
+      {/* Atributos */}
+      {attrKeys.map(k => (
+        <div key={k} className="flex items-center gap-2">
+          <span className="text-xs text-[var(--color-text-muted)] w-24 shrink-0">{k}:</span>
+          <input
+            list={`add-vals-${k}`}
+            value={values[k] || ''}
+            onChange={e => setValues(v => ({ ...v, [k]: e.target.value }))}
+            placeholder="Selecione ou digite novo…"
+            className="flex-1 h-7 px-2 rounded-lg text-xs bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]"
+          />
+          <datalist id={`add-vals-${k}`}>
+            {existingValues[k].map(v => <option key={v} value={v} />)}
+          </datalist>
+        </div>
+      ))}
+
+      {/* Código */}
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-[var(--color-text-muted)] w-24 shrink-0">Código:</span>
+        <input
+          value={code}
+          onChange={e => { setCode(e.target.value); setCodeEdited(true) }}
+          placeholder="Auto (gerado)"
+          className="flex-1 h-7 px-2 rounded-lg text-xs bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)] font-mono"
+        />
+      </div>
+
+      {/* Preço + Estoque mín */}
+      <div className="grid grid-cols-2 gap-2">
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs text-[var(--color-text-muted)] w-24 shrink-0">Preço atacado:</span>
+          <span className="text-xs text-[var(--color-text-muted)]">R$</span>
+          <input
+            type="number" min="0" step="0.01" placeholder="0,00"
+            value={price}
+            onChange={e => setPrice(e.target.value)}
+            className="flex-1 h-7 px-2 rounded-lg text-xs bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]"
+          />
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs text-[var(--color-text-muted)] shrink-0">Est. mín:</span>
+          <input
+            type="number" min="0"
+            value={stockMin}
+            onChange={e => setStockMin(e.target.value)}
+            className="flex-1 h-7 px-2 rounded-lg text-xs bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]"
+          />
+        </div>
+      </div>
+
+      {/* Avisos */}
+      {isDuplicateAttrs && (
+        <p className="text-[11px] text-red-600 dark:text-red-400">⚠ Esta combinação de atributos já existe.</p>
+      )}
+      {isDuplicateCode && (
+        <p className="text-[11px] text-red-600 dark:text-red-400">⚠ Este código já está em uso.</p>
+      )}
+      <p className="text-[10px] text-[var(--color-text-muted)]">
+        O novo SKU será criado quando você clicar em <strong>Salvar alterações</strong>.
+      </p>
+
+      <div className="flex justify-end gap-2 pt-0.5">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="h-7 px-3 rounded-lg text-xs font-medium border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface)] transition-colors"
+        >
+          Cancelar
+        </button>
+        <button
+          type="button"
+          onClick={handleAdd}
+          disabled={!canAdd}
+          className="h-7 px-3 rounded-lg text-xs font-semibold bg-[var(--color-primary)] text-white disabled:opacity-40 hover:opacity-90 transition-opacity"
+        >
+          Adicionar
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/* ── Ícone de sort (seta) ── */
+function SortIcon({ active, dir }) {
+  return (
+    <ChevronDown
+      size={11}
+      className={[
+        'transition-all',
+        active
+          ? `text-[var(--color-primary)] ${dir === 'asc' ? 'rotate-180' : ''}`
+          : 'text-[var(--color-text-disabled)] opacity-40',
+      ].join(' ')}
+    />
+  )
+}
+
 /* ── Tabela compacta de SKUs para EDIÇÃO ── */
-function SkuEditTable({ skus, onChange }) {
-  const [bulkPrice, setBulkPrice] = React.useState('')
-  const [bulkStock, setBulkStock] = React.useState('')
-  const [bulkOpen,  setBulkOpen]  = React.useState(false)
-  const [confirm,   setConfirm]   = React.useState(null) // { label, onConfirm }
+function SkuEditTable({ skus, onChange, productCode }) {
+  const [bulkPrice, setBulkPrice] = useState('')
+  const [bulkStock, setBulkStock] = useState('')
+  const [bulkOpen,  setBulkOpen]  = useState(false)
+  const [confirm,   setConfirm]   = useState(null)
+  const [search,    setSearch]    = useState('')
+  const [sortBy,    setSortBy]    = useState(null)  // { key, dir }
+  const [adding,    setAdding]    = useState(false)
 
   const updateSku = (index, field, value) => {
     onChange(skus.map((s, i) => i === index ? { ...s, [field]: value } : s))
@@ -133,25 +312,84 @@ function SkuEditTable({ skus, onChange }) {
     })
   }
 
-  if (!skus?.length) return (
-    <p className="text-sm text-[var(--color-text-muted)] text-center py-8">
-      Este produto não possui SKUs cadastrados.
-    </p>
-  )
+  const handleAddSku = (newSku) => {
+    onChange([...skus, newSku])
+    setAdding(false)
+  }
 
-  // T6.2 — Cor sempre antes de Tamanho, depois demais atributos em ordem alfabética
+  // T6.2 — chaves dos atributos ordenadas para o cabeçalho
   const ATTR_ORDER = ['cor', 'color', 'tamanho', 'size', 'tam']
-  const attrKeys = [...new Set(skus.flatMap(s => Object.keys(s.attributes ?? {})))].sort((a, b) => {
-    const ai = ATTR_ORDER.findIndex(k => a.toLowerCase().startsWith(k))
-    const bi = ATTR_ORDER.findIndex(k => b.toLowerCase().startsWith(k))
-    const av = ai === -1 ? 99 : ai
-    const bv = bi === -1 ? 99 : bi
-    if (av !== bv) return av - bv
-    return a.localeCompare(b, 'pt-BR', { sensitivity: 'base' })
-  })
+  const attrKeys = useMemo(() => {
+    if (!skus?.length) return []
+    return [...new Set(skus.flatMap(s => Object.keys(s.attributes ?? {})))].sort((a, b) => {
+      const ai = ATTR_ORDER.findIndex(k => a.toLowerCase().startsWith(k))
+      const bi = ATTR_ORDER.findIndex(k => b.toLowerCase().startsWith(k))
+      const av = ai === -1 ? 99 : ai
+      const bv = bi === -1 ? 99 : bi
+      if (av !== bv) return av - bv
+      return a.localeCompare(b, 'pt-BR', { sensitivity: 'base' })
+    })
+  }, [skus])
 
-  // Ordena as linhas: Cor (primário) → Tamanho (secundário)
-  const sortedSkus = sortSkusForDisplay(skus, attrKeys)
+  // Filtro de busca (cor, tamanho, código)
+  const filteredSkus = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    if (!q) return skus
+    return skus.filter(s => {
+      if ((s.code ?? '').toLowerCase().includes(q)) return true
+      return attrKeys.some(k => String(s.attributes?.[k] ?? '').toLowerCase().includes(q))
+    })
+  }, [skus, search, attrKeys])
+
+  // Ordenação (custom ou default Cor→Tamanho)
+  const displayedSkus = useMemo(() => {
+    if (!sortBy) return sortSkusForDisplay(filteredSkus, attrKeys)
+    return [...filteredSkus].sort((a, b) => {
+      let va, vb
+      if (sortBy.key === 'code') {
+        va = (a.code ?? '').toString()
+        vb = (b.code ?? '').toString()
+      } else {
+        const isSz = _FORM_ROWS.includes(sortBy.key)
+        va = isSz ? _formSzKey(a.attributes?.[sortBy.key]) : String(a.attributes?.[sortBy.key] ?? '')
+        vb = isSz ? _formSzKey(b.attributes?.[sortBy.key]) : String(b.attributes?.[sortBy.key] ?? '')
+      }
+      const c = va.localeCompare(vb, 'pt-BR', { numeric: true })
+      return sortBy.dir === 'desc' ? -c : c
+    })
+  }, [filteredSkus, sortBy, attrKeys])
+
+  const toggleSort = (key) => {
+    setSortBy(prev => {
+      if (!prev || prev.key !== key) return { key, dir: 'asc' }
+      if (prev.dir === 'asc') return { key, dir: 'desc' }
+      return null
+    })
+  }
+
+  if (!skus?.length && !adding) return (
+    <div className="space-y-3">
+      <p className="text-sm text-[var(--color-text-muted)] text-center py-8">
+        Este produto não possui SKUs cadastrados.
+      </p>
+      <button
+        type="button"
+        onClick={() => setAdding(true)}
+        className="w-full h-8 px-3 rounded-lg text-xs font-medium border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface)] transition-colors flex items-center justify-center gap-1.5"
+      >
+        <Plus size={13} /> Adicionar primeiro SKU
+      </button>
+      {adding && (
+        <SkuAddForm
+          attrKeys={attrKeys.length ? attrKeys : ['Cor', 'Tamanho']}
+          existingSkus={skus}
+          productCode={productCode}
+          onAdd={handleAddSku}
+          onCancel={() => setAdding(false)}
+        />
+      )}
+    </div>
+  )
 
   return (
     <>
@@ -193,6 +431,53 @@ function SkuEditTable({ skus, onChange }) {
         </div>
       )}
 
+      {/* ── Toolbar: busca + adicionar ── */}
+      <div className="flex items-center gap-2 mb-2">
+        <div className="flex items-center gap-1.5 flex-1 min-w-0 px-2.5 h-8 rounded-lg bg-[var(--color-bg-subtle)] border border-[var(--color-border)] focus-within:ring-1 focus-within:ring-[var(--color-primary)] focus-within:border-[var(--color-primary)] transition-colors">
+          <Search size={13} className="text-[var(--color-text-muted)] shrink-0" />
+          <input
+            type="text"
+            placeholder="Buscar por cor, tamanho ou código…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            className="flex-1 min-w-0 h-7 text-xs bg-transparent text-[var(--color-text)] placeholder:text-[var(--color-text-disabled)] focus:outline-none"
+          />
+          {search && (
+            <button
+              type="button"
+              onClick={() => setSearch('')}
+              className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] shrink-0"
+            >
+              <X size={12} />
+            </button>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={() => setAdding(a => !a)}
+          className={[
+            'h-8 px-3 rounded-lg text-xs font-medium border transition-colors flex items-center gap-1.5 shrink-0',
+            adding
+              ? 'bg-[var(--color-primary)] text-white border-[var(--color-primary)]'
+              : 'border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface)]',
+          ].join(' ')}
+        >
+          <Plus size={13} className={adding ? 'rotate-45 transition-transform' : 'transition-transform'} />
+          {adding ? 'Fechar' : 'Adicionar SKU'}
+        </button>
+      </div>
+
+      {/* ── Formulário de adicionar SKU ── */}
+      {adding && (
+        <SkuAddForm
+          attrKeys={attrKeys}
+          existingSkus={skus}
+          productCode={productCode}
+          onAdd={handleAddSku}
+          onCancel={() => setAdding(false)}
+        />
+      )}
+
       {/* ── Ações em massa (colapsável) ── */}
       <div className="mb-2">
         <button
@@ -210,11 +495,8 @@ function SkuEditTable({ skus, onChange }) {
 
         {bulkOpen && (
           <div className="mt-1.5 p-3 bg-[var(--color-bg-subtle)] rounded-xl border border-[var(--color-border)] space-y-2.5">
-            {/* Preço em massa */}
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-xs text-[var(--color-text-muted)] w-40 shrink-0">
-                Preço atacado (todos):
-              </span>
+              <span className="text-xs text-[var(--color-text-muted)] w-40 shrink-0">Preço atacado (todos):</span>
               <div className="flex items-center gap-1">
                 <span className="text-xs text-[var(--color-text-muted)]">R$</span>
                 <input
@@ -234,12 +516,8 @@ function SkuEditTable({ skus, onChange }) {
                 </button>
               </div>
             </div>
-
-            {/* Estoque mínimo em massa */}
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-xs text-[var(--color-text-muted)] w-40 shrink-0">
-                Estoque mínimo (todos):
-              </span>
+              <span className="text-xs text-[var(--color-text-muted)] w-40 shrink-0">Estoque mínimo (todos):</span>
               <div className="flex items-center gap-1">
                 <input
                   type="number" min="0" placeholder="0"
@@ -262,25 +540,46 @@ function SkuEditTable({ skus, onChange }) {
         )}
       </div>
 
-      {/* ── Tabela de SKUs ── */}
+      {/* ── Tabela ── */}
       <div className="rounded-xl border border-[var(--color-border)] overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead className="bg-[var(--color-surface)] border-b border-[var(--color-border)]">
               <tr>
                 {attrKeys.map(k => (
-                  <th key={k} className="px-3 py-2.5 text-left font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap">
-                    {k}
+                  <th
+                    key={k}
+                    onClick={() => toggleSort(k)}
+                    className="px-3 py-2.5 text-left font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap cursor-pointer hover:bg-[var(--color-bg-subtle)] select-none transition-colors"
+                  >
+                    <span className="inline-flex items-center gap-1">
+                      {k}
+                      <SortIcon active={sortBy?.key === k} dir={sortBy?.dir} />
+                    </span>
                   </th>
                 ))}
-                <th className="px-3 py-2.5 text-left font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap">Código</th>
+                <th
+                  onClick={() => toggleSort('code')}
+                  className="px-3 py-2.5 text-left font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap cursor-pointer hover:bg-[var(--color-bg-subtle)] select-none transition-colors"
+                >
+                  <span className="inline-flex items-center gap-1">
+                    Código
+                    <SortIcon active={sortBy?.key === 'code'} dir={sortBy?.dir} />
+                  </span>
+                </th>
                 <th className="px-3 py-2.5 text-left font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap">Preço R$</th>
                 <th className="px-3 py-2.5 text-left font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap">Est. Mín</th>
                 <th className="px-3 py-2.5 text-center font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap">Estoque</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--color-border)]">
-              {sortedSkus.map((sku) => {
+              {displayedSkus.length === 0 ? (
+                <tr>
+                  <td colSpan={attrKeys.length + 4} className="px-3 py-8 text-center text-[var(--color-text-muted)]">
+                    Nenhum SKU encontrado para "{search}".
+                  </td>
+                </tr>
+              ) : displayedSkus.map((sku) => {
                 const origIdx = skus.indexOf(sku)
                 return (
                 <tr key={sku.id ?? sku._tempId ?? origIdx} className="hover:bg-[var(--color-bg-subtle)] transition-colors">
@@ -291,6 +590,11 @@ function SkuEditTable({ skus, onChange }) {
                   ))}
                   <td className="px-3 py-2 font-mono text-[10px] text-[var(--color-text-muted)] whitespace-nowrap">
                     {sku.code}
+                    {sku._tempId && (
+                      <span className="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-semibold bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-300">
+                        novo
+                      </span>
+                    )}
                   </td>
                   <td className="px-3 py-2 min-w-[90px]">
                     <input
@@ -328,7 +632,10 @@ function SkuEditTable({ skus, onChange }) {
         </div>
         <div className="px-3 py-2 bg-[var(--color-surface)] border-t border-[var(--color-border)]">
           <p className="text-xs text-[var(--color-text-muted)]">
-            {skus.length} SKU{skus.length !== 1 ? 's' : ''} · Edite preço e estoque mínimo inline · Estoque real via movimentações
+            {search
+              ? `${displayedSkus.length} de ${skus.length} SKUs`
+              : `${skus.length} SKU${skus.length !== 1 ? 's' : ''}`}
+            {' · '}Edite preço e estoque mínimo inline · Estoque real via movimentações
           </p>
         </div>
       </div>
@@ -402,7 +709,7 @@ export function ProductForm({ open, onClose, product, onSave }) {
   const isEdit    = Boolean(product?.id)
   const isVariant = isEdit
     ? product?.type === PRODUCT_TYPES.VARIANT
-    : undefined  // controlado pelo form no modo novo
+    : undefined
 
   const [form,       setForm]       = useState(() => initialForm(product))
   const [errors,     setErrors]     = useState({})
@@ -411,10 +718,8 @@ export function ProductForm({ open, onClose, product, onSave }) {
   const [activeTab,  setActiveTab]  = useState('info')
   const [categories, setCategories] = useState(DEFAULT_CATEGORIES)
 
-  /* Carrega categorias do DB */
   useEffect(() => { loadCategories().then(setCategories) }, [])
 
-  /* Reseta ao abrir/trocar produto */
   useEffect(() => {
     if (open) {
       setForm(initialForm(product))
@@ -427,7 +732,6 @@ export function ProductForm({ open, onClose, product, onSave }) {
   const set = (field) => (e) =>
     setForm(prev => ({ ...prev, [field]: e.target?.value ?? e }))
 
-  /* Regenera SKUs ao mudar atributos (só modo novo) */
   const handleAttributeChange = useCallback((attrs) => {
     setForm(prev => ({ ...prev, attributes: attrs }))
     if (form.code) setSkus(generateSkus(form.code, attrs))
@@ -467,7 +771,6 @@ export function ProductForm({ open, onClose, product, onSave }) {
 
   const formIsVariant = form.type === PRODUCT_TYPES.VARIANT
 
-  /* Tabs para modo edição de variante */
   const editTabs = [
     { key: 'info', label: 'Informações' },
     { key: 'skus', label: 'SKUs', badge: skus.length },
@@ -477,7 +780,6 @@ export function ProductForm({ open, onClose, product, onSave }) {
     <AnimatePresence>
       {open && (
         <>
-          {/* Overlay */}
           <motion.div
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
@@ -485,13 +787,11 @@ export function ProductForm({ open, onClose, product, onSave }) {
             onClick={onClose}
           />
 
-          {/* Drawer */}
           <motion.aside
             initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }}
             transition={{ type: 'spring', damping: 30, stiffness: 300 }}
             className="fixed inset-y-0 right-0 z-50 w-full md:w-[600px] flex flex-col bg-[var(--color-bg)] border-l border-[var(--color-border)] shadow-2xl"
           >
-            {/* ── Header ── */}
             <div className="flex items-center justify-between gap-3 px-5 py-4 border-b border-[var(--color-border)] shrink-0">
               <div className="min-w-0">
                 <h2 className="text-base font-bold text-[var(--color-text)] truncate">
@@ -516,20 +816,16 @@ export function ProductForm({ open, onClose, product, onSave }) {
               </button>
             </div>
 
-            {/* ── Tabs (só edição de variante) ── */}
             {isEdit && isVariant && (
               <div className="px-5 pt-3 pb-0 shrink-0">
                 <TabBar tabs={editTabs} active={activeTab} onChange={setActiveTab} />
               </div>
             )}
 
-            {/* ── Body com scroll ── */}
             <div className="flex-1 overflow-y-auto overscroll-contain px-5 py-4 space-y-5">
 
-              {/* ════════ ABA INFORMAÇÕES / MODO NOVO ════════ */}
               {(activeTab === 'info') && (
                 <>
-                  {/* Tipo — só modo novo */}
                   {!isEdit && (
                     <div>
                       <p className="text-sm font-medium text-[var(--color-text)] mb-2">Tipo de produto</p>
@@ -559,7 +855,6 @@ export function ProductForm({ open, onClose, product, onSave }) {
                     </div>
                   )}
 
-                  {/* Dados básicos */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <Input
                       label="Nome do produto *"
@@ -595,13 +890,11 @@ export function ProductForm({ open, onClose, product, onSave }) {
                     </div>
                   </div>
 
-                  {/* Foto */}
                   <ImageUpload
                     imageUrl={form.imageUrl}
                     onImageChange={url => setForm(prev => ({ ...prev, imageUrl: url }))}
                   />
 
-                  {/* Preço / estoque — produto simples */}
                   {!formIsVariant && (
                     <div className="grid grid-cols-2 gap-4">
                       <Input
@@ -622,7 +915,6 @@ export function ProductForm({ open, onClose, product, onSave }) {
                     </div>
                   )}
 
-                  {/* Atributos da grade (modo novo) */}
                   {formIsVariant && !isEdit && (
                     <div className="space-y-3">
                       <div className="flex items-center justify-between">
@@ -639,7 +931,6 @@ export function ProductForm({ open, onClose, product, onSave }) {
                     </div>
                   )}
 
-                  {/* Info: em edição de variante, ir para aba SKUs */}
                   {isEdit && isVariant && (
                     <button
                       type="button"
@@ -658,7 +949,6 @@ export function ProductForm({ open, onClose, product, onSave }) {
                 </>
               )}
 
-              {/* ════════ ABA SKUs (só edição de variante) ════════ */}
               {activeTab === 'skus' && isEdit && isVariant && (
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
@@ -667,12 +957,11 @@ export function ProductForm({ open, onClose, product, onSave }) {
                     </p>
                     <p className="text-xs text-[var(--color-text-muted)]">Preço e estoque mín. editáveis</p>
                   </div>
-                  <SkuEditTable skus={skus} onChange={setSkus} />
+                  <SkuEditTable skus={skus} onChange={setSkus} productCode={product?.code} />
                 </div>
               )}
             </div>
 
-            {/* ── Footer fixo ── */}
             <div className="px-5 py-4 border-t border-[var(--color-border)] bg-[var(--color-bg-subtle)] flex justify-end gap-3 shrink-0">
               <Button variant="secondary" onClick={onClose} disabled={saving}>Cancelar</Button>
               <Button onClick={handleSubmit} disabled={saving}>
