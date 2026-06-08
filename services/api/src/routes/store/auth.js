@@ -28,9 +28,10 @@ const secret = () => new TextEncoder().encode(
 const COOKIE_OPTS = {
   httpOnly: true,
   secure:   IS_PROD,
-  sameSite: IS_PROD ? 'lax' : 'lax',   // strict bloqueia cookie entre subdomínios
-  domain:   IS_PROD ? '.aurabr.app' : undefined, // compartilha loja.* e api.* em prod
+  sameSite: IS_PROD ? 'lax' : 'lax',
   path:     '/',
+  // domain NÃO definido — o proxy /api/auth/* remove o Domain do Set-Cookie
+  // e o cookie fica scopado para o domínio da loja (loja.*.aurabr.app)
 }
 
 async function signToken(tokenId, tenantSlug, ttl) {
@@ -43,12 +44,6 @@ async function signToken(tokenId, tenantSlug, ttl) {
 }
 
 function setCookies(res, { accessToken, refreshToken }) {
-  // Limpar cookies legados sem domain explícito (escopo = api.*.aurabr.app)
-  // para evitar conflito com os novos cookies de domain .aurabr.app
-  const legacyOpts = { httpOnly: true, secure: IS_PROD, sameSite: IS_PROD ? 'lax' : 'lax', path: '/' }
-  res.clearCookie('store_access',  legacyOpts)
-  res.clearCookie('store_refresh', legacyOpts)
-  // Setar novos com domain .aurabr.app
   res.cookie('store_access',   accessToken,  { ...COOKIE_OPTS, maxAge: ACCESS_TTL  * 1000 })
   res.cookie('store_refresh',  refreshToken, { ...COOKIE_OPTS, maxAge: REFRESH_TTL * 1000 })
 }

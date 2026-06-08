@@ -183,9 +183,38 @@ export interface BuyerSession {
   creditAvailable: number  // centavos
 }
 
+/**
+ * authApi — usa proxy local /api/auth/* (mesmo domínio da loja).
+ *
+ * POR QUÊ: o cookie de sessão precisa ser scopado para loja.*.aurabr.app
+ * para que o middleware Next.js o leia. O proxy app/api/auth/[...path]/route.ts
+ * encaminha para a API interna e remove o Domain do Set-Cookie.
+ */
+async function authFetch<T = unknown>(
+  path: string,
+  options: RequestInit & { tenantSlug?: string } = {},
+): Promise<T> {
+  const { tenantSlug, ...init } = options
+  const res = await fetch(path, {
+    ...init,
+    credentials: 'include',
+    headers: {
+      'content-type': 'application/json',
+      ...(tenantSlug ? { 'x-tenant-slug': tenantSlug } : {}),
+      ...(init.headers ?? {}),
+    },
+  })
+  if (!res.ok) {
+    let message = `HTTP ${res.status}`
+    try { const b = await res.json(); message = b.error ?? b.message ?? message } catch {}
+    throw new ApiError(res.status, message)
+  }
+  return res.json() as Promise<T>
+}
+
 export const authApi = {
   login(tenantSlug: string, email: string, password: string): Promise<BuyerSession> {
-    return apiFetch('/store/auth/login', {
+    return authFetch('/api/auth/login', {
       method: 'POST',
       body: JSON.stringify({ email, password }),
       tenantSlug,
@@ -193,12 +222,12 @@ export const authApi = {
   },
 
   logout(tenantSlug: string): Promise<void> {
-    return apiFetch('/store/auth/logout', { method: 'POST', tenantSlug })
+    return authFetch('/api/auth/logout', { method: 'POST', tenantSlug })
   },
 
   me(tenantSlug: string): Promise<BuyerSession | null> {
-    return apiFetch<{ buyer: BuyerSession | null }>('/store/auth/me', { tenantSlug })
-      .then(r => r.buyer)
+    return authFetch<{ buyer: BuyerSession | null }>('/api/auth/me', { tenantSlug })
+      .then(r => r.buyer ?? null)
       .catch((): null => null)
   },
 
@@ -206,7 +235,7 @@ export const authApi = {
     tenantSlug: string,
     data: { name: string; email: string; password: string; companyName?: string; document?: string; phone?: string },
   ): Promise<BuyerSession> {
-    return apiFetch('/store/auth/register', {
+    return authFetch('/api/auth/register', {
       method: 'POST',
       body: JSON.stringify(data),
       tenantSlug,
