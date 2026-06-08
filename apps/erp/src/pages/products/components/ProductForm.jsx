@@ -65,19 +65,72 @@ function ImageUpload({ imageUrl, onImageChange }) {
   )
 }
 
+/* ── Constantes de ordenação de SKUs ── */
+const _FORM_COLS = ['Cor','cor','COLOR','Color','Estampa']
+const _FORM_ROWS = ['Tamanho','tamanho','Size','size','Tam','tam']
+const _FORM_SZ   = ['PP','P','M','G','GG','XG']
+
+function _formSzKey(v) {
+  const s = String(v ?? '').trim()
+  const n = Number(s)
+  if (!isNaN(n) && s !== '') return 'A' + String(n + 1e5).padStart(12, '0')
+  const idx = _FORM_SZ.indexOf(s.toUpperCase())
+  return 'B' + (idx === -1 ? s : String(idx).padStart(4, '0'))
+}
+
+function sortSkusForDisplay(skus, attrKeys) {
+  const colKeys  = attrKeys.filter(k => _FORM_COLS.includes(k))
+  const szeKeys  = attrKeys.filter(k => _FORM_ROWS.includes(k))
+  const othKeys  = attrKeys.filter(k => !_FORM_COLS.includes(k) && !_FORM_ROWS.includes(k))
+  const sortKeys = [...colKeys, ...szeKeys, ...othKeys]
+  return [...skus].sort((a, b) => {
+    for (const k of sortKeys) {
+      const isSz = _FORM_ROWS.includes(k)
+      const va   = isSz ? _formSzKey(a.attributes?.[k]) : String(a.attributes?.[k] ?? '')
+      const vb   = isSz ? _formSzKey(b.attributes?.[k]) : String(b.attributes?.[k] ?? '')
+      const c    = va.localeCompare(vb, 'pt-BR')
+      if (c !== 0) return c
+    }
+    return 0
+  })
+}
+
 /* ── Tabela compacta de SKUs para EDIÇÃO ── */
 function SkuEditTable({ skus, onChange }) {
   const [bulkPrice, setBulkPrice] = React.useState('')
+  const [bulkStock, setBulkStock] = React.useState('')
+  const [bulkOpen,  setBulkOpen]  = React.useState(false)
+  const [confirm,   setConfirm]   = React.useState(null) // { label, onConfirm }
 
   const updateSku = (index, field, value) => {
     onChange(skus.map((s, i) => i === index ? { ...s, [field]: value } : s))
   }
 
-  const applyBulkPrice = () => {
+  const requestBulkPrice = () => {
     const v = parseFloat(bulkPrice)
     if (!v || v <= 0) return
-    onChange(skus.map(s => ({ ...s, priceWholesale: v })))
-    setBulkPrice('')
+    const formatted = v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    setConfirm({
+      label: `preço de R$ ${formatted}`,
+      onConfirm: () => {
+        onChange(skus.map(s => ({ ...s, priceWholesale: v })))
+        setBulkPrice('')
+        setBulkOpen(false)
+      },
+    })
+  }
+
+  const requestBulkStock = () => {
+    const v = parseInt(bulkStock)
+    if (isNaN(v) || v < 0) return
+    setConfirm({
+      label: `estoque mínimo de ${v}`,
+      onConfirm: () => {
+        onChange(skus.map(s => ({ ...s, stockMin: v })))
+        setBulkStock('')
+        setBulkOpen(false)
+      },
+    })
   }
 
   if (!skus?.length) return (
@@ -97,97 +150,188 @@ function SkuEditTable({ skus, onChange }) {
     return a.localeCompare(b, 'pt-BR', { sensitivity: 'base' })
   })
 
+  // Ordena as linhas: Cor (primário) → Tamanho (secundário)
+  const sortedSkus = sortSkusForDisplay(skus, attrKeys)
+
   return (
     <>
-    <div className="flex items-center gap-2 p-3 bg-[var(--color-bg-subtle)] rounded-xl border border-[var(--color-border)] mb-2">
-      <span className="text-xs text-[var(--color-text-muted)] shrink-0">Aplicar preço para todos:</span>
-      <div className="flex items-center gap-1 flex-1">
-        <span className="text-xs text-[var(--color-text-muted)]">R$</span>
-        <input
-          type="number" min="0" step="0.01" placeholder="0,00"
-          value={bulkPrice}
-          onChange={e => setBulkPrice(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && applyBulkPrice()}
-          className="w-24 h-7 px-2 rounded-lg text-xs bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]"
-        />
+      {/* ── Modal de confirmação ── */}
+      {confirm && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center p-4"
+          onClick={() => setConfirm(null)}
+        >
+          <div className="absolute inset-0 bg-black/50" />
+          <div
+            className="relative bg-[var(--color-bg)] rounded-2xl border border-[var(--color-border)] shadow-2xl p-6 w-full max-w-sm"
+            onClick={e => e.stopPropagation()}
+          >
+            <h3 className="text-base font-bold text-[var(--color-text)] mb-2">Tem certeza?</h3>
+            <p className="text-sm text-[var(--color-text-muted)] mb-5 leading-relaxed">
+              O{' '}<strong className="text-[var(--color-text)]">{confirm.label}</strong>{' '}
+              será aplicado a todos os{' '}
+              <strong className="text-[var(--color-text)]">{skus.length} SKUs</strong>,
+              sobrepondo os valores existentes. Esta ação não pode ser desfeita.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button
+                type="button"
+                onClick={() => setConfirm(null)}
+                className="h-9 px-4 rounded-xl text-sm font-medium border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface)] transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => { confirm.onConfirm(); setConfirm(null) }}
+                className="h-9 px-4 rounded-xl text-sm font-semibold bg-[var(--color-primary)] text-white hover:opacity-90 transition-opacity"
+              >
+                Confirmar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Ações em massa (colapsável) ── */}
+      <div className="mb-2">
         <button
           type="button"
-          onClick={applyBulkPrice}
-          disabled={!bulkPrice || parseFloat(bulkPrice) <= 0}
-          className="h-7 px-3 rounded-lg text-xs font-semibold bg-[var(--color-primary)] text-white disabled:opacity-40 hover:opacity-90 transition-opacity"
+          onClick={() => setBulkOpen(o => !o)}
+          className="flex items-center gap-1.5 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-1 py-1 rounded-lg transition-colors group"
         >
-          Aplicar
+          <ChevronDown
+            size={13}
+            className={`transition-transform duration-200 ${bulkOpen ? 'rotate-180' : ''}`}
+          />
+          <span className="group-hover:underline underline-offset-2">Ações em massa</span>
+          <span className="text-[var(--color-text-disabled)]">· {skus.length} SKUs</span>
         </button>
-      </div>
-      <span className="text-[10px] text-[var(--color-text-disabled)]">{skus.length} SKUs</span>
-    </div>
 
-    <div className="rounded-xl border border-[var(--color-border)] overflow-hidden">
-      <div className="overflow-x-auto">
-        <table className="w-full text-xs">
-          <thead className="bg-[var(--color-surface)] border-b border-[var(--color-border)]">
-            <tr>
-              {attrKeys.map(k => (
-                <th key={k} className="px-3 py-2.5 text-left font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap">
-                  {k}
-                </th>
-              ))}
-              <th className="px-3 py-2.5 text-left font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap">Código</th>
-              <th className="px-3 py-2.5 text-left font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap">Preço R$</th>
-              <th className="px-3 py-2.5 text-left font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap">Est. Mín</th>
-              <th className="px-3 py-2.5 text-center font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap">Estoque</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-[var(--color-border)]">
-            {skus.map((sku, i) => (
-              <tr key={sku.id ?? sku._tempId ?? i} className="hover:bg-[var(--color-bg-subtle)] transition-colors">
+        {bulkOpen && (
+          <div className="mt-1.5 p-3 bg-[var(--color-bg-subtle)] rounded-xl border border-[var(--color-border)] space-y-2.5">
+            {/* Preço em massa */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs text-[var(--color-text-muted)] w-40 shrink-0">
+                Preço atacado (todos):
+              </span>
+              <div className="flex items-center gap-1">
+                <span className="text-xs text-[var(--color-text-muted)]">R$</span>
+                <input
+                  type="number" min="0" step="0.01" placeholder="0,00"
+                  value={bulkPrice}
+                  onChange={e => setBulkPrice(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && requestBulkPrice()}
+                  className="w-24 h-7 px-2 rounded-lg text-xs bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]"
+                />
+                <button
+                  type="button"
+                  onClick={requestBulkPrice}
+                  disabled={!bulkPrice || parseFloat(bulkPrice) <= 0}
+                  className="h-7 px-3 rounded-lg text-xs font-semibold bg-[var(--color-primary)] text-white disabled:opacity-40 hover:opacity-90 transition-opacity"
+                >
+                  Aplicar
+                </button>
+              </div>
+            </div>
+
+            {/* Estoque mínimo em massa */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs text-[var(--color-text-muted)] w-40 shrink-0">
+                Estoque mínimo (todos):
+              </span>
+              <div className="flex items-center gap-1">
+                <input
+                  type="number" min="0" placeholder="0"
+                  value={bulkStock}
+                  onChange={e => setBulkStock(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && requestBulkStock()}
+                  className="w-24 h-7 px-2 rounded-lg text-xs bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]"
+                />
+                <button
+                  type="button"
+                  onClick={requestBulkStock}
+                  disabled={bulkStock === '' || parseInt(bulkStock) < 0}
+                  className="h-7 px-3 rounded-lg text-xs font-semibold bg-[var(--color-primary)] text-white disabled:opacity-40 hover:opacity-90 transition-opacity"
+                >
+                  Aplicar
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── Tabela de SKUs ── */}
+      <div className="rounded-xl border border-[var(--color-border)] overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead className="bg-[var(--color-surface)] border-b border-[var(--color-border)]">
+              <tr>
                 {attrKeys.map(k => (
-                  <td key={k} className="px-3 py-2 font-medium text-[var(--color-text)] whitespace-nowrap">
-                    {sku.attributes?.[k] ?? '—'}
-                  </td>
+                  <th key={k} className="px-3 py-2.5 text-left font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap">
+                    {k}
+                  </th>
                 ))}
-                <td className="px-3 py-2 font-mono text-[10px] text-[var(--color-text-muted)] whitespace-nowrap">
-                  {sku.code}
-                </td>
-                <td className="px-3 py-2 min-w-[90px]">
-                  <input
-                    type="number" min="0" step="0.01"
-                    value={sku.priceWholesale ?? ''}
-                    onChange={e => updateSku(i, 'priceWholesale', e.target.value)}
-                    className="w-full h-7 px-2 rounded-md text-xs bg-[var(--color-bg-subtle)] border border-[var(--color-border)] text-[var(--color-text)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]"
-                  />
-                </td>
-                <td className="px-3 py-2 min-w-[72px]">
-                  <input
-                    type="number" min="0"
-                    value={sku.stockMin ?? 0}
-                    onChange={e => updateSku(i, 'stockMin', e.target.value)}
-                    className="w-full h-7 px-2 rounded-md text-xs bg-[var(--color-bg-subtle)] border border-[var(--color-border)] text-[var(--color-text)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]"
-                  />
-                </td>
-                <td className="px-3 py-2 text-center">
-                  <span className={[
-                    'text-xs font-semibold px-2 py-0.5 rounded-full',
-                    sku.stock <= 0
-                      ? 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300'
-                      : sku.stock < (sku.stockMin ?? 0)
-                        ? 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300'
-                        : 'bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-300'
-                  ].join(' ')}>
-                    {sku.stock ?? 0}
-                  </span>
-                </td>
+                <th className="px-3 py-2.5 text-left font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap">Código</th>
+                <th className="px-3 py-2.5 text-left font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap">Preço R$</th>
+                <th className="px-3 py-2.5 text-left font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap">Est. Mín</th>
+                <th className="px-3 py-2.5 text-center font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap">Estoque</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="divide-y divide-[var(--color-border)]">
+              {sortedSkus.map((sku) => {
+                const origIdx = skus.indexOf(sku)
+                return (
+                <tr key={sku.id ?? sku._tempId ?? origIdx} className="hover:bg-[var(--color-bg-subtle)] transition-colors">
+                  {attrKeys.map(k => (
+                    <td key={k} className="px-3 py-2 font-medium text-[var(--color-text)] whitespace-nowrap">
+                      {sku.attributes?.[k] ?? '—'}
+                    </td>
+                  ))}
+                  <td className="px-3 py-2 font-mono text-[10px] text-[var(--color-text-muted)] whitespace-nowrap">
+                    {sku.code}
+                  </td>
+                  <td className="px-3 py-2 min-w-[90px]">
+                    <input
+                      type="number" min="0" step="0.01"
+                      value={sku.priceWholesale ?? ''}
+                      onChange={e => updateSku(origIdx, 'priceWholesale', e.target.value)}
+                      className="w-full h-7 px-2 rounded-md text-xs bg-[var(--color-bg-subtle)] border border-[var(--color-border)] text-[var(--color-text)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]"
+                    />
+                  </td>
+                  <td className="px-3 py-2 min-w-[72px]">
+                    <input
+                      type="number" min="0"
+                      value={sku.stockMin ?? 0}
+                      onChange={e => updateSku(origIdx, 'stockMin', e.target.value)}
+                      className="w-full h-7 px-2 rounded-md text-xs bg-[var(--color-bg-subtle)] border border-[var(--color-border)] text-[var(--color-text)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]"
+                    />
+                  </td>
+                  <td className="px-3 py-2 text-center">
+                    <span className={[
+                      'text-xs font-semibold px-2 py-0.5 rounded-full',
+                      sku.stock <= 0
+                        ? 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300'
+                        : sku.stock < (sku.stockMin ?? 0)
+                          ? 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300'
+                          : 'bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-300'
+                    ].join(' ')}>
+                      {sku.stock ?? 0}
+                    </span>
+                  </td>
+                </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+        <div className="px-3 py-2 bg-[var(--color-surface)] border-t border-[var(--color-border)]">
+          <p className="text-xs text-[var(--color-text-muted)]">
+            {skus.length} SKU{skus.length !== 1 ? 's' : ''} · Edite preço e estoque mínimo inline · Estoque real via movimentações
+          </p>
+        </div>
       </div>
-      <div className="px-3 py-2 bg-[var(--color-surface)] border-t border-[var(--color-border)]">
-        <p className="text-xs text-[var(--color-text-muted)]">
-          {skus.length} SKU{skus.length !== 1 ? 's' : ''} · Edite preço e estoque mínimo inline · Estoque real via movimentações
-        </p>
-      </div>
-    </div>
     </>
   )
 }
