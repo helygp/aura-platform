@@ -71,8 +71,6 @@ export default function StoreHeader() {
       <div className="hidden md:flex items-center justify-center gap-6 border-b border-border bg-muted/50 px-4 py-1.5 text-[11px] font-medium text-muted-foreground">
         <span>⚡ Atacado exclusivo para lojistas</span>
         <span className="text-border">|</span>
-        <span>Pedido mínimo por grade · Desconto por volume</span>
-        <span className="text-border">|</span>
         <span>Envio para todo o Brasil</span>
       </div>
 

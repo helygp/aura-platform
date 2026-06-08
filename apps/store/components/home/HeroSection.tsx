@@ -16,19 +16,13 @@ export default function HeroSection({ theme }: Props) {
 // ─── Split hero (novo padrão) ─────────────────────────────────────────────────
 
 function HeroSplit({ theme }: Props) {
-  const stats = theme.heroStats?.length
-    ? theme.heroStats
-    : [
-        { value: '12 pç',   label: 'grade mínima'          },
-        { value: 'até 15%', label: 'desconto por volume'   },
-        { value: '48h',     label: 'envio para todo BR'    },
-      ]
+  // Stats: só exibe se o tenant configurar heroStats — sem fallback hardcoded
+  const stats = theme.heroStats?.length ? theme.heroStats : []
 
   const props = theme.valueProps?.length
     ? theme.valueProps
     : [
         { icon: 'grid',   title: 'Grade na tabela',       desc: 'Cor × tamanho numa matriz. Veja o total de peças mudar em tempo real.' },
-        { icon: 'bolt',   title: 'Desconto por volume',   desc: 'Quanto mais peças no pedido, menor o preço unitário. Sem negociar.'   },
         { icon: 'repeat', title: 'Reposição em 1 clique', desc: 'Repita o último pedido inteiro e ajuste só o que precisar.'          },
       ]
 
