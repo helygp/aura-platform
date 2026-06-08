@@ -34,6 +34,7 @@ interface Props {
   volumeTiers:  VolumeTier[]
   minOrder:     number
   theme:        TenantTheme
+  skuStocks?:   Record<string, number>   // key: 'Color|Size' → stock
   onAddToCart:  (items: MatrixEntry[]) => void
 }
 
@@ -66,18 +67,26 @@ function isLightHex(hex: string) {
 function CellStepper({
   value,
   onChange,
+  maxStock,
 }: {
   value: number
   onChange: (n: number) => void
+  maxStock?: number
 }) {
+  const isOOS  = maxStock !== undefined && maxStock <= 0
+  const atMax  = maxStock !== undefined && value >= maxStock
+  const clamp  = (n: number) => maxStock !== undefined ? Math.min(n, maxStock) : n
   return (
     <div style={{
       display: 'flex', alignItems: 'center', gap: 0,
       border: '1px solid var(--line)', borderRadius: 'var(--radius-sm)',
       overflow: 'hidden', height: 34, fontSize: 13,
-    }}>
+      opacity: isOOS ? 0.3 : 1,
+      pointerEvents: isOOS ? 'none' : 'auto',
+      background: isOOS ? 'repeating-linear-gradient(45deg, transparent, transparent 3px, var(--line) 3px, var(--line) 4px)' : undefined,
+    }} title={isOOS ? 'Sem estoque' : (maxStock !== undefined ? `Disponível: ${maxStock}` : undefined)}>
       <button
-        onClick={() => onChange(Math.max(0, value - 1))}
+        onClick={() => isOOS ? null : onChange(Math.max(0, value - 1))}
         style={{
           width: 28, height: '100%', background: 'none', border: 'none',
           cursor: 'pointer', color: 'var(--ink-2)', fontWeight: 600,
@@ -89,7 +98,7 @@ function CellStepper({
         min={0}
         value={value || ''}
         placeholder="0"
-        onChange={e => onChange(Math.max(0, parseInt(e.target.value) || 0))}
+        onChange={e => isOOS ? null : onChange(clamp(Math.max(0, parseInt(e.target.value) || 0)))}
         style={{
           width: 34, height: '100%', border: 'none', textAlign: 'center',
           fontSize: 13, fontWeight: value > 0 ? 600 : 400,
@@ -99,7 +108,7 @@ function CellStepper({
         }}
       />
       <button
-        onClick={() => onChange(value + 1)}
+        onClick={() => isOOS || atMax ? null : onChange(value + 1)}
         style={{
           width: 28, height: '100%', background: 'none', border: 'none',
           cursor: 'pointer', color: 'var(--ink-2)', fontWeight: 600,
@@ -126,6 +135,7 @@ export default function GradeMatrix({
   minOrder,
   theme,
   onAddToCart,
+  skuStocks,
 }: Props) {
   // matrix[color][size] = qty
   const [matrix, setMatrix] = useState<Record<string, Record<string, number>>>({})
@@ -316,6 +326,7 @@ export default function GradeMatrix({
                           <CellStepper
                             value={matrix[color]?.[sz] || 0}
                             onChange={qty => setCell(color, sz, qty)}
+                            maxStock={skuStocks?.[`${color}|${sz}`]}
                           />
                         </td>
                       ))}

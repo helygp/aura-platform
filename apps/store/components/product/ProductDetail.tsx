@@ -6,6 +6,7 @@
  * Mantém AttributeSelector como fallback para produtos simples.
  */
 
+import * as React from 'react'
 import { useState, useMemo, useCallback } from 'react'
 import type { ProductDetail, Sku } from '@/lib/api'
 import type { TenantTheme } from '@/lib/tenant'
@@ -87,6 +88,17 @@ export default function ProductDetailView({ product, theme }: Props) {
   const sizes    = sortSizes((attrs['Tamanho'] ?? attrs['tamanho'] ?? []) as string[])
   const hasGrade = colors.length > 0 && sizes.length > 0
 
+  // Mapa Cor|Tamanho → estoque, usado pela GradeMatrix para bloquear células
+  const skuStocks = React.useMemo(() => {
+    const map: Record<string, number> = {}
+    product.skus.forEach(s => {
+      const cor = s.attributes['Cor']     ?? s.attributes['cor']
+      const tam = s.attributes['Tamanho'] ?? s.attributes['tamanho']
+      if (cor && tam) map[`${cor}|${tam}`] = s.active ? s.stock : 0
+    })
+    return map
+  }, [product.skus])
+
   // Grade template: usa distribuição padrão ou deriva dos SKUs
   const gradeTemplate = useMemo(() => {
     if (sizes.length === 0) return {}
@@ -159,6 +171,7 @@ export default function ProductDetailView({ product, theme }: Props) {
 
   const handleAddGrade = useCallback((items: Array<{ key: string; color: string; size: string; qty: number }>) => {
     let added = 0
+    let skipped = 0
     items.forEach(({ color, size, qty }) => {
       // Encontra SKU correspondente
       const sku = product.skus.find(s =>
@@ -166,6 +179,13 @@ export default function ProductDetailView({ product, theme }: Props) {
         (s.attributes['Tamanho'] ?? s.attributes['tamanho']) === size
       )
       if (!sku) return
+      // Pula SKUs sem estoque — não adiciona ao carrinho
+      if (sku.stock <= 0) {
+        skipped += qty
+        return
+      }
+      // Respeita o limite real de estoque
+      const allowedQty = Math.min(qty, sku.stock)
       addToCart({
         skuId:         sku.id,
         skuCode:       sku.code,
@@ -174,12 +194,20 @@ export default function ProductDetailView({ product, theme }: Props) {
         attributes:    sku.attributes,
         price:         sku.price,
         coverImageUrl: product.coverImageUrl,
-        quantity:      qty,
-        maxStock:      sku.stock > 0 ? sku.stock : 9999,
+        quantity:      allowedQty,
+        maxStock:      sku.stock,
       })
-      added += qty
+      added += allowedQty
+      if (allowedQty < qty) skipped += (qty - allowedQty)
     })
-    if (added > 0) showToast(`${added} peças de ${product.name} adicionadas ao carrinho`)
+    if (added > 0) {
+      const msg = skipped > 0
+        ? `${added} peças adicionadas. ${skipped} sem estoque suficiente.`
+        : `${added} peças de ${product.name} adicionadas ao carrinho`
+      showToast(msg)
+    } else if (skipped > 0) {
+      showToast('Nenhuma peça adicionada — estoque insuficiente.')
+    }
   }, [product])
 
   function showToast(msg: string) {
@@ -269,6 +297,7 @@ export default function ProductDetailView({ product, theme }: Props) {
               volumeTiers={theme?.volumeTiers ?? []}
               minOrder={theme?.minimumOrderAmount ?? 300}
               theme={theme as TenantTheme}
+              skuStocks={skuStocks}
               onAddToCart={handleAddGrade}
             />
           ) : (

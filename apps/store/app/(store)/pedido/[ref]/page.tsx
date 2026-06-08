@@ -28,8 +28,11 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 }
 
 export default async function PedidoStatusPage({ params }: Props) {
-  // Valida formato antes de qualquer I/O
-  if (!/^ord_[0-9a-f]{16}$/.test(params.ref)) notFound()
+  // Valida formato — aceita novo (FM070626-1042) e legado (ord_hex16)
+  const refOk =
+    /^[A-Z]{1,4}\d{6}-\d+$/.test(params.ref) ||
+    /^ord_[0-9a-f]{16}$/.test(params.ref)
+  if (!refOk) notFound()
 
   const tenantSlug = headers().get('x-tenant-slug') ?? 'demo'
 
