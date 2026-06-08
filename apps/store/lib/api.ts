@@ -4,10 +4,12 @@
  * Todos os endpoints /store/* são públicos ou autenticados via cookie.
  */
 
+// Server-side: usa API interna (Docker network) — sem CORS, sem cookie cross-domain
+// Client-side: usa proxy local /api/proxy/* — cookie de loja.*.aurabr.app incluído
 const API_URL =
   typeof window === 'undefined'
     ? (process.env.API_INTERNAL_URL ?? process.env.NEXT_PUBLIC_API_URL ?? '')
-    : (process.env.NEXT_PUBLIC_API_URL ?? '')
+    : '/api/proxy'
 
 export class ApiError extends Error {
   constructor(
