@@ -26,6 +26,8 @@ import { AuthProvider }   from './auth/AuthContext.jsx'
 import { ProtectedRoute } from './routes/ProtectedRoute.jsx'
 import { AppLayout }      from './layout/AppLayout.jsx'
 import { LoginPage }      from './pages/LoginPage.jsx'
+import { ForgotPasswordPage } from './pages/ForgotPasswordPage.jsx'
+import { ResetPasswordPage }  from './pages/ResetPasswordPage.jsx'
 import { DashboardPage }  from './pages/DashboardPage.jsx'
 import { ProductsPage }       from './pages/products/ProductsPage.jsx'
 import { ProductDetailPage }   from './pages/products/ProductDetailPage.jsx'
@@ -54,7 +56,9 @@ function App() {
   return (
     <Routes>
       {/* ── Rota pública ── */}
-      <Route path="/login" element={<LoginPage />} />
+      <Route path="/login"           element={<LoginPage />} />
+      <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+      <Route path="/reset-password"  element={<ResetPasswordPage />} />
 
       {/* ── Painel tela cheia (sem AppLayout) ── */}
       <Route element={<ProtectedRoute />}>
