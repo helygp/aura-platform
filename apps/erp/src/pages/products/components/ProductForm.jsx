@@ -23,7 +23,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Upload, X, RefreshCw, Info, ChevronDown, Search, Plus } from 'lucide-react'
 import { Button, Input, Badge } from '@aura/ui'
-import { AttributeBuilder } from './AttributeBuilder.jsx'
+import { AttributeBuilder, loadAttrDefs } from './AttributeBuilder.jsx'
 import { SkuGrid }           from './SkuGrid.jsx'
 import {
   PRODUCT_TYPES, DEFAULT_CATEGORIES,
@@ -97,7 +97,7 @@ function sortSkusForDisplay(skus, attrKeys) {
 }
 
 /* ── Formulário inline para adicionar novo SKU ── */
-function SkuAddForm({ attrKeys, existingSkus, productCode, onAdd, onCancel }) {
+function SkuAddForm({ attrKeys, existingSkus, productCode, attrDefs = [], onAdd, onCancel }) {
   const [values,   setValues]   = useState({})
   const [code,     setCode]     = useState('')
   const [price,    setPrice]    = useState('')
@@ -109,13 +109,16 @@ function SkuAddForm({ attrKeys, existingSkus, productCode, onAdd, onCancel }) {
     const m = {}
     attrKeys.forEach(k => {
       const isSz = _FORM_ROWS.includes(k)
-      const vals = [...new Set(existingSkus.map(s => s.attributes?.[k]).filter(Boolean).map(String))]
+      const fromSkus   = existingSkus.map(s => s.attributes?.[k]).filter(Boolean).map(String)
+      const def        = attrDefs.find(d => d.name === k)
+      const fromDomain = (def?.values ?? []).map(v => v.label).filter(Boolean).map(String)
+      const vals = [...new Set([...fromDomain, ...fromSkus])]
       m[k] = isSz
         ? vals.sort((a, b) => _formSzKey(a).localeCompare(_formSzKey(b)))
         : vals.sort((a, b) => a.localeCompare(b, 'pt-BR'))
     })
     return m
-  }, [attrKeys, existingSkus])
+  }, [attrKeys, existingSkus, attrDefs])
 
   // Sugere código automaticamente
   useEffect(() => {
@@ -272,7 +275,7 @@ function SortIcon({ active, dir }) {
 }
 
 /* ── Tabela compacta de SKUs para EDIÇÃO ── */
-function SkuEditTable({ skus, onChange, productCode }) {
+function SkuEditTable({ skus, onChange, productCode, attrDefs: attrDefsProp }) {
   const [bulkPrice, setBulkPrice] = useState('')
   const [bulkStock, setBulkStock] = useState('')
   const [bulkOpen,  setBulkOpen]  = useState(false)
@@ -280,6 +283,13 @@ function SkuEditTable({ skus, onChange, productCode }) {
   const [search,    setSearch]    = useState('')
   const [sortBy,    setSortBy]    = useState(null)  // { key, dir }
   const [adding,    setAdding]    = useState(false)
+
+  // attrDefs vem do componente pai (ProductForm); fallback para load local se não passado
+  const [attrDefsLocal, setAttrDefsLocal] = useState([])
+  useEffect(() => {
+    if (!attrDefsProp?.length) loadAttrDefs().then(setAttrDefsLocal)
+  }, [attrDefsProp])
+  const attrDefs = attrDefsProp?.length ? attrDefsProp : attrDefsLocal
 
   const updateSku = (index, field, value) => {
     onChange(skus.map((s, i) => i === index ? { ...s, [field]: value } : s))
@@ -384,6 +394,7 @@ function SkuEditTable({ skus, onChange, productCode }) {
           attrKeys={attrKeys.length ? attrKeys : ['Cor', 'Tamanho']}
           existingSkus={skus}
           productCode={productCode}
+          attrDefs={attrDefs}
           onAdd={handleAddSku}
           onCancel={() => setAdding(false)}
         />
@@ -473,6 +484,7 @@ function SkuEditTable({ skus, onChange, productCode }) {
           attrKeys={attrKeys}
           existingSkus={skus}
           productCode={productCode}
+          attrDefs={attrDefs}
           onAdd={handleAddSku}
           onCancel={() => setAdding(false)}
         />
@@ -645,7 +657,7 @@ function SkuEditTable({ skus, onChange, productCode }) {
 
 /* ── Categorias do DB (com fallback) ── */
 let _catCache = null
-async function loadCategories() {
+export async function loadCategories() {
   if (_catCache) return _catCache
   try {
     const token = window.__aura_mem_token__ || ''
@@ -661,6 +673,9 @@ async function loadCategories() {
     return DEFAULT_CATEGORIES
   }
 }
+
+/* Invalida cache de categorias — chamado pelo CategoryDefManager ao salvar/editar/deletar */
+export function invalidateCatsCache() { _catCache = null }
 
 /* ── Form state inicial ── */
 function initialForm(product) {
@@ -717,8 +732,35 @@ export function ProductForm({ open, onClose, product, onSave }) {
   const [skus,       setSkus]       = useState(product?.skus ?? [])
   const [activeTab,  setActiveTab]  = useState('info')
   const [categories, setCategories] = useState(DEFAULT_CATEGORIES)
+  const [codeAutoMode,   setCodeAutoMode]   = useState(true)
+  const [codeSuggesting, setCodeSuggesting] = useState(false)
+  const [attrDefs,       setAttrDefs]       = useState([])
 
   useEffect(() => { loadCategories().then(setCategories) }, [])
+  useEffect(() => { loadAttrDefs().then(setAttrDefs) }, [])
+
+  /* Busca o próximo código sugerido para a categoria selecionada */
+  const fetchNextCode = useCallback(async (categoryName) => {
+    if (!categoryName) return
+    setCodeSuggesting(true)
+    try {
+      const token = window.__aura_mem_token__ || ''
+      const res = await fetch(`/api/products/next-code?category=${encodeURIComponent(categoryName)}`, {
+        credentials: 'include',
+        headers: token ? { Authorization: 'Bearer ' + token } : {},
+      })
+      if (!res.ok) return
+      const data = await res.json()
+      if (data?.next) setForm(prev => ({ ...prev, code: data.next }))
+    } catch { /* silencioso */ }
+    finally { setCodeSuggesting(false) }
+  }, [])
+
+  /* Auto-sugestão dispara ao mudar categoria, exceto se usuário editou manualmente */
+  useEffect(() => {
+    if (isEdit || !codeAutoMode || !form.category) return
+    fetchNextCode(form.category)
+  }, [form.category, codeAutoMode, isEdit, fetchNextCode])
 
   useEffect(() => {
     if (open) {
@@ -726,22 +768,26 @@ export function ProductForm({ open, onClose, product, onSave }) {
       setSkus(product?.skus ?? [])
       setErrors({})
       setActiveTab('info')
+      setCodeAutoMode(!product?.id)
     }
   }, [open, product])
 
-  const set = (field) => (e) =>
-    setForm(prev => ({ ...prev, [field]: e.target?.value ?? e }))
+  const set = (field) => (e) => {
+    const value = e.target?.value ?? e
+    if (field === 'code') setCodeAutoMode(false)
+    setForm(prev => ({ ...prev, [field]: value }))
+  }
 
   const handleAttributeChange = useCallback((attrs) => {
     setForm(prev => ({ ...prev, attributes: attrs }))
-    if (form.code) setSkus(generateSkus(form.code, attrs))
-  }, [form.code])
+    if (form.code) setSkus(generateSkus(form.code, attrs, attrDefs))
+  }, [form.code, attrDefs])
 
   useEffect(() => {
     if (!isEdit && form.type === PRODUCT_TYPES.VARIANT && form.attributes?.length) {
-      setSkus(generateSkus(form.code || 'PROD', form.attributes))
+      setSkus(generateSkus(form.code || 'PROD', form.attributes, attrDefs))
     }
-  }, [form.code]) // eslint-disable-line
+  }, [form.code, attrDefs]) // eslint-disable-line
 
   const handleSubmit = async () => {
     const validate = form.type === PRODUCT_TYPES.VARIANT ? validateVariantProduct : validateSimpleProduct
@@ -864,14 +910,43 @@ export function ProductForm({ open, onClose, product, onSave }) {
                       error={errors.name}
                       wrapperClassName="sm:col-span-2"
                     />
-                    <Input
-                      label="Código / Referência *"
-                      placeholder="Ex: C001"
-                      value={form.code}
-                      onChange={set('code')}
-                      error={errors.code}
-                      disabled={isEdit}
-                    />
+                    <div>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label className="block text-sm font-medium text-[var(--color-text)]">
+                          Código / Referência *
+                        </label>
+                        {!isEdit && form.category && (
+                          codeAutoMode ? (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-primary)] bg-[var(--color-primary)]/10 px-1.5 py-0.5 rounded-full">
+                              {codeSuggesting ? <RefreshCw size={9} className="animate-spin" /> : <span>⚡</span>}
+                              Auto
+                            </span>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => { setCodeAutoMode(true); fetchNextCode(form.category) }}
+                              className="inline-flex items-center gap-1 text-[10px] font-medium text-[var(--color-text-muted)] hover:text-[var(--color-primary)] transition-colors"
+                              title="Regerar sugestão automática"
+                            >
+                              <RefreshCw size={9} /> Regerar
+                            </button>
+                          )
+                        )}
+                      </div>
+                      <input
+                        type="text"
+                        placeholder="Ex: C001"
+                        value={form.code}
+                        onChange={set('code')}
+                        disabled={isEdit}
+                        className={[
+                          'w-full h-10 px-3 rounded-[var(--radius-md)] text-sm bg-[var(--color-bg)] border text-[var(--color-text)]',
+                          'focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] disabled:opacity-60 disabled:cursor-not-allowed font-mono',
+                          errors.code ? 'border-[var(--color-error)]' : 'border-[var(--color-border)]',
+                        ].join(' ')}
+                      />
+                      {errors.code && <p className="text-xs text-[var(--color-error)] mt-1">{errors.code}</p>}
+                    </div>
                     <div>
                       <label className="block text-sm font-medium text-[var(--color-text)] mb-1.5">Categoria *</label>
                       <select
@@ -957,7 +1032,7 @@ export function ProductForm({ open, onClose, product, onSave }) {
                     </p>
                     <p className="text-xs text-[var(--color-text-muted)]">Preço e estoque mín. editáveis</p>
                   </div>
-                  <SkuEditTable skus={skus} onChange={setSkus} productCode={product?.code} />
+                  <SkuEditTable skus={skus} onChange={setSkus} productCode={product?.code} attrDefs={attrDefs} />
                 </div>
               )}
             </div>

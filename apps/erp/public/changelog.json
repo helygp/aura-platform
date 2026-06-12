@@ -1,0 +1,51 @@
+{
+  "current": "1.1.0",
+  "releases": [
+    {
+      "version": "1.1.0",
+      "date": "2026-06-12",
+      "title": "Cadastro de produtos mais rápido e inteligente",
+      "highlights": [
+        {
+          "icon": "✨",
+          "text": "Código do produto é sugerido automaticamente ao escolher a categoria"
+        },
+        {
+          "icon": "🏷️",
+          "text": "SKUs ganham códigos consistentes com as siglas do seu cadastro de atributos"
+        },
+        {
+          "icon": "🔍",
+          "text": "Busca e ordenação direto na tabela de SKUs"
+        },
+        {
+          "icon": "➕",
+          "text": "É possível adicionar novos SKUs em produtos que já existem"
+        },
+        {
+          "icon": "⚡",
+          "text": "Ações em massa: aplicar preço ou estoque mínimo a todos os SKUs com um clique (com confirmação)"
+        },
+        {
+          "icon": "🪄",
+          "text": "Ao adicionar um valor novo em um atributo (ex: nova cor), o sistema sugere criar os SKUs correspondentes nos produtos que já usam aquele atributo"
+        },
+        {
+          "icon": "🔄",
+          "text": "Sessão se mantém ativa por mais tempo — menos interrupções pedindo login"
+        }
+      ]
+    },
+    {
+      "version": "1.0.0",
+      "date": "2026-06-10",
+      "title": "Marco zero",
+      "highlights": [
+        {
+          "icon": "🚀",
+          "text": "Início do versionamento formal da plataforma"
+        }
+      ]
+    }
+  ]
+}

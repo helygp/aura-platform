@@ -3,6 +3,7 @@
  * Gestão de categorias de produto (CRUD simples)
  */
 import React, { useState, useEffect, useCallback } from 'react'
+import { invalidateCatsCache } from './ProductForm.jsx'
 import { Plus, Pencil, Trash2, Check, X, RefreshCw, Tag } from 'lucide-react'
 
 function authH() {
@@ -84,19 +85,19 @@ export function CategoryDefManager() {
   const create = async () => {
     const n = newName.trim(); if (!n) return
     setSaving(true)
-    try { await apiFetch('/api/product-categories', { method:'POST', body: JSON.stringify({ name: n, sort_order: cats.length }) }); setNewName(''); setAdding(false); await fetchCats() }
+    try { await apiFetch('/api/product-categories', { method:'POST', body: JSON.stringify({ name: n, sort_order: cats.length }) }); setNewName(''); setAdding(false); await fetchCats(); invalidateCatsCache() }
     catch (e) { setError(e.message) }
     finally { setSaving(false) }
   }
 
   const update = async (id, name) => {
     await apiFetch(`/api/product-categories/${id}`, { method:'PUT', body: JSON.stringify({ name }) })
-    await fetchCats()
+    await fetchCats(); invalidateCatsCache()
   }
 
   const confirmDel = async () => {
     if (!del) return
-    try { await apiFetch(`/api/product-categories/${del.id}`, { method:'DELETE' }); setDel(null); await fetchCats() }
+    try { await apiFetch(`/api/product-categories/${del.id}`, { method:'DELETE' }); setDel(null); await fetchCats(); invalidateCatsCache() }
     catch (e) { setError(e.message) }
   }
 

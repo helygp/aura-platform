@@ -18,7 +18,7 @@ const MAX_ATTRIBUTES = 3
 /* ── Cache de domínio (evita refetch a cada abertura do form) ── */
 let _defsCache = null
 
-async function loadAttrDefs() {
+export async function loadAttrDefs() {
   if (_defsCache) return _defsCache
   try {
     const token = window.__aura_mem_token__ || ''

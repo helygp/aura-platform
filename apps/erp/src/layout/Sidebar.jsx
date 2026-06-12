@@ -21,6 +21,7 @@ import {
 } from 'lucide-react'
 import { useAuth } from '../auth/AuthContext.jsx'
 import { NAV_ITEMS } from './navItems.js'
+import { VersionBadge } from '../components/WhatsNew.jsx'
 
 /* ─── Mapa ícone → componente ─── */
 const ICONS = {
@@ -221,6 +222,20 @@ export function Sidebar({ tenantInfo }) {
             )}
           </AnimatePresence>
         </button>
+
+        {/* Versão (centralizada no expandido, oculta quando colapsado) */}
+        <AnimatePresence>
+          {!collapsed && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="flex justify-center pt-1"
+            >
+              <VersionBadge />
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* ── Botão colapsar ── */}

@@ -24,6 +24,7 @@ import { Sun, Moon, LogOut, User, ChevronDown, Monitor } from 'lucide-react'
 import { useTheme }    from '@aura/theme'
 import { useLanguage } from '@aura/i18n'
 import { useAuth }     from '../auth/AuthContext.jsx'
+import { WhatsNewButton } from '../components/WhatsNew.jsx'
 
 export function Header({ tenantInfo }) {
   const { t }                   = useTranslation()
@@ -112,6 +113,9 @@ export function Header({ tenantInfo }) {
 
       {/* ── Direita ── */}
       <div className="flex items-center gap-1 shrink-0">
+
+        {/* Novidades — badge fica visível em todas as telas */}
+        <WhatsNewButton />
 
         {/* Toggle idioma — desktop */}
         <button

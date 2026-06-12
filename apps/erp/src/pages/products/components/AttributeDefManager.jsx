@@ -9,6 +9,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { Plus, X, Pencil, Check, Trash2, GripVertical, RefreshCw, Tag } from 'lucide-react'
 import { generateValueSlug } from '../productsTypes.js'
 import { invalidateDefsCache } from './AttributeBuilder.jsx'
+import { SkuPropagateModal } from './SkuPropagateModal.jsx'
 
 /* ── Fetch helpers ── */
 function authHeaders() {
@@ -87,7 +88,7 @@ function ValueChip({ val, onRemove, onSlugChange }) {
 }
 
 /* ── Card de um atributo ── */
-function AttrCard({ def, onUpdate, onDelete }) {
+function AttrCard({ def, onUpdate, onDelete, onValuesAdded }) {
   const [editing,    setEditing]    = useState(false)
   const [name,       setName]       = useState(def.name)
   const [values,     setValues]     = useState(def.values ?? [])
@@ -105,8 +106,11 @@ function AttrCard({ def, onUpdate, onDelete }) {
     if (!name.trim()) return
     setSaving(true)
     try {
+      const before = new Set((def.values ?? []).map(v => v.label))
+      const addedLabels = values.map(v => v.label).filter(l => !before.has(l))
       await onUpdate(def.id, { name: name.trim(), values })
       setEditing(false)
+      if (addedLabels.length) onValuesAdded?.(def.id, addedLabels)
     } finally { setSaving(false) }
   }
 
@@ -263,6 +267,8 @@ export function AttributeDefManager() {
   const [saving,     setSaving]     = useState(false)
   const [deleteTarget, setDeleteTarget] = useState(null)  // { id, name }
   const [error, setError] = useState('')
+  const [impact,      setImpact]      = useState(null)
+  const [propagating, setPropagating] = useState(false)
 
   const fetchDefs = useCallback(async () => {
     setIsLoading(true)
@@ -317,6 +323,35 @@ export function AttributeDefManager() {
       setError(e.message)
     }
   }
+
+  const handleValuesAdded = useCallback(async (attrId, addedLabels) => {
+    try {
+      const data = await apiFetch(`/api/product-attributes/${attrId}/impact`, {
+        method: 'POST',
+        body: JSON.stringify({ newValues: addedLabels }),
+      })
+      if (data.products?.length) setImpact(data)
+    } catch (e) {
+      console.error('[impact]', e.message)
+    }
+  }, [])
+
+  const runPropagate = useCallback(async (items) => {
+    if (!impact) return
+    setPropagating(true)
+    try {
+      await apiFetch(`/api/product-attributes/${impact.attribute.id}/propagate`, {
+        method: 'POST',
+        body: JSON.stringify({ items }),
+      })
+      setImpact(null)
+      setError('')
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setPropagating(false)
+    }
+  }, [impact])
 
   if (isLoading) {
     return (
@@ -414,6 +449,7 @@ export function AttributeDefManager() {
               def={def}
               onUpdate={updateAttr}
               onDelete={(id, name) => setDeleteTarget({ id, name })}
+              onValuesAdded={handleValuesAdded}
             />
           ))}
         </div>
@@ -446,6 +482,16 @@ export function AttributeDefManager() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Painel de propagacao de novos valores */}
+      {impact && (
+        <SkuPropagateModal
+          impact={impact}
+          busy={propagating}
+          onClose={() => setImpact(null)}
+          onConfirm={runPropagate}
+        />
       )}
     </div>
   )

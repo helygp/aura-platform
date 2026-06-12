@@ -1,10 +1,12 @@
 /**
  * routes/products.js
  *
- * GET    /api/products           — lista com filtros
- * POST   /api/products           — cria produto + SKUs
- * PUT    /api/products/:id       — atualiza
- * DELETE /api/products/:id       — remove
+ * GET    /api/products              — lista com filtros
+ * GET    /api/products/next-code    — sugestão de próximo código por categoria
+ * POST   /api/products              — cria produto + SKUs
+ * GET    /api/products/:id          — detalhe
+ * PUT    /api/products/:id          — atualiza
+ * DELETE /api/products/:id          — remove
  */
 
 import { Router } from 'express'
@@ -59,6 +61,49 @@ productsRouter.get('/', async (req, res) => {
   } catch (err) {
     console.error('[products/list]', err.message)
     res.status(500).json({ error: 'Erro interno.' })
+  }
+})
+
+/* ── GET /api/products/next-code?category={nome} ──
+ * Retorna sugestão de próximo código baseado em prefix de categoria.
+ *   prefix     = 1ª letra ASCII upper do nome da categoria (acentos removidos)
+ *   sequential = MAX(numero) + 1, onde products.code ~ '^{prefix}[0-9]+$'
+ *                  e products.category = $1
+ * Categorias diferentes que começam com a mesma letra coexistem (filtro por categoria).
+ * IMPORTANTE: esta rota precisa vir ANTES de '/:id' para não ser capturada pelo wildcard.
+ */
+productsRouter.get('/next-code', async (req, res) => {
+  const categoryName = (req.query.category || '').toString().trim()
+  if (!categoryName) {
+    return res.status(400).json({ error: 'category é obrigatório' })
+  }
+
+  // 1ª letra ASCII upper, com normalização de acentos
+  const normalized = categoryName.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  const first = normalized.charAt(0).toUpperCase()
+  const prefix = /[A-Z]/.test(first) ? first : 'X'
+
+  try {
+    const { rows } = await query(
+      `SELECT code FROM products
+        WHERE category = $1
+          AND code ~ ('^' || $2 || '[0-9]+$')`,
+      [categoryName, prefix]
+    )
+    let max = 0
+    for (const r of rows) {
+      const m = /^[A-Z]([0-9]+)$/i.exec(r.code || '')
+      if (m) {
+        const n = parseInt(m[1], 10)
+        if (n > max) max = n
+      }
+    }
+    const sequential = max + 1
+    const next = prefix + String(sequential).padStart(3, '0')
+    res.json({ prefix, sequential, next })
+  } catch (err) {
+    console.error('[products/next-code]', err.message)
+    res.status(500).json({ error: 'Erro ao calcular próximo código' })
   }
 })
 

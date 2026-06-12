@@ -4,24 +4,13 @@
  * Hook de dados do módulo de produtos.
  *
  * Fix 6.1: guard de autenticação + retry sem flash de estado vazio
+ * Fix 6.2: usa authFetch central com refresh automático em 401
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useAuth } from '../../auth/AuthContext.jsx'
+import { authFetch } from '../../auth/authFetch.js'
 import { PRODUCT_TYPES } from './productsTypes.js'
-
-function authFetch(url, opts = {}) {
-  const token = window.__aura_mem_token__ || ''
-  return fetch(url, {
-    ...opts,
-    credentials: 'include',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: 'Bearer ' + token } : {}),
-      ...(opts.headers ?? {}),
-    },
-  })
-}
 
 const PAGE_SIZE = 12
 
@@ -40,13 +29,9 @@ export function useProducts() {
     try {
       const res = await authFetch('/api/products')
 
-      // Cache 304 — re-fetch sem cache header
+      // Cache 304 — re-fetch forçado sem cache
       if (res.status === 304) {
-        const res2 = await fetch('/api/products', {
-          credentials: 'include',
-          cache: 'no-store',
-          headers: { ...(window.__aura_mem_token__ ? { Authorization: 'Bearer ' + window.__aura_mem_token__ } : {}) },
-        })
+        const res2 = await authFetch('/api/products', { cache: 'no-store' })
         const json2 = await res2.json()
         setAllProducts(json2.products ?? [])
         return

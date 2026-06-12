@@ -5,6 +5,8 @@
  * Sem dependências de framework — pode ser importado em qualquer lugar.
  */
 
+import { buildSkuCode, defaultSlug } from './codeGenerator.js'
+
 /* ─── Tipo de produto ─── */
 export const PRODUCT_TYPES = {
   SIMPLE:  'simples',
@@ -46,28 +48,31 @@ export function cartesian(arrays) {
 
 /**
  * Gera SKUs filhos a partir dos atributos configurados.
+ * Usa codeGenerator (slugs do cadastro de atributos) com fallback automático.
+ *
  * @param {string} baseCode  — código base do produto pai
  * @param {Array}  attributes — [{ name, values: string[] }]
+ * @param {Array}  attrDefs   — [{ name, values: [{slug, label}] }] do cadastro (opcional)
  * @returns Array de objetos SKU
  */
-export function generateSkus(baseCode, attributes) {
+export function generateSkus(baseCode, attributes, attrDefs) {
   const filled = attributes.filter(a => a.name && a.values?.length > 0)
   if (!filled.length) return []
 
   const combos = cartesian(filled.map(a => a.values))
+  const orderedNames = filled.map(a => a.name)
 
   return combos.map((combo, i) => {
     const attrs = {}
     filled.forEach((a, j) => { attrs[a.name] = combo[j] })
 
-    const suffix = combo.map(v => v.replace(/\s+/g, '').toUpperCase().slice(0, 3)).join('-')
     return {
-      _tempId:       `sku-${i}`,
-      code:          `${baseCode}-${suffix}`,
-      attributes:    attrs,
+      _tempId:        `sku-${i}`,
+      code:           buildSkuCode(baseCode, attrs, attrDefs, orderedNames),
+      attributes:     attrs,
       priceWholesale: '',
-      stock:         0,
-      stockMin:      0,
+      stock:          0,
+      stockMin:       0,
     }
   })
 }
@@ -88,15 +93,11 @@ export function validateVariantProduct(form) {
   return validateSimpleProduct(form)
 }
 
-
-/* ─── Gera sigla automática para valor de atributo ─── */
+/* ─── Gera sigla automática para valor de atributo (compatibilidade) ─── */
 export function generateValueSlug(label) {
-  if (!label) return ''
-  const normalized = label.normalize('NFD').replace(/[̀-ͯ]/g, '')
-  const words = normalized.trim().split(/s+/)
-  if (words.length === 1) return words[0].slice(0, 3).toUpperCase()
-  return words.map(w => w[0] || '').join('').toUpperCase().slice(0, 3)
+  return defaultSlug(label)
 }
+
 /* ─── Formata preço BRL ─── */
 export const fmtBRL = (v) =>
   v == null || v === ''
