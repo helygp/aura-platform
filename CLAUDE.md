@@ -174,3 +174,44 @@ Pagar.me integrado (código completo) — aguardando API key para ativar.
 - Checar estado existente antes de implementar
 - Confirmar zero erros de build antes de declarar tarefa concluída
 - Nunca quebrar tenants ativos
+
+---
+
+## Fluxo de Issues no GitHub (combinado em Jun/2026)
+
+A cada problema/feature reportado no chat:
+1. **Avisar** se vai abrir issue — aguardar confirmação do Hely
+2. Abrir issue via API GitHub (token em `/root/.gh-token`, repo `helygp/aura-platform`)
+3. Referenciar `#NN` nos commits — `Closes #NN` fecha automaticamente ao mergear
+4. Tag de release no fim de cada versão (`v1.X.Y`)
+
+Para abrir issues programaticamente:
+```
+docker cp /tmp/issues.js api-staging:/tmp/issues.js
+docker exec api-staging node /tmp/issues.js
+```
+(usar TOKEN inline no script — não passar como argv)
+
+---
+
+## Auth Model (atualizado v1.2.0)
+
+### users (em aura_master)
+- `login text` (opcional, único por tenant) — username separado do e-mail
+- `roles text[]` — múltiplos perfis (admin, financeiro, estoque, operador)
+- `role` (single) **mantido** por compat: dual-write, recebe o de maior nível
+- Login aceita `{identifier, password}` (novo) ou `{email, password}` (legacy)
+- `loginService` **OBRIGATORIAMENTE** filtra por `process.env.TENANT_SLUG` — sem isso,
+  `findFirst` por login pode pegar admin de tenant errado
+
+### Permissões
+- `authorize(...roles)` — passa se QUALQUER role do user bate. Admin sempre passa.
+- `authorize.atLeast('financeiro')` — hierarquia: admin(4) > financeiro(3) > estoque(2) > operador(1)
+
+### Esqueci minha senha (v1.3.0)
+- Tabela `password_reset_tokens` em `aura_master` (sha256, TTL 1h, uso único)
+- Endpoints: `POST /auth/forgot-password` e `/auth/reset-password`
+- Reset invalida `refreshFamily` → derruba sessões ativas
+- Ambos filtram por TENANT_SLUG
+- **PENDENTE**: `SMTP_PASS` vazio nos containers — emails caem no fallback (log no console).
+  Configurar a senha do `noreply@aurabr.app` para entrega real.
