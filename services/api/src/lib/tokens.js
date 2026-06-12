@@ -2,11 +2,13 @@
  * lib/tokens.js
  * Emissão e verificação de JWT (access + refresh) via jose.
  *
- * Access token  — 15min, contém: sub (token opaco), tenantSlug, role
+ * Access token  — 15min, contém: sub (token opaco), tenantSlug, role, roles[]
  * Refresh token — 7d,   contém: sub (token opaco), family (rotação)
  *
  * IDs internos nunca são expostos nos tokens.
  * `sub` usa um tokenId opaco gerado no login.
+ *
+ * `role` (single) é mantido por compatibilidade. Novos consumidores devem usar `roles[]`.
  */
 
 import { SignJWT, jwtVerify } from 'jose'
@@ -24,9 +26,19 @@ function parseTTL(ttl) {
   return n
 }
 
-/* ─── Access Token ─── */
-export async function signAccessToken({ tokenId, tenantSlug, role }) {
-  return new SignJWT({ tenantSlug, role })
+/* ─── Access Token ───
+ * Aceita `role` single (legacy) e/ou `roles[]` (novo).
+ * - Se roles vier vazio ou null, deriva de [role].
+ * - Se role vier null, deriva de roles[0].
+ * - Sempre emite ambos no payload para máxima compat.
+ */
+export async function signAccessToken({ tokenId, tenantSlug, role, roles }) {
+  const rolesArr = Array.isArray(roles) && roles.length > 0
+    ? roles
+    : (role ? [role] : [])
+  const primary = role || rolesArr[0] || null
+
+  return new SignJWT({ tenantSlug, role: primary, roles: rolesArr })
     .setProtectedHeader({ alg: 'HS256' })
     .setSubject(tokenId)           // opaco — não é userId
     .setIssuedAt()
@@ -36,7 +48,7 @@ export async function signAccessToken({ tokenId, tenantSlug, role }) {
 
 export async function verifyAccessToken(token) {
   const { payload } = await jwtVerify(token, accessSecret)
-  return payload  // { sub: tokenId, tenantSlug, role, iat, exp }
+  return payload  // { sub: tokenId, tenantSlug, role, roles, iat, exp }
 }
 
 /* ─── Refresh Token ─── */

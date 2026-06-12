@@ -214,3 +214,76 @@ Equipe Aura`
 
   return sendEmail(adminEmail, { subject, text, html })
 }
+// Appended to mailer.js
+/**
+ * Envia email de redefinição de senha.
+ *
+ * @param {object} opts
+ * @param {string} opts.to                 e-mail destinatário
+ * @param {string} opts.name               nome do usuário
+ * @param {string} opts.resetUrl           URL completa com token
+ * @param {number} opts.expiresInMinutes   tempo de expiração em minutos (default 60)
+ */
+export async function sendPasswordResetEmail({ to, name, resetUrl, expiresInMinutes = 60 }) {
+  const subject = '🔑 Redefinir sua senha — Aura Platform'
+
+  const text = `Olá, ${name}!
+
+Recebemos uma solicitação para redefinir sua senha na Aura Platform.
+
+Clique no link abaixo para criar uma nova senha:
+${resetUrl}
+
+⏰  Este link expira em ${expiresInMinutes} minutos e só pode ser usado uma vez.
+
+Se você não solicitou esta redefinição, ignore este e-mail — sua senha permanecerá a mesma.
+
+Equipe Aura`
+
+  const html = `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  body { font-family: Inter, -apple-system, sans-serif; background: #f8fafc; margin: 0; padding: 0; }
+  .wrap { max-width: 540px; margin: 40px auto; background: #fff; border-radius: 12px; border: 1px solid #e2e8f0; overflow: hidden; }
+  .bar  { height: 4px; background: linear-gradient(90deg, #0284C7, #0EA5E9); }
+  .head { padding: 32px 32px 0; }
+  .logo { font-size: 20px; font-weight: 700; color: #0284C7; letter-spacing: -0.5px; }
+  .body { padding: 24px 32px 32px; }
+  h1    { margin: 0 0 8px; font-size: 22px; color: #0f172a; font-weight: 700; }
+  .sub  { margin: 0 0 24px; color: #64748b; font-size: 14px; line-height: 1.6; }
+  .btn  { display: inline-block; background: #0284C7; color: #fff !important; text-decoration: none; padding: 14px 28px; border-radius: 8px; font-size: 15px; font-weight: 600; }
+  .alt  { margin: 20px 0 0; font-size: 12px; color: #64748b; word-break: break-all; }
+  .alt code { background: #f1f5f9; padding: 2px 6px; border-radius: 4px; font-size: 11px; }
+  .warn { background: #fef9c3; border: 1px solid #fde047; border-radius: 8px; padding: 12px 16px; font-size: 13px; color: #713f12; margin: 20px 0; }
+  .foot { padding: 16px 32px; background: #f8fafc; border-top: 1px solid #e2e8f0; font-size: 12px; color: #94a3b8; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="bar"></div>
+  <div class="head"><div class="logo">Aura Platform</div></div>
+  <div class="body">
+    <h1>🔑 Redefinir sua senha</h1>
+    <p class="sub">Olá, <strong>${name}</strong>!<br>Recebemos uma solicitação para redefinir a senha da sua conta. Clique no botão abaixo para criar uma nova senha.</p>
+
+    <a href="${resetUrl}" class="btn">Redefinir minha senha</a>
+
+    <p class="alt">Ou copie e cole este link no navegador:<br><code>${resetUrl}</code></p>
+
+    <div class="warn">⏰  Este link expira em <strong>${expiresInMinutes} minutos</strong> e só pode ser usado uma vez.</div>
+
+    <p style="margin:24px 0 0;font-size:13px;color:#64748b;line-height:1.6;">
+      <strong>Não solicitou esta redefinição?</strong><br>
+      Pode ignorar este e-mail com tranquilidade — sua senha permanecerá a mesma.
+    </p>
+  </div>
+  <div class="foot">Aura Platform · aurabr.app · Mensagem automática</div>
+</div>
+</body>
+</html>`
+
+  return sendEmail(to, { subject, text, html })
+}

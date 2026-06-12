@@ -15,13 +15,12 @@ export async function apiRequest(path, options = {}) { return api(path, options)
 
 async function api(path, options = {}) {
   const res = await fetch(`${API_BASE}${path}`, {
-    credentials: 'include',   // envia/recebe cookies httpOnly
+    credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
       ...(_memToken ? { 'Authorization': 'Bearer ' + _memToken } : {}),
       ...(options.headers ?? {}),
     },
-    // headers já definido acima
     ...options,
   })
 
@@ -30,7 +29,7 @@ async function api(path, options = {}) {
   if (!res.ok) {
     const err  = new Error(data.error ?? 'Erro desconhecido')
     err.status = res.status
-    err.fields = data.fields   // erros de validação por campo
+    err.fields = data.fields
     err.code   = data.code
     throw err
   }
@@ -38,10 +37,19 @@ async function api(path, options = {}) {
   return data
 }
 
-export async function apiLogin({ email, password }) {
+/* ─── Auth ─── */
+
+/**
+ * Login aceita { identifier, password } (novo) — identifier = login OU email.
+ * Mantém compatibilidade com { email, password } legado.
+ */
+export async function apiLogin({ identifier, email, password }) {
+  const body = identifier
+    ? { identifier, password }
+    : { email, password }   // legacy
   return api('/auth/login', {
     method: 'POST',
-    body:   JSON.stringify({ email, password }),
+    body:   JSON.stringify(body),
   })
 }
 

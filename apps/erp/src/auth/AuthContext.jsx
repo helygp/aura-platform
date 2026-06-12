@@ -2,12 +2,12 @@
  * auth/AuthContext.jsx
  *
  * Provê:
- *   user            — { tokenId, email, name, role, tenantSlug } | null
+ *   user            — { tokenId, login, email, name, role, roles[], tenantSlug } | null
  *   isAuthenticated — boolean
  *   isLoading       — true enquanto verifica sessão no boot
- *   login(email, password) → Promise<void>  (lança em caso de erro)
- *   logout()               → Promise<void>
- *   hasRole(...roles)      → boolean
+ *   login(identifier, password) → Promise<void>  (lança em caso de erro)
+ *   logout()                    → Promise<void>
+ *   hasRole(...roles)           → boolean (multi-role: passa se QUALQUER role do user bater; admin sempre passa)
  *
  * Persistência de sessão:
  *   No boot chama /auth/me. Se o cookie aura_access ainda for válido
@@ -34,6 +34,19 @@ function isTenantMismatch(err) {
   return err?.code === 'TENANT_MISMATCH'
 }
 
+/** Normaliza user payload: garante .roles[] mesmo em payloads antigos */
+function normalizeUser(u) {
+  if (!u) return null
+  const roles = Array.isArray(u.roles) && u.roles.length > 0
+    ? u.roles.map(r => String(r).toLowerCase())
+    : (u.role ? [String(u.role).toLowerCase()] : [])
+  return {
+    ...u,
+    role:  u.role ? String(u.role).toLowerCase() : (roles[0] ?? null),
+    roles,
+  }
+}
+
 export function AuthProvider({ children }) {
   const [user,      setUser]      = useState(null)
   const [isLoading, setIsLoading] = useState(true) // true até boot terminar
@@ -42,26 +55,22 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     async function bootstrap() {
       try {
-        // Tenta com access token atual
         const data = await apiMe()
-        setUser(data.auth)
+        setUser(normalizeUser(data.auth))
       } catch (err) {
         if (err.status === 401) {
-          // Se for mismatch de tenant, não tenta refresh — vai para login
           if (isTenantMismatch(err)) {
             setUser(null)
           } else {
-            // Access token expirado — tenta refresh
             try {
               const refreshed = await apiRefresh()
-              // Refresh retornou mas pode ser de outro tenant — verificar
               if (isTenantMismatch(refreshed)) {
                 setUser(null)
               } else {
-                setUser(refreshed.user)
+                setUser(normalizeUser(refreshed.user))
               }
             } catch (refreshErr) {
-              setUser(null)  // sem sessão válida
+              setUser(null)
             }
           }
         } else {
@@ -74,10 +83,12 @@ export function AuthProvider({ children }) {
     bootstrap()
   }, [])
 
-  /* ─── login() ─── */
-  const login = useCallback(async (email, password) => {
-    const data = await apiLogin({ email, password }) // lança se erro
-    setUser(data.user)
+  /* ─── login() ───
+   * Aceita identifier (login OU email) ou ainda o legacy "email".
+   */
+  const login = useCallback(async (identifierOrEmail, password) => {
+    const data = await apiLogin({ identifier: identifierOrEmail, password })
+    setUser(normalizeUser(data.user))
     if (data.accessToken) setMemToken(data.accessToken)
   }, [])
 
@@ -87,10 +98,13 @@ export function AuthProvider({ children }) {
     setUser(null)
   }, [])
 
-  /* ─── hasRole() ─── */
+  /* ─── hasRole() ─── multi-role + admin always passes */
   const hasRole = useCallback((...roles) => {
     if (!user) return false
-    return roles.flat().map(r => r.toLowerCase()).includes(user.role.toLowerCase())
+    const userRoles = user.roles ?? (user.role ? [user.role] : [])
+    if (userRoles.includes('admin')) return true
+    const want = roles.flat().map(r => String(r).toLowerCase())
+    return userRoles.some(r => want.includes(r))
   }, [user])
 
   const value = useMemo(() => ({

@@ -11,6 +11,59 @@ e o projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ---
 
+## [1.3.0] — 2026-06-12
+
+### Adicionado
+- **Esqueci minha senha** (fluxo completo)
+  - DB: tabela `password_reset_tokens` em `aura_master` (token_hash sha256, TTL 1h, uso único)
+  - API: `POST /auth/forgot-password` (sempre 200, não revela enumeração) e `POST /auth/reset-password`
+  - Filtra por `TENANT_SLUG` em ambos os endpoints (token só vale para o tenant atual)
+  - Reset de senha invalida `refreshFamily` → derruba todas as sessões ativas do usuário
+  - Email template HTML reutilizando o padrão visual do welcome
+  - Frontend: páginas `/forgot-password` e `/reset-password?token=xxx`
+  - Botão da tela de login agora navega para `/forgot-password`
+- **Ordenação inteligente da tela de estoque**
+  - Helper `sortPresets.js` com 6 presets (produto·cor·tamanho default, código, estoque, status…)
+  - Componente `SortPicker` na barra de filtros
+  - Tamanhos numéricos comparados como número (1 < 2 < 10), letras como ordem fixa PP→XG
+  - Cliques nos headers continuam funcionando (sobrescrevem o preset temporariamente)
+  - Preferência persistida em `localStorage` (`aura-inventory-sort`)
+
+### Conhecidos / Pendente
+- `SMTP_PASS` está vazio nos containers — emails caem no fallback (log no console).
+  Configurar a senha do `noreply@aurabr.app` para emails reais. Não bloqueia funcionalidade.
+
+---
+
+## [1.2.0] — 2026-06-12
+
+### Adicionado
+- **Login separado do e-mail**: coluna `login` na tabela users (única por tenant).
+  Backfill: parte antes do @ do email, lowercase, sanitizado para `[a-z0-9_.-]{3,20}`.
+- **Multi-role**: coluna `roles text[]` na tabela users. Coluna `role` (single) mantida
+  por compat (dual-write).
+- JWT carrega `roles[]` e `role` (primeiro do array, maior nível).
+- API `POST /auth/login` aceita `{identifier, password}` (novo) ou `{email, password}` (legacy).
+  `loginService` busca por `login` OR `email`.
+- API `PUT /api/users/:id/roles` (array). Mantém `PUT /:id/role` legacy sincronizando ambos.
+- API `POST /api/users/invite` e `PUT /api/users/:id` aceitam `login` + `roles[]`.
+- ERP: nova tela de edição completa de usuário (mesmo modal, prop `user` opcional).
+- ERP: `hasRole(...)` no AuthContext passa a verificar array de roles; admin sempre passa.
+- ERP: campo de login na tela de `/login` agora aceita username OU email.
+- ERP: novo `PasswordInput` em `@aura/ui` com toggle de visibilidade. Aplicado em `/login`.
+- ERP: `Input` ganha prop `endAdornment` para conteúdo posicionado à direita do campo.
+
+### Corrigido
+- **Bug crítico de digitação no InviteModal**: `Field` declarado dentro do componente
+  recriava o tipo a cada render → React desmontava o `<input>` → cursor saía do campo.
+  Movido para escopo de módulo.
+
+### Operacional
+- Migration em `aura_master` (additive, idempotente, índice GIN para `roles`).
+- `prisma generate` necessário no container após pull (schema mudou).
+
+---
+
 ## [1.1.0] — 2026-06-12
 
 ### Adicionado

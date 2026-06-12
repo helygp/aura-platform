@@ -2,6 +2,7 @@
 // ─── Sprint 1 Tarefa 2 ───
 export { Button, buttonVariants }                from './components/Button.jsx'
 export { Input }                                 from './components/Input.jsx'
+export { PasswordInput }                         from './components/PasswordInput.jsx'
 export { Card, CardHeader, CardTitle, CardDescription, CardBody, CardFooter } from './components/Card.jsx'
 export { Badge, badgeVariants }                  from './components/Badge.jsx'
 

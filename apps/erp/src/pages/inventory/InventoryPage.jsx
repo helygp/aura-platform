@@ -18,6 +18,8 @@
  */
 
 import { useSortable } from '../../hooks/useSortable.js'
+import { sortSkusByPreset, loadPresetPreference, savePresetPreference, DEFAULT_PRESET } from './sortPresets.js'
+import { SortPicker } from './components/SortPicker.jsx'
 import React, { useState, useCallback, useEffect, useMemo } from 'react'
 import { useLocation } from 'react-router-dom'
 import {
@@ -233,7 +235,15 @@ export function InventoryPage() {
     refetch, addMovement, getMovements, fetchMovements,
     stats, PAGE_SIZE,
   } = useInventory()
-  const { sorted: sortedSkusInv, sortKey: iSortKey, sortDir: iSortDir, handleSort: iHandleSort } = useSortable(skus, 'productName')
+  const [sortPreset, setSortPreset] = useState(loadPresetPreference)
+
+  /* Lista pré-ordenada pelo preset escolhido */
+  const presetSortedSkus = useMemo(() => sortSkusByPreset(skus, sortPreset), [skus, sortPreset])
+
+  /* Clique no header da coluna sobrescreve o preset com sort por aquela coluna */
+  const { sorted: sortedSkusInv, sortKey: iSortKey, sortDir: iSortDir, handleSort: iHandleSort } = useSortable(presetSortedSkus, null)
+
+  const onChangePreset = (key) => { setSortPreset(key); savePresetPreference(key) }
 
   const location = useLocation()
 
@@ -380,6 +390,12 @@ export function InventoryPage() {
               </button>
             )
           })}
+
+          {/* Separador visual */}
+          <div className="hidden md:block w-px h-6 bg-[var(--color-border)] mx-1" />
+
+          {/* Picker de ordenação */}
+          <SortPicker value={sortPreset} onChange={onChangePreset} />
 
           {hasActiveFilters && (
             <button

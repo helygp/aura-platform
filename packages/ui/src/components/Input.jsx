@@ -5,13 +5,15 @@ import { cn } from '../cn.js'
  * Input — Aura UI
  *
  * Props:
- *   label       : string  — label visível acima do campo
- *   placeholder : string
- *   error       : string  — mensagem de erro (ativa estado de erro)
- *   hint        : string  — texto auxiliar abaixo do campo (substituído por error se existir)
- *   disabled    : boolean
- *   className   : string  — classes aplicadas no <input>
- *   wrapperClassName : string — classes aplicadas no wrapper externo
+ *   label            : string  — label visível acima do campo
+ *   placeholder      : string
+ *   error            : string  — mensagem de erro (ativa estado de erro)
+ *   hint             : string  — texto auxiliar abaixo do campo (substituído por error se existir)
+ *   disabled         : boolean
+ *   className        : string  — classes aplicadas no <input>
+ *   wrapperClassName : string  — classes aplicadas no wrapper externo
+ *   endAdornment     : ReactNode — conteúdo posicionado dentro do campo, à direita
+ *                                  (ex: ícone, botão de toggle). Recebe pointerEvents auto.
  */
 
 const Input = React.forwardRef(function Input(
@@ -23,7 +25,9 @@ const Input = React.forwardRef(function Input(
     disabled = false,
     className,
     wrapperClassName,
+    endAdornment,
     id,
+    type = 'text',
     ...props
   },
   ref
@@ -49,30 +53,43 @@ const Input = React.forwardRef(function Input(
         </label>
       )}
 
-      <input
-        ref={ref}
-        id={inputId}
-        disabled={disabled}
-        placeholder={placeholder}
-        aria-invalid={hasError}
-        aria-describedby={hasError ? `${inputId}-error` : hint ? `${inputId}-hint` : undefined}
-        className={cn(
-          // base
-          'h-10 w-full rounded-[var(--radius-md)] border px-3 text-sm',
-          'bg-[var(--color-bg)] text-[var(--color-text)]',
-          'placeholder:text-[var(--color-text-muted)]',
-          'transition-colors duration-150',
-          'focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:ring-offset-1',
-          // estado normal
-          !hasError && 'border-[var(--color-border)] hover:border-[var(--color-border-strong)]',
-          // estado erro
-          hasError && 'border-[var(--color-error)] focus:ring-[var(--color-error)]',
-          // disabled
-          disabled && 'cursor-not-allowed opacity-50 bg-[var(--color-surface)]',
-          className
+      <div className="relative">
+        <input
+          ref={ref}
+          id={inputId}
+          type={type}
+          disabled={disabled}
+          placeholder={placeholder}
+          aria-invalid={hasError}
+          aria-describedby={hasError ? `${inputId}-error` : hint ? `${inputId}-hint` : undefined}
+          className={cn(
+            // base
+            'h-10 w-full rounded-[var(--radius-md)] border px-3 text-sm',
+            'bg-[var(--color-bg)] text-[var(--color-text)]',
+            'placeholder:text-[var(--color-text-muted)]',
+            'transition-colors duration-150',
+            'focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:ring-offset-1',
+            // estado normal
+            !hasError && 'border-[var(--color-border)] hover:border-[var(--color-border-strong)]',
+            // estado erro
+            hasError && 'border-[var(--color-error)] focus:ring-[var(--color-error)]',
+            // disabled
+            disabled && 'cursor-not-allowed opacity-50 bg-[var(--color-surface)]',
+            // padding-right extra quando há adornment
+            endAdornment && 'pr-10',
+            className
+          )}
+          {...props}
+        />
+
+        {endAdornment && (
+          <div className="absolute inset-y-0 right-2 flex items-center pointer-events-none">
+            <div className="pointer-events-auto">
+              {endAdornment}
+            </div>
+          </div>
         )}
-        {...props}
-      />
+      </div>
 
       {/* Mensagem de erro tem prioridade sobre hint */}
       {hasError && (
