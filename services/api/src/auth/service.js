@@ -3,12 +3,12 @@
  * Lógica de autenticação desacoplada do transporte HTTP.
  *
  * Usa tabela `users` do banco master com campos:
- *   id, tokenId (uuid opaco), email, passwordHash,
- *   role, tenantId, tenantSlug, active, refreshFamily
+ *   id, tokenId, login, email, passwordHash, role, roles[],
+ *   tenantId, tenantSlug, active, refreshFamily
  *
- * tokenId — gerado no cadastro, nunca muda.
- *           É o `sub` dos JWTs → nunca expõe id interno.
+ * Login aceita `login` OU `email` no campo identificador (busca em ambos).
  *
+ * tokenId — gerado no cadastro, nunca muda. É o `sub` dos JWTs.
  * refreshFamily — uuid rotacionado a cada refresh.
  *                 Se um refresh roubado for reutilizado,
  *                 a família invalida todos os tokens da sessão.
@@ -34,23 +34,37 @@ export class AuthError extends Error {
 
 /* ─── Payload público do usuário (sem IDs internos) ─── */
 function publicUser(user) {
+  const dbRoles = Array.isArray(user.roles) && user.roles.length > 0
+    ? user.roles
+    : (user.role ? [user.role] : [])
   return {
     tokenId:    user.tokenId,
+    login:      user.login ?? null,
     email:      user.email,
     name:       user.name,
-    role:       user.role,
+    role:       user.role,    // singular legacy
+    roles:      dbRoles,      // novo array
     tenantSlug: user.tenant?.slug ?? user.tenantSlug,
   }
 }
 
 /* ─── LOGIN ─── */
-export async function loginService({ email, password }) {
-  if (!email || !password) {
-    throw new AuthError('E-mail e senha são obrigatórios.', 400)
+export async function loginService({ identifier, email, password }) {
+  // Aceita { identifier, password } (novo) ou { email, password } (legacy)
+  const ident = (identifier ?? email ?? '').toLowerCase().trim()
+  if (!ident || !password) {
+    throw new AuthError('Login e senha são obrigatórios.', 400)
   }
 
+  const CONTAINER_TENANT = process.env.TENANT_SLUG ?? null
   const user = await prisma.user.findFirst({
-    where: { email: email.toLowerCase().trim(), active: true },
+    where: {
+      AND: [
+        { active: true },
+        { OR: [ { login: ident }, { email: ident } ] },
+        ...(CONTAINER_TENANT ? [{ tenant: { slug: CONTAINER_TENANT } }] : []),
+      ],
+    },
     include: { tenant: { select: { slug: true } } },
   })
 
@@ -70,10 +84,16 @@ export async function loginService({ email, password }) {
     data:  { refreshFamily: family },
   })
 
+  const tenantSlug = user.tenant?.slug ?? user.tenantSlug
+  const dbRoles = Array.isArray(user.roles) && user.roles.length > 0
+    ? user.roles
+    : (user.role ? [user.role] : [])
+
   const accessToken  = await signAccessToken({
     tokenId:    user.tokenId,
-    tenantSlug: user.tenant?.slug ?? user.tenantSlug,
+    tenantSlug,
     role:       user.role,
+    roles:      dbRoles,
   })
   const refreshToken = await signRefreshToken({
     tokenId: user.tokenId,
@@ -120,10 +140,16 @@ export async function refreshService(refreshToken) {
     data:  { refreshFamily: newFamily },
   })
 
+  const tenantSlug = user.tenant?.slug ?? user.tenantSlug
+  const dbRoles = Array.isArray(user.roles) && user.roles.length > 0
+    ? user.roles
+    : (user.role ? [user.role] : [])
+
   const accessToken     = await signAccessToken({
-    tokenId:    user.tokenId,
-    tenantSlug: user.tenant?.slug ?? user.tenantSlug,
-    role:       user.role,
+    tokenId: user.tokenId,
+    tenantSlug,
+    role:    user.role,
+    roles:   dbRoles,
   })
   const newRefreshToken = await signRefreshToken({
     tokenId: user.tokenId,

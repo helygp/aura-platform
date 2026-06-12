@@ -1,26 +1,23 @@
 /**
  * pages/users/UsersPage.jsx
  *
- * Gestão de usuários e papéis — Sprint 2 Tarefa 9.
+ * Gestão de usuários e papéis.
  *
  * Layout:
- *   1. Header: título + stats (total/ativos/convidados) + botão Convidar
- *   2. Tabela de usuários (desktop) / cards (mobile)
- *      - Avatar inicial, nome, e-mail, papel (editável inline), status, último login
- *      - Ações: trocar papel (dropdown), reenviar convite, revogar / reativar
+ *   1. Header: título + stats + botão "Convidar"
+ *   2. Tabela (desktop) / cards (mobile):
+ *      Usuário (avatar + nome + email), Login, Perfis (multi-badges),
+ *      WhatsApp, Status, Último acesso, Ações
  *   3. Matriz de permissões (collapsible)
- *   4. InviteModal
+ *   4. InviteModal (criação OU edição via prop `user`)
  *
- * Regras de negócio:
- *   - Admin não pode revogar a si mesmo
- *   - Só admin vê esta página (RBAC já na rota)
- *   - Papel editável por dropdown inline na linha da tabela
+ * Multi-role: badges múltiplos por usuário. Edição via modal (sem dropdown inline).
  */
 
 import { useSortable } from '../../hooks/useSortable.js'
 import React, { useState, useCallback } from 'react'
 import {
-  UserPlus, RefreshCw, MoreVertical, ShieldCheck,
+  UserPlus, RefreshCw, MoreVertical, ShieldCheck, Pencil,
   Mail, Ban, RotateCcw, ChevronDown,
   Users, UserCheck, Clock, ChevronUp,
   ChevronsUpDown,
@@ -30,7 +27,7 @@ import { InviteModal }       from './components/InviteModal.jsx'
 import { PermissionsMatrix } from './components/PermissionsMatrix.jsx'
 import { useUsers }          from './useUsers.js'
 import {
-  ROLES, ROLE_LIST, USER_STATUS, STATUS_META, fmtDate,
+  ROLES, ROLE_LIST, USER_STATUS, STATUS_META, fmtDate, userRoles,
 } from './usersTypes.js'
 
 /* ─── Skeleton ─── */
@@ -41,7 +38,7 @@ function TableSkeleton() {
         <table className="w-full">
           <thead className="bg-[var(--color-bg-subtle)] border-b border-[var(--color-border)]">
             <tr>
-              {['Usuário','Papel','WhatsApp','Status','Último acesso',''].map(h => (
+              {['Usuário','Login','Perfis','WhatsApp','Status','Último acesso',''].map(h => (
                 <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap">{h}</th>
               ))}
             </tr>
@@ -50,8 +47,10 @@ function TableSkeleton() {
             {[...Array(5)].map((_, i) => (
               <tr key={i}>
                 <td className="px-4 py-3"><div className="flex items-center gap-3"><Skeleton variant="circle" width={36} height={36} /><div className="space-y-1.5"><Skeleton width={120} height={12} /><Skeleton width={160} height={10} /></div></div></td>
-                <td className="px-4 py-3"><Skeleton width={90} height={28} /></td>
-                <td className="px-4 py-3"><Skeleton width={80} height={22} /></td>
+                <td className="px-4 py-3"><Skeleton width={70} height={14} /></td>
+                <td className="px-4 py-3"><Skeleton width={120} height={22} /></td>
+                <td className="px-4 py-3"><Skeleton width={80} height={14} /></td>
+                <td className="px-4 py-3"><Skeleton width={70} height={20} /></td>
                 <td className="px-4 py-3"><Skeleton width={90} height={12} /></td>
                 <td className="px-4 py-3"><Skeleton width={28} height={28} /></td>
               </tr>
@@ -78,14 +77,25 @@ function StatChip({ icon: Icon, label, value, color }) {
   )
 }
 
-/* ─── Badge de papel ─── */
+/* ─── Badge único de papel ─── */
 function RoleBadge({ role }) {
   const meta = ROLES[role]
   if (!meta) return <span className="text-xs text-[var(--color-text-muted)]">{role}</span>
   return (
-    <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold border ${meta.bg} ${meta.color} ${meta.border}`}>
+    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold border ${meta.bg} ${meta.color} ${meta.border}`}>
       {meta.label}
     </span>
+  )
+}
+
+/* ─── Badges múltiplos (ordenados por nível decrescente) ─── */
+function RolesBadges({ user }) {
+  const roles = userRoles(user).sort((a, b) => (ROLES[b]?.level ?? 0) - (ROLES[a]?.level ?? 0))
+  if (!roles.length) return <span className="text-xs text-[var(--color-text-muted)]">—</span>
+  return (
+    <div className="flex flex-wrap gap-1">
+      {roles.map(r => <RoleBadge key={r} role={r} />)}
+    </div>
   )
 }
 
@@ -101,64 +111,10 @@ function StatusBadge({ status }) {
   )
 }
 
-/* ─── Dropdown de papel inline ─── */
-function RoleDropdown({ user, onChangeRole }) {
-  const [open,    setOpen]    = useState(false)
-  const [loading, setLoading] = useState(false)
-
-  if (user.isSelf) return <RoleBadge role={user.role} />
-
-  const handleSelect = async (newRole) => {
-    if (newRole === user.role) { setOpen(false); return }
-    setLoading(true)
-    setOpen(false)
-    try { await onChangeRole(user.id, newRole) }
-    finally { setLoading(false) }
-  }
-
-  return (
-    <div className="relative inline-block">
-      <button
-        onClick={() => setOpen(p => !p)}
-        disabled={loading || user.status === USER_STATUS.REVOKED}
-        className="flex items-center gap-1.5 disabled:opacity-60 disabled:cursor-not-allowed"
-      >
-        {loading
-          ? <span className="flex items-center gap-1 text-xs text-[var(--color-text-muted)]"><RefreshCw size={11} className="animate-spin" /> Alterando…</span>
-          : <><RoleBadge role={user.role} /><ChevronDown size={12} className={`text-[var(--color-text-muted)] transition-transform ${open ? 'rotate-180' : ''}`} /></>
-        }
-      </button>
-      {open && (
-        <>
-          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute left-0 top-full mt-1 z-20 w-36 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] shadow-[var(--shadow-md)] overflow-hidden py-1">
-            {ROLE_LIST.map(role => (
-              <button
-                key={role.key}
-                onClick={() => handleSelect(role.key)}
-                className={`
-                  w-full flex items-center gap-2 px-3 py-2 text-xs font-medium
-                  transition-colors hover:bg-[var(--color-surface)]
-                  ${role.key === user.role ? role.color : 'text-[var(--color-text)]'}
-                `}
-              >
-                {role.key === user.role && <span className="w-1.5 h-1.5 rounded-full bg-current" />}
-                {role.label}
-              </button>
-            ))}
-          </div>
-        </>
-      )}
-    </div>
-  )
-}
-
-/* ─── Menu de ações (3 pontos) ─── */
-function ActionsMenu({ user, onRevoke, onReactivate, onResend }) {
+/* ─── Menu de ações ─── */
+function ActionsMenu({ user, onEdit, onRevoke, onReactivate, onResend }) {
   const [open,    setOpen]    = useState(false)
   const [loading, setLoading] = useState(null)
-
-  if (user.isSelf) return null
 
   const act = async (fn, key) => {
     setLoading(key); setOpen(false)
@@ -182,6 +138,15 @@ function ActionsMenu({ user, onRevoke, onReactivate, onResend }) {
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
           <div className="absolute right-0 top-full mt-1 z-20 w-44 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] shadow-[var(--shadow-md)] overflow-hidden py-1">
+
+            <button
+              onClick={() => { setOpen(false); onEdit() }}
+              className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface)] transition-colors"
+            >
+              <Pencil size={14} className="text-[var(--color-text-muted)]" />
+              Editar
+            </button>
+
             {user.status === USER_STATUS.INVITED && (
               <button
                 onClick={() => act(onResend, 'resend')}
@@ -191,22 +156,25 @@ function ActionsMenu({ user, onRevoke, onReactivate, onResend }) {
                 Reenviar convite
               </button>
             )}
-            {user.status !== USER_STATUS.REVOKED ? (
-              <button
-                onClick={() => act(onRevoke, 'revoke')}
-                className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-950 transition-colors"
-              >
-                <Ban size={14} />
-                Revogar acesso
-              </button>
-            ) : (
-              <button
-                onClick={() => act(onReactivate, 'reactivate')}
-                className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm text-green-600 hover:bg-green-50 dark:hover:bg-green-950 transition-colors"
-              >
-                <RotateCcw size={14} />
-                Reativar acesso
-              </button>
+
+            {!user.isSelf && (
+              user.status !== USER_STATUS.REVOKED ? (
+                <button
+                  onClick={() => act(onRevoke, 'revoke')}
+                  className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-950 transition-colors"
+                >
+                  <Ban size={14} />
+                  Revogar acesso
+                </button>
+              ) : (
+                <button
+                  onClick={() => act(onReactivate, 'reactivate')}
+                  className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm text-green-600 hover:bg-green-50 dark:hover:bg-green-950 transition-colors"
+                >
+                  <RotateCcw size={14} />
+                  Reativar acesso
+                </button>
+              )
             )}
           </div>
         </>
@@ -215,18 +183,16 @@ function ActionsMenu({ user, onRevoke, onReactivate, onResend }) {
   )
 }
 
-/* ─── Linha de tabela ─── */
-function UserRow({ user, onChangeRole, onRevoke, onReactivate, onResend }) {
+/* ─── Linha tabela ─── */
+function UserRow({ user, onEdit, onRevoke, onReactivate, onResend }) {
   const initial = (user.name ?? user.email).charAt(0).toUpperCase()
-  const roleColor = ROLES[user.role]?.color ?? 'text-[var(--color-text-muted)]'
   const isRevoked = user.status === USER_STATUS.REVOKED
 
   return (
     <tr className={`border-b border-[var(--color-border)] transition-colors hover:bg-[var(--color-bg-subtle)] ${isRevoked ? 'opacity-50' : ''}`}>
-      {/* Usuário */}
       <td className="px-4 py-3">
         <div className="flex items-center gap-3">
-          <div className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 text-sm font-bold text-white ${roleColor.replace('text-', 'bg-').replace('-600','').replace('-500','')}`}
+          <div className="w-9 h-9 rounded-full flex items-center justify-center shrink-0 text-sm font-bold text-white"
             style={{ backgroundColor: 'var(--color-primary)', opacity: isRevoked ? 0.5 : 1 }}>
             {initial}
           </div>
@@ -241,28 +207,27 @@ function UserRow({ user, onChangeRole, onRevoke, onReactivate, onResend }) {
           </div>
         </div>
       </td>
-      {/* Papel */}
       <td className="px-4 py-3">
-        <RoleDropdown user={user} onChangeRole={onChangeRole} />
+        <span className="text-xs font-mono text-[var(--color-text)]">{user.login || '—'}</span>
       </td>
-      {/* WhatsApp */}
+      <td className="px-4 py-3">
+        <RolesBadges user={user} />
+      </td>
       <td className="px-4 py-3">
         <span className="text-xs text-[var(--color-text-muted)]">{user.whatsapp || '—'}</span>
       </td>
-      {/* Status */}
       <td className="px-4 py-3">
         <StatusBadge status={user.status} />
       </td>
-      {/* Último acesso */}
       <td className="px-4 py-3">
         <span className="text-xs text-[var(--color-text-muted)]">
           {user.lastLogin ? fmtDate(user.lastLogin) : '—'}
         </span>
       </td>
-      {/* Ações */}
       <td className="px-4 py-3">
         <ActionsMenu
           user={user}
+          onEdit={() => onEdit(user)}
           onRevoke={() => onRevoke(user.id)}
           onReactivate={() => onReactivate(user.id)}
           onResend={() => onResend(user.id)}
@@ -273,8 +238,8 @@ function UserRow({ user, onChangeRole, onRevoke, onReactivate, onResend }) {
 }
 
 /* ─── Card mobile ─── */
-function UserCard({ user, onChangeRole, onRevoke, onReactivate, onResend }) {
-  const initial  = (user.name ?? user.email).charAt(0).toUpperCase()
+function UserCard({ user, onEdit, onRevoke, onReactivate, onResend }) {
+  const initial   = (user.name ?? user.email).charAt(0).toUpperCase()
   const isRevoked = user.status === USER_STATUS.REVOKED
 
   return (
@@ -289,33 +254,45 @@ function UserCard({ user, onChangeRole, onRevoke, onReactivate, onResend }) {
               <p className="text-sm font-semibold text-[var(--color-text)] truncate">{user.name}</p>
               {user.isSelf && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-[var(--color-surface)] text-[var(--color-text-muted)] border border-[var(--color-border)]">você</span>}
             </div>
-            <p className="text-xs text-[var(--color-text-muted)] truncate">{user.email}</p>
+            <p className="text-xs text-[var(--color-text-muted)] truncate">{user.login || user.email}</p>
+            <p className="text-[10px] text-[var(--color-text-muted)] truncate">{user.email}</p>
           </div>
         </div>
-        <ActionsMenu user={user} onRevoke={() => onRevoke(user.id)} onReactivate={() => onReactivate(user.id)} onResend={() => onResend(user.id)} />
+        <ActionsMenu
+          user={user}
+          onEdit={() => onEdit(user)}
+          onRevoke={() => onRevoke(user.id)}
+          onReactivate={() => onReactivate(user.id)}
+          onResend={() => onResend(user.id)}
+        />
       </div>
-      <div className="flex items-center gap-2 mt-3 pl-13 flex-wrap" style={{ paddingLeft: '52px' }}>
-        <RoleDropdown user={user} onChangeRole={onChangeRole} />
+      <div className="flex items-center gap-2 mt-3 flex-wrap" style={{ paddingLeft: '52px' }}>
+        <RolesBadges user={user} />
         <StatusBadge status={user.status} />
         {user.lastLogin && (
-          <span className="text-xs text-[var(--color-text-disabled)]">Acesso: {fmtDate(user.lastLogin)}</span>
+          <span className="text-[10px] text-[var(--color-text-muted)]">
+            • {fmtDate(user.lastLogin)}
+          </span>
         )}
       </div>
     </div>
   )
 }
 
-/* ─── Página ─── */
+/* ─── Colunas tabela ─── */
 const USER_COLS = [
-  { label: 'Usuário',       key: 'name',      sortable: true },
-  { label: 'Papel',         key: 'role',      sortable: true },
-  { label: 'Status',        key: 'status',    sortable: true },
-  { label: 'Último acesso', key: 'lastLogin', sortable: true },
-  { label: '',              key: '_act',       sortable: false },
+  { key: 'name',      label: 'Usuário',       sortable: true,  align: 'text-left' },
+  { key: 'login',     label: 'Login',         sortable: true,  align: 'text-left' },
+  { key: 'roles',     label: 'Perfis',        sortable: false, align: 'text-left' },
+  { key: 'whatsapp',  label: 'WhatsApp',      sortable: false, align: 'text-left' },
+  { key: 'status',    label: 'Status',        sortable: true,  align: 'text-left' },
+  { key: 'lastLogin', label: 'Último acesso', sortable: true,  align: 'text-left' },
+  { key: 'actions',   label: '',              sortable: false, align: 'text-left' },
 ]
+
 function SortableTh({ col, sortKey, sortDir, onSort }) {
-  const active = sortKey === (col.sortKey ?? col.key)
-  const align  = col.align === 'right' ? 'text-right' : 'text-left'
+  const active = sortKey === col.key
+  const align = col.align ?? 'text-left'
   return (
     <th onClick={() => col.sortable && onSort(col)}
       className={`px-4 py-3 text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap select-none ${align} ${col.sortable ? 'cursor-pointer hover:text-[var(--color-text)] hover:bg-[var(--color-bg-subtle)] transition-colors' : ''}`}
@@ -330,19 +307,36 @@ function SortableTh({ col, sortKey, sortDir, onSort }) {
     </th>
   )
 }
+
+/* ──────────────────────────────────────────────────────── */
+
 export function UsersPage() {
   const {
     users, isLoading, refetch, customers,
-    inviteUser, updateUser, updateRole, revokeUser, reactivate, resendInvite,
+    inviteUser, updateUser, revokeUser, reactivate, resendInvite,
     stats,
   } = useUsers()
   const { sorted: sortedUsers, sortKey: uSortKey, sortDir: uSortDir, handleSort: uHandleSort } = useSortable(users, 'name')
 
-  const [inviteOpen,    setInviteOpen]    = useState(false)
-  const [showMatrix,    setShowMatrix]    = useState(false)
-  const [revokeTarget,  setRevokeTarget]  = useState(null)
-  const [revoking,      setRevoking]      = useState(false)
-  const [resendDone,    setResendDone]    = useState(null)  // userId
+  const [modalOpen,    setModalOpen]    = useState(false)
+  const [editTarget,   setEditTarget]   = useState(null)   // null = modo criar
+  const [showMatrix,   setShowMatrix]   = useState(false)
+  const [revokeTarget, setRevokeTarget] = useState(null)
+  const [revoking,     setRevoking]     = useState(false)
+  const [resendDone,   setResendDone]   = useState(null)
+
+  const openCreate = useCallback(() => { setEditTarget(null); setModalOpen(true) }, [])
+  const openEdit   = useCallback((user) => { setEditTarget(user); setModalOpen(true) }, [])
+  const closeModal = useCallback(() => { setModalOpen(false); setEditTarget(null) }, [])
+
+  /* Handler único pro modal: chama invite ou update conforme isEdit */
+  const handleSave = useCallback(async (payload, isEdit) => {
+    if (isEdit) {
+      return await updateUser(editTarget.id, payload)
+    } else {
+      return await inviteUser(payload)
+    }
+  }, [editTarget, updateUser, inviteUser])
 
   const handleRevoke = useCallback(async (userId) => {
     setRevoking(true)
@@ -359,7 +353,7 @@ export function UsersPage() {
   return (
     <div className="space-y-5 max-w-screen-xl">
 
-      {/* ── Header ── */}
+      {/* Header */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h2 className="text-lg font-bold text-[var(--color-text)]">Usuários</h2>
@@ -370,9 +364,9 @@ export function UsersPage() {
         <div className="flex items-center gap-2 flex-wrap">
           {!isLoading && (
             <div className="hidden sm:flex items-center gap-2">
-              <StatChip icon={Users}     label="Total"      value={stats.total}   color="bg-sky-50    text-sky-600    dark:bg-sky-950    dark:text-sky-400"    />
-              <StatChip icon={UserCheck} label="Ativos"     value={stats.active}  color="bg-green-50  text-green-600  dark:bg-green-950  dark:text-green-400"  />
-              <StatChip icon={Clock}     label="Aguardando" value={stats.invited} color="bg-amber-50  text-amber-600  dark:bg-amber-950  dark:text-amber-400"  />
+              <StatChip icon={Users}     label="Total"      value={stats.total}   color="bg-sky-50   text-sky-600   dark:bg-sky-950   dark:text-sky-400"   />
+              <StatChip icon={UserCheck} label="Ativos"     value={stats.active}  color="bg-green-50 text-green-600 dark:bg-green-950 dark:text-green-400" />
+              <StatChip icon={Clock}     label="Aguardando" value={stats.invited} color="bg-amber-50 text-amber-600 dark:bg-amber-950 dark:text-amber-400" />
             </div>
           )}
           <button
@@ -382,13 +376,13 @@ export function UsersPage() {
           >
             <RefreshCw size={16} className={isLoading ? 'animate-spin' : ''} />
           </button>
-          <Button size="sm" onClick={() => setInviteOpen(true)}>
+          <Button size="sm" onClick={openCreate}>
             <UserPlus size={15} /> Convidar
           </Button>
         </div>
       </div>
 
-      {/* ── Toast reenvio ── */}
+      {/* Toast reenvio */}
       {resendDone && (
         <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-green-50 dark:bg-green-950 border border-green-200 dark:border-green-800 text-sm text-green-700 dark:text-green-300">
           <Mail size={14} className="shrink-0" />
@@ -396,7 +390,7 @@ export function UsersPage() {
         </div>
       )}
 
-      {/* ── Tabela / Cards ── */}
+      {/* Tabela / Cards */}
       {isLoading ? (
         <TableSkeleton />
       ) : (
@@ -417,7 +411,7 @@ export function UsersPage() {
                     <UserRow
                       key={u.id}
                       user={u}
-                      onChangeRole={updateRole}
+                      onEdit={openEdit}
                       onRevoke={setRevokeTarget}
                       onReactivate={reactivate}
                       onResend={handleResend}
@@ -430,11 +424,11 @@ export function UsersPage() {
 
           {/* Mobile */}
           <Card className="md:hidden p-0 overflow-hidden">
-            {users.map(u => (
+            {sortedUsers.map(u => (
               <UserCard
                 key={u.id}
                 user={u}
-                onChangeRole={updateRole}
+                onEdit={openEdit}
                 onRevoke={setRevokeTarget}
                 onReactivate={reactivate}
                 onResend={handleResend}
@@ -444,7 +438,7 @@ export function UsersPage() {
         </>
       )}
 
-      {/* ── Matriz de permissões (collapsible) ── */}
+      {/* Matriz */}
       <div>
         <button
           onClick={() => setShowMatrix(p => !p)}
@@ -457,15 +451,16 @@ export function UsersPage() {
         {showMatrix && <PermissionsMatrix />}
       </div>
 
-      {/* ── Modal convite ── */}
+      {/* Modal criar/editar */}
       <InviteModal
-        open={inviteOpen}
-        onClose={() => setInviteOpen(false)}
+        open={modalOpen}
+        onClose={closeModal}
+        user={editTarget}
         customers={customers ?? []}
-        onInvite={async () => { refetch(); setInviteOpen(false) }}
+        onSave={handleSave}
       />
 
-      {/* ── Modal confirm revogar ── */}
+      {/* Modal confirm revogar */}
       <Modal open={Boolean(revokeTarget)} onOpenChange={v => !v && setRevokeTarget(null)}>
         <Modal.Content title="Revogar acesso" size="sm">
           <div className="py-2 space-y-3">

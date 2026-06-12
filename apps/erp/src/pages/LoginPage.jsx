@@ -2,6 +2,8 @@
  * pages/LoginPage.jsx
  * Tela de login mobile-first.
  *
+ * Aceita login (username) OU e-mail no mesmo campo identificador.
+ *
  * Features:
  *   - Logo do tenant (via CSS var --tenant-logo ou fallback Aura)
  *   - Validação client-side + server-side errors mapeados por campo
@@ -15,7 +17,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { useAuth }    from '../auth/AuthContext.jsx'
 import { Button }     from '@aura/ui'
-import { Input }      from '@aura/ui'
+import { Input, PasswordInput } from '@aura/ui'
 import { useTranslation } from '@aura/i18n'
 
 /* ─── Animação do card ─── */
@@ -33,19 +35,18 @@ export function LoginPage() {
   const navigate                 = useNavigate()
   const [searchParams]           = useSearchParams()
 
-  const [email,    setEmail]    = useState('')
-  const [password, setPassword] = useState('')
-  const [errors,   setErrors]   = useState({})     // { email?, password?, general? }
-  const [loading,  setLoading]  = useState(false)
+  const [identifier, setIdentifier] = useState('')
+  const [password,   setPassword]   = useState('')
+  const [errors,     setErrors]     = useState({})
+  const [loading,    setLoading]    = useState(false)
 
   const redirectTo = searchParams.get('from') ?? '/dashboard'
 
   /* ─── Validação client-side ─── */
   function validate() {
     const e = {}
-    if (!email)                    e.email    = t('errors.required')
-    else if (!/\S+@\S+\.\S+/.test(email)) e.email = t('errors.invalidEmail')
-    if (!password)                 e.password = t('errors.required')
+    if (!identifier.trim()) e.identifier = t('errors.required', 'Campo obrigatório')
+    if (!password)          e.password   = t('errors.required', 'Campo obrigatório')
     return e
   }
 
@@ -62,14 +63,16 @@ export function LoginPage() {
 
     setLoading(true)
     try {
-      await login(email, password)
+      await login(identifier.trim(), password)
       navigate(redirectTo, { replace: true })
     } catch (err) {
-      // Mapear erros de campo do servidor
       if (err.fields) {
-        setErrors(err.fields)
+        // Backend pode mandar fields.identifier ou fields.email — unifica
+        const f = { ...err.fields }
+        if (f.email && !f.identifier) f.identifier = f.email
+        setErrors(f)
       } else {
-        setErrors({ general: err.message ?? t('errors.generic') })
+        setErrors({ general: err.message ?? t('errors.generic', 'Erro ao entrar.') })
       }
     } finally {
       setLoading(false)
@@ -87,18 +90,13 @@ export function LoginPage() {
         animate="visible"
         className="w-full max-w-sm"
       >
-        {/* Card */}
         <div className="rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg)] shadow-[var(--shadow-md)] overflow-hidden">
-
-          {/* Barra de cor primária no topo */}
           <div className="h-1 bg-[var(--color-primary)]" />
 
           <div className="px-8 pt-8 pb-10 flex flex-col gap-6">
 
-            {/* Logo / nome do tenant */}
             <TenantBrand />
 
-            {/* Título */}
             <div className="text-center">
               <h1 className="text-xl font-semibold text-[var(--color-text)]">
                 {t('auth.welcomeBack')}
@@ -108,7 +106,6 @@ export function LoginPage() {
               </p>
             </div>
 
-            {/* Erro geral */}
             {errors.general && (
               <motion.div
                 initial={{ opacity: 0, y: -8 }}
@@ -120,24 +117,22 @@ export function LoginPage() {
               </motion.div>
             )}
 
-            {/* Formulário */}
             <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-4">
               <Input
-                label={t('auth.email')}
-                type="email"
+                label={t('auth.loginOrEmail', 'Login ou e-mail')}
+                type="text"
                 inputMode="email"
-                autoComplete="email"
+                autoComplete="username"
                 autoFocus
-                placeholder={t('auth.emailPlaceholder')}
-                value={email}
-                onChange={e => setEmail(e.target.value)}
-                error={errors.email}
+                placeholder={t('auth.loginOrEmailPlaceholder', 'seu login ou e-mail')}
+                value={identifier}
+                onChange={e => setIdentifier(e.target.value)}
+                error={errors.identifier}
                 disabled={isSubmitting}
               />
 
-              <Input
+              <PasswordInput
                 label={t('auth.password')}
-                type="password"
                 autoComplete="current-password"
                 placeholder={t('auth.passwordPlaceholder')}
                 value={password}
@@ -146,12 +141,11 @@ export function LoginPage() {
                 disabled={isSubmitting}
               />
 
-              {/* Esqueci senha */}
               <div className="flex justify-end -mt-1">
                 <button
                   type="button"
+                  onClick={() => navigate('/forgot-password')}
                   className="text-xs text-[var(--color-primary)] hover:underline focus:outline-none focus-visible:underline"
-                  tabIndex={0}
                 >
                   {t('auth.forgotPassword')}
                 </button>
@@ -174,7 +168,6 @@ export function LoginPage() {
           </div>
         </div>
 
-        {/* Rodapé discreto */}
         <p className="mt-6 text-center text-xs text-[var(--color-text-disabled)]">
           Aura Platform · Powered by{' '}
           <span className="text-[var(--color-primary)]">Aura Cloud</span>
@@ -186,8 +179,6 @@ export function LoginPage() {
 
 /* ─── Logo / nome do tenant ─── */
 function TenantBrand() {
-  // Em produção: tenant.logo_url vem do ThemeProvider ou de uma prop
-  // Por enquanto usa CSS var injetada pelo ThemeProvider
   const logoUrl = getComputedStyle(document.documentElement)
     .getPropertyValue('--tenant-logo-url')
     .trim()
@@ -205,7 +196,6 @@ function TenantBrand() {
     )
   }
 
-  // Fallback: wordmark Aura
   return (
     <div className="flex justify-center">
       <div className="flex items-center gap-2">
