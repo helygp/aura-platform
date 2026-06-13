@@ -8,6 +8,7 @@
  *   skus        : SKUs filtrados e paginados
  *   total / totalPages / isLoading / error
  *   filters / setFilters / page / setPage
+ *   attrFacets  : { atributo: [valores distintos ordenados] }
  *   stats       : { total, ok, low, zero }
  *   refetch     : fn
  *   addMovement : (skuId, { type, qty, reason }) => Promise
@@ -17,8 +18,12 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useAuth } from '../../auth/AuthContext.jsx'
 import { stockStatus } from './inventoryTypes.js'
+import { compareSize, compareColor } from './sortPresets.js'
 
 const PAGE_SIZE = 15
+
+/* Ordem preferida das facetas (Cor antes de Tamanho, depois alfabético). */
+const FACET_PREF_ORDER = ['cor', 'color', 'estampa', 'tamanho', 'size', 'tam']
 
 /* ─── authFetch com Bearer token (mesmo padrão dos outros hooks) ─── */
 function authFetch(url, opts = {}) {
@@ -41,7 +46,7 @@ export function useInventory() {
   const [movBySkuId, setMovBySkuId] = useState({})
   const [isLoading,  setIsLoading]  = useState(true)
   const [error,      setError]      = useState(null)
-  const [filters,    setFiltersRaw] = useState({ search: '', status: 'all', category: '' })
+  const [filters,    setFiltersRaw] = useState({ search: '', status: 'all', category: '', attrs: {} })
   const [page,       setPage]       = useState(1)
 
   /* ─── Busca lista de SKUs da API ─── */
@@ -63,6 +68,35 @@ export function useInventory() {
 
   useEffect(() => { if (user) fetchAll() }, [fetchAll, user])
 
+  /* ─── Facetas de atributo (Cor, Tamanho, …) derivadas dos SKUs ─── */
+  const attrFacets = useMemo(() => {
+    const map = {} // key -> Set de valores
+    for (const s of allSkus) {
+      const a = s.attributes ?? {}
+      for (const k of Object.keys(a)) {
+        const v = a[k]
+        if (v == null || String(v).trim() === '') continue
+        ;(map[k] ??= new Set()).add(String(v))
+      }
+    }
+    const orderedKeys = Object.keys(map).sort((a, b) => {
+      const ia = FACET_PREF_ORDER.indexOf(a.toLowerCase())
+      const ib = FACET_PREF_ORDER.indexOf(b.toLowerCase())
+      if (ia !== -1 && ib !== -1) return ia - ib
+      if (ia !== -1) return -1
+      if (ib !== -1) return 1
+      return a.localeCompare(b, 'pt-BR')
+    })
+    const out = {}
+    for (const k of orderedKeys) {
+      const vals = [...map[k]]
+      const isSize = /tamanho|size|tam/i.test(k)
+      vals.sort(isSize ? compareSize : compareColor)
+      out[k] = vals
+    }
+    return out
+  }, [allSkus])
+
   /* ─── Filtros client-side ─── */
   const filtered = useMemo(() => {
     let list = allSkus
@@ -77,6 +111,16 @@ export function useInventory() {
     if (filters.category) list = list.filter(s =>
       (s.category ?? s.productCategory ?? '').toLowerCase() === filters.category.toLowerCase()
     )
+    // Facetas: AND entre atributos, OR dentro do mesmo atributo
+    const attrKeys = Object.keys(filters.attrs ?? {})
+    if (attrKeys.length) list = list.filter(s => {
+      const a = s.attributes ?? {}
+      return attrKeys.every(k => {
+        const sel = filters.attrs[k]
+        if (!sel || !sel.length) return true
+        return sel.includes(String(a[k]))
+      })
+    })
     if (filters.status === 'critico') {
       list = list.filter(s => {
         const st = s.stockStatus ?? stockStatus(s)
@@ -159,6 +203,7 @@ export function useInventory() {
     error,
     filters,
     setFilters,
+    attrFacets,
     page,
     setPage,
     refetch: fetchAll,

@@ -5,7 +5,7 @@
  *
  * Layout:
  *   1. Summary bar — totais por status (ok/baixo/zerado)
- *   2. Filtros — busca + filtro de status
+ *   2. Filtros — busca + categoria + facetas de atributo + status
  *   3. Tabela de SKUs com status visual, alertas, botão de movimentação
  *   4. Paginação
  *   5. MovementModal — nova movimentação
@@ -25,7 +25,7 @@ import { useLocation } from 'react-router-dom'
 import {
   Search, RefreshCw, AlertTriangle, CheckCircle2,
   ArrowDownToLine, History, ChevronLeft, ChevronRight,
-  X, Package, ChevronUp, ChevronDown,
+  X, Package, ChevronUp, ChevronDown, Check,
   ChevronsUpDown,
 } from 'lucide-react'
 import { Card, Badge, Skeleton } from '@aura/ui'
@@ -173,6 +173,67 @@ function SummaryCard({ label, value, icon: Icon, color }) {
   )
 }
 
+/* ─── Faceta de atributo (multi-select com chips) ─── */
+function AttrFacet({ label, values, selected, onToggle, onClear }) {
+  const [open, setOpen] = useState(false)
+  const count = selected.length
+  return (
+    <div className="relative shrink-0">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className={[
+          'h-9 px-3 rounded-lg text-sm font-medium transition-colors whitespace-nowrap inline-flex items-center gap-1.5',
+          count > 0
+            ? 'bg-[var(--color-primary)] text-white'
+            : 'bg-[var(--color-bg-subtle)] border border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)]',
+        ].join(' ')}
+      >
+        {label}
+        {count > 0 && (
+          <span className="text-[10px] font-bold bg-white/25 px-1.5 rounded-full">{count}</span>
+        )}
+        <ChevronDown size={13} className={open ? 'rotate-180 transition-transform' : 'transition-transform'} />
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute z-50 mt-1 left-0 w-48 max-h-72 overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] shadow-lg p-1">
+            {count > 0 && (
+              <button
+                type="button"
+                onClick={onClear}
+                className="w-full text-left px-2 py-1.5 mb-0.5 text-xs text-[var(--color-text-muted)] hover:text-red-500 rounded-lg transition-colors"
+              >
+                Limpar {label}
+              </button>
+            )}
+            {values.map(v => {
+              const checked = selected.includes(v)
+              return (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => onToggle(v)}
+                  className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm text-[var(--color-text)] hover:bg-[var(--color-bg-subtle)] transition-colors text-left"
+                >
+                  <span className={[
+                    'w-4 h-4 rounded border flex items-center justify-center shrink-0',
+                    checked ? 'bg-[var(--color-primary)] border-[var(--color-primary)]' : 'border-[var(--color-border)]',
+                  ].join(' ')}>
+                    {checked && <Check size={11} className="text-white" />}
+                  </span>
+                  <span className="truncate">{v}</span>
+                </button>
+              )
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 /* ─── Paginação ─── */
 function Pagination({ page, totalPages, onPage, total, pageSize }) {
   if (totalPages <= 1) return null
@@ -231,7 +292,7 @@ function SortableTh({ col, sortKey, sortDir, onSort }) {
 export function InventoryPage() {
   const {
     skus, total, totalPages, isLoading,
-    filters, setFilters, page, setPage,
+    filters, setFilters, attrFacets, page, setPage,
     refetch, addMovement, getMovements, fetchMovements,
     stats, PAGE_SIZE,
   } = useInventory()
@@ -281,7 +342,25 @@ export function InventoryPage() {
     await addMovement(skuId, data)
   }, [addMovement])
 
-  const hasActiveFilters = filters.search || filters.status !== 'all' || filters.category
+  /* Toggle de um valor de faceta (OR dentro do atributo) */
+  const toggleAttr = useCallback((key, value) => {
+    const cur  = filters.attrs?.[key] ?? []
+    const next = cur.includes(value) ? cur.filter(x => x !== value) : [...cur, value]
+    const attrs = { ...(filters.attrs ?? {}) }
+    if (next.length) attrs[key] = next; else delete attrs[key]
+    setFilters({ attrs })
+  }, [filters.attrs, setFilters])
+
+  const clearAttr = useCallback((key) => {
+    const attrs = { ...(filters.attrs ?? {}) }
+    delete attrs[key]
+    setFilters({ attrs })
+  }, [filters.attrs, setFilters])
+
+  const attrCount = Object.values(filters.attrs ?? {}).reduce((a, arr) => a + (arr?.length ?? 0), 0)
+  const hasActiveFilters = filters.search || filters.status !== 'all' || filters.category || attrCount > 0
+
+  const clearAll = () => setFilters({ search: '', status: 'all', category: '', attrs: {} })
 
   return (
     <div className="space-y-5 max-w-screen-xl">
@@ -370,6 +449,21 @@ export function InventoryPage() {
             </select>
           )}
 
+          {/* Facetas de atributo (Cor, Tamanho, …) */}
+          {Object.entries(attrFacets ?? {}).map(([key, values]) => (
+            <AttrFacet
+              key={key}
+              label={key}
+              values={values}
+              selected={filters.attrs?.[key] ?? []}
+              onToggle={(v) => toggleAttr(key, v)}
+              onClear={() => clearAttr(key)}
+            />
+          ))}
+
+          {/* Separador visual */}
+          <div className="hidden md:block w-px h-6 bg-[var(--color-border)] mx-1" />
+
           {[
             { value: 'all',     label: 'Todos' },
             { value: 'ok',      label: 'Em estoque' },
@@ -399,7 +493,7 @@ export function InventoryPage() {
 
           {hasActiveFilters && (
             <button
-              onClick={() => setFilters({ search: '', status: 'all', category: '' })}
+              onClick={clearAll}
               className="h-9 w-9 flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950 transition-colors"
             >
               <X size={14} />
@@ -416,7 +510,7 @@ export function InventoryPage() {
           <Package size={32} className="text-[var(--color-text-disabled)]" />
           <p className="font-semibold text-[var(--color-text)]">Nenhum SKU encontrado</p>
           {hasActiveFilters && (
-            <button onClick={() => setFilters({ search: '', status: 'all', category: '' })} className="text-sm text-[var(--color-primary)] hover:underline">
+            <button onClick={clearAll} className="text-sm text-[var(--color-primary)] hover:underline">
               Limpar filtros
             </button>
           )}
