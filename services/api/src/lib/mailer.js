@@ -287,3 +287,87 @@ Equipe Aura`
 
   return sendEmail(to, { subject, text, html })
 }
+
+/**
+ * Envia credenciais de novo usuário (criado via /invite) com senha temporária.
+ * O usuário será forçado a trocar a senha no primeiro login.
+ *
+ * @param {object} opts
+ * @param {string} opts.to            e-mail destinatário
+ * @param {string} opts.name          nome do usuário
+ * @param {string} opts.login         login de acesso
+ * @param {string} opts.tempPassword  senha temporária gerada
+ * @param {string} opts.erpUrl        URL do ERP
+ */
+export async function sendNewUserCredentialsEmail({ to, name, login, tempPassword, erpUrl }) {
+  const subject = '🔐 Sua conta Aura foi criada — acesse e troque a senha'
+
+  const text = `Olá, ${name}!
+
+Uma conta de acesso foi criada para você na Aura Platform.
+
+CREDENCIAIS DE ACESSO
+─────────────────────────────────
+  Endereço:  ${erpUrl}
+  Login:     ${login}
+  Senha:     ${tempPassword}
+
+⚠️  Esta é uma senha temporária. No primeiro acesso o sistema vai pedir que você defina uma nova senha.
+
+Se você não esperava este e-mail, ignore-o.
+
+Equipe Aura`
+
+  const html = `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  body { font-family: Inter, -apple-system, sans-serif; background: #f8fafc; margin: 0; padding: 0; }
+  .wrap { max-width: 540px; margin: 40px auto; background: #fff; border-radius: 12px; border: 1px solid #e2e8f0; overflow: hidden; }
+  .bar  { height: 4px; background: linear-gradient(90deg, #0284C7, #0EA5E9); }
+  .head { padding: 32px 32px 0; }
+  .logo { font-size: 20px; font-weight: 700; color: #0284C7; letter-spacing: -0.5px; }
+  .body { padding: 24px 32px 32px; }
+  h1    { margin: 0 0 8px; font-size: 22px; color: #0f172a; font-weight: 700; }
+  .sub  { margin: 0 0 24px; color: #64748b; font-size: 14px; line-height: 1.6; }
+  .card { background: #f1f5f9; border-radius: 8px; padding: 16px 20px; margin: 20px 0; }
+  .card-title { font-size: 11px; font-weight: 600; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; margin: 0 0 10px; }
+  .row  { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid #e2e8f0; }
+  .row:last-child { border-bottom: none; }
+  .row-label { font-size: 13px; color: #64748b; }
+  .row-value { font-size: 13px; color: #0f172a; font-weight: 600; }
+  .mono { font-family: monospace; background: #e2e8f0; padding: 2px 8px; border-radius: 4px; }
+  .btn  { display: inline-block; background: #0284C7; color: #fff !important; text-decoration: none; padding: 14px 28px; border-radius: 8px; font-size: 15px; font-weight: 600; margin-top: 8px; }
+  .warn { background: #fef9c3; border: 1px solid #fde047; border-radius: 8px; padding: 12px 16px; font-size: 13px; color: #713f12; margin: 20px 0; }
+  .foot { padding: 16px 32px; background: #f8fafc; border-top: 1px solid #e2e8f0; font-size: 12px; color: #94a3b8; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="bar"></div>
+  <div class="head"><div class="logo">Aura Platform</div></div>
+  <div class="body">
+    <h1>🔐 Sua conta foi criada, ${name}!</h1>
+    <p class="sub">Uma conta de acesso foi criada para você. Use as credenciais abaixo para o primeiro acesso.</p>
+
+    <div class="card">
+      <div class="card-title">Credenciais de acesso</div>
+      <div class="row"><span class="row-label">Login</span><span class="row-value">${login}</span></div>
+      <div class="row"><span class="row-label">Senha temporária</span><span class="row-value mono">${tempPassword}</span></div>
+    </div>
+
+    <a href="${erpUrl}" class="btn">Acessar o sistema</a>
+
+    <div class="warn">⚠️ Esta senha é <strong>temporária</strong>. No primeiro acesso o sistema vai pedir que você defina uma nova senha.</div>
+
+    <p style="margin:24px 0 0;font-size:13px;color:#64748b;line-height:1.6;">Se você não esperava este e-mail, pode ignorá-lo.<br><br><strong>Equipe Aura</strong></p>
+  </div>
+  <div class="foot">Aura Platform · aurabr.app · Mensagem automática</div>
+</div>
+</body>
+</html>`
+
+  return sendEmail(to, { subject, text, html })
+}

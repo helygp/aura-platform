@@ -43,7 +43,7 @@ export async function authenticate(req, res, next) {
       where:  { tokenId: payload.sub },
       select: {
         id:true, tokenId:true, tenantId:true, email:true, name:true,
-        role:true, roles:true, login:true, active:true,
+        role:true, roles:true, login:true, active:true, mustChangePassword:true,
         tenant: { select: { slug:true } },
       },
     })
@@ -77,6 +77,7 @@ export async function authenticate(req, res, next) {
       email:      user.email,
       login:      user.login,
       name:       user.name,
+      mustChangePassword: user.mustChangePassword ?? false,
     }
 
     next()

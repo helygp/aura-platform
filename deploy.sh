@@ -7,6 +7,7 @@ export PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 BRANCH=${1:-staging}
 REPO_DIR="/home/helygp/projetos/aura-platform"
 LOG="/tmp/deploy-${BRANCH}.log"
+[ -f "$REPO_DIR/.credentials/smtp.env" ] && . "$REPO_DIR/.credentials/smtp.env"
 
 echo "[$(date)] === Deploy iniciado — branch: $BRANCH ===" | tee $LOG
 
@@ -55,12 +56,13 @@ if [ "$BRANCH" = "staging" ]; then
     -e MASTER_SECRET="e04f913bd51a8cb66e5b0c6d37487ba3d0249237fa6fd3900c2b6c9194d8c49e" \
     -e PAGARME_API_KEY="b518a03b-2140-4042-9d13-334607390d29" \
     -e PAGARME_WEBHOOK_SECRET="aura_webhook_2024" \
-    -e SMTP_HOST="mail.aurabr.app" -e SMTP_PORT="587" \
-    -e SMTP_USER="noreply@aurabr.app" -e SMTP_PASS="" \
+    -e SMTP_HOST="${SMTP_HOST:-stalwart-mail}" -e SMTP_PORT="${SMTP_PORT:-465}" -e SMTP_SECURE="${SMTP_SECURE:-true}" \
+    -e SMTP_USER="${SMTP_USER:-noreply@aurabr.app}" -e SMTP_PASS="${SMTP_PASS}" \
     -e TRIAL_DAYS="14" -e WAHA_URL="" -e WAHA_API_KEY="" -e WAHA_SESSION="default" \
     -e PROVISION_AGENT_URL="http://provision-agent:4001" \
     -e AGENT_SECRET="aura-provision-secret-2024" \
     -l "traefik.enable=true" \
+    -l "traefik.docker.network=prod_default" \
     -l "traefik.http.routers.api-staging.rule=Host(\`api.staging.aurabr.app\`)" \
     -l "traefik.http.routers.api-staging.tls.certresolver=mytlschallenge" \
     -l "traefik.http.routers.api-staging.entrypoints=websecure" \
@@ -96,13 +98,14 @@ elif [ "$BRANCH" = "main" ]; then
       -e MASTER_SECRET="e04f913bd51a8cb66e5b0c6d37487ba3d0249237fa6fd3900c2b6c9194d8c49e" \
       -e PAGARME_API_KEY="b518a03b-2140-4042-9d13-334607390d29" \
       -e PAGARME_WEBHOOK_SECRET="aura_webhook_2024" \
-      -e SMTP_HOST="mail.aurabr.app" -e SMTP_PORT="587" \
-      -e SMTP_USER="noreply@aurabr.app" -e SMTP_PASS="" \
+      -e SMTP_HOST="${SMTP_HOST:-stalwart-mail}" -e SMTP_PORT="${SMTP_PORT:-465}" -e SMTP_SECURE="${SMTP_SECURE:-true}" \
+      -e SMTP_USER="${SMTP_USER:-noreply@aurabr.app}" -e SMTP_PASS="${SMTP_PASS}" \
       -e TRIAL_DAYS="14" \
       -e WAHA_URL="$WAHA_URL" -e WAHA_API_KEY="$WAHA_KEY" -e WAHA_SESSION="default" \
       -e PROVISION_AGENT_URL="http://provision-agent:4001" \
       -e AGENT_SECRET="aura-provision-secret-2024" \
       -l "traefik.enable=true" \
+    -l "traefik.docker.network=prod_default" \
       -l "traefik.http.routers.api-${SLUG}.rule=Host(\`api.${SLUG}.aurabr.app\`)" \
       -l "traefik.http.routers.api-${SLUG}.tls.certresolver=mytlschallenge" \
       -l "traefik.http.routers.api-${SLUG}.entrypoints=websecure" \

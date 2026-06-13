@@ -22,6 +22,7 @@ import { randomUUID } from 'crypto'
 import { authenticate } from '../middleware/authenticate.js'
 import { authorize }    from '../middleware/authorize.js'
 import { prismaMaster as prisma } from '../lib/prisma-master.js'
+import { sendNewUserCredentialsEmail } from '../lib/mailer.js'
 
 export const usersRouter = Router()
 usersRouter.use(authenticate)
@@ -152,6 +153,7 @@ usersRouter.post('/invite', authorize('admin'), async (req, res) => {
         email:        email.toLowerCase().trim(),
         name:         name.trim(),
         passwordHash: hash,
+        mustChangePassword: !password,
         role:         pickPrimary(rolesUpper),  // legacy: maior nível
         roles:        rolesUpper,
         active:       true,
@@ -159,6 +161,15 @@ usersRouter.post('/invite', authorize('admin'), async (req, res) => {
         customerIds:  Array.isArray(customerIds) ? customerIds : [],
       },
     })
+
+    // Envia credenciais por e-mail quando a senha foi gerada automaticamente
+    if (!password) {
+      const erpUrl = `https://${tenant.slug}.aurabr.app`
+      sendNewUserCredentialsEmail({
+        to: user.email, name: user.name, login: user.login,
+        tempPassword: finalPass, erpUrl,
+      }).catch(e => console.error('[users/invite] mail error', e.message))
+    }
 
     res.status(201).json({
       ok: true,
@@ -201,7 +212,7 @@ usersRouter.put('/me/password', async (req, res) => {
     if (!ok) return res.status(401).json({ error: 'Senha atual incorreta.' })
 
     const hash = await bcrypt.hash(newPassword, 10)
-    await prisma.user.update({ where: { id: user.id }, data: { passwordHash: hash, updatedAt: new Date() } })
+    await prisma.user.update({ where: { id: user.id }, data: { passwordHash: hash, mustChangePassword: false, updatedAt: new Date() } })
     res.json({ ok: true })
   } catch (err) {
     res.status(500).json({ error: 'Erro interno.' })

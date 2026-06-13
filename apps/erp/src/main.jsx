@@ -38,6 +38,7 @@ import { WhatsappPage }   from './pages/whatsapp/WhatsappPage.jsx'
 import { SettingsPage }   from './pages/settings/SettingsPage.jsx'
 import { UsersPage }      from './pages/users/UsersPage.jsx'
 import { ProfilePage }    from './pages/ProfilePage.jsx'
+import { ForcePasswordChangePage } from './pages/ForcePasswordChangePage.jsx'
 import { BillingPage }    from './pages/billing/BillingPage.jsx'
 import { ReportsPage }    from './pages/reports/ReportsPage.jsx'
 import { ReceivablesPage }  from './pages/receivables/ReceivablesPage.jsx'
@@ -63,6 +64,7 @@ function App() {
       {/* ── Painel tela cheia (sem AppLayout) ── */}
       <Route element={<ProtectedRoute />}>
         <Route path="/stock-panel" element={<StockPanelPage />} />
+        <Route path="/change-password" element={<ForcePasswordChangePage />} />
       </Route>
 
       {/* ── Rotas protegidas com AppLayout ── */}

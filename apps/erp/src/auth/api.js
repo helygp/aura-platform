@@ -88,3 +88,11 @@ export async function apiCancelSubscription() {
 export async function apiListPlans() {
   return api('/onboarding/plans')
 }
+
+/* ── Troca de senha do próprio usuário (usado na troca forçada) ── */
+export async function apiChangeMyPassword({ currentPassword, newPassword }) {
+  return api('/api/users/me/password', {
+    method: 'PUT',
+    body:   JSON.stringify({ currentPassword, newPassword }),
+  })
+}

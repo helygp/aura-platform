@@ -107,6 +107,14 @@ export function AuthProvider({ children }) {
     return userRoles.some(r => want.includes(r))
   }, [user])
 
+  /* ─── refreshAuth() ─── recarrega o user via /auth/me (DB fresco) */
+  const refreshAuth = useCallback(async () => {
+    try {
+      const data = await apiMe()
+      setUser(normalizeUser(data.auth))
+    } catch { /* mantém estado atual */ }
+  }, [])
+
   const value = useMemo(() => ({
     user,
     isAuthenticated: Boolean(user),
@@ -114,7 +122,8 @@ export function AuthProvider({ children }) {
     login,
     logout,
     hasRole,
-  }), [user, isLoading, login, logout, hasRole])
+    refreshAuth,
+  }), [user, isLoading, login, logout, hasRole, refreshAuth])
 
   return (
     <AuthContext.Provider value={value}>

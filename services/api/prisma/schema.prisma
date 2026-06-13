@@ -84,6 +84,7 @@ model User {
   email           String
   name            String
   passwordHash    String    @map("password_hash")
+  mustChangePassword Boolean @default(false) @map("must_change_password")
   role            UserRole  @default(OPERADOR)
   roles           String[]  @default([])
   active          Boolean   @default(true)

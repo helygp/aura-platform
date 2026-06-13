@@ -45,6 +45,7 @@ function publicUser(user) {
     role:       user.role,    // singular legacy
     roles:      dbRoles,      // novo array
     tenantSlug: user.tenant?.slug ?? user.tenantSlug,
+    mustChangePassword: user.mustChangePassword ?? false,
   }
 }
 
