@@ -30,7 +30,7 @@ import { ForgotPasswordPage } from './pages/ForgotPasswordPage.jsx'
 import { ResetPasswordPage }  from './pages/ResetPasswordPage.jsx'
 import { DashboardPage }  from './pages/DashboardPage.jsx'
 import { ProductsPage }       from './pages/products/ProductsPage.jsx'
-import { ProductDetailPage }   from './pages/products/ProductDetailPage.jsx'
+// [em desuso] import { ProductDetailPage }   from './pages/products/ProductDetailPage.jsx'
 import { InventoryPage }  from './pages/inventory/InventoryPage.jsx'
 import { OrdersPage }     from './pages/orders/OrdersPage.jsx'
 import { CustomersPage }  from './pages/customers/CustomersPage.jsx'
@@ -77,7 +77,7 @@ function App() {
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/orders"    element={<OrdersPage />} />
           <Route path="/products"      element={<ProductsPage />} />
-          <Route path="/products/:id"  element={<ProductDetailPage />} />
+          <Route path="/products/:id"  element={<Navigate to="/products" replace />} />
           <Route path="/customers" element={<CustomersPage />} />
           <Route path="/profile"   element={<ProfilePage />} />
 
