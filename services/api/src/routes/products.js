@@ -18,7 +18,13 @@ import { query, getClient } from '../lib/tenantDb.js'
 /* Normaliza valor BRL: aceita "32,90" e "32.90" → 32.9 */
 function parseBRL(v) {
   if (v == null || v === '') return 0;
-  const s = String(v).trim().replace(/\./g, '').replace(',', '.');
+  if (typeof v === 'number') return isNaN(v) ? 0 : v;
+  let s = String(v).trim();
+  const hasComma = s.includes(',');
+  const hasDot   = s.includes('.');
+  if (hasComma && hasDot) s = s.replace(/\./g, '').replace(',', '.'); // "1.234,56"
+  else if (hasComma)      s = s.replace(',', '.');                    // "11,50"
+  // só ponto ou nada → já é decimal válido → "11.5"
   const n = parseFloat(s);
   return isNaN(n) ? 0 : n;
 }
