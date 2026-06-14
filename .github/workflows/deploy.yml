@@ -6,8 +6,7 @@ on:
       - staging
       - main
 
-# Um deploy por vez no VPS: staging e main NUNCA conectam no SSH ao mesmo tempo
-# (era a causa de runs simultaneos derrubarem a porta 22 na Hostinger).
+# Um deploy por vez no VPS (evita corrida de recursos)
 concurrency:
   group: deploy-vps
   cancel-in-progress: false
@@ -15,72 +14,25 @@ concurrency:
 jobs:
   deploy:
     name: Deploy ${{ github.ref_name }}
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, aura-vps]
 
     steps:
-      - name: Deploy via SSH (tentativa 1)
-        id: d1
-        continue-on-error: true
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: 31.97.151.162
-          username: root
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: 22
-          timeout: 120s
-          command_timeout: 20m
-          script: |
-            cd /home/helygp/projetos/aura-platform
-            git fetch origin
-            git checkout ${{ github.ref_name }}
-            git reset --hard origin/${{ github.ref_name }}
-            bash /home/helygp/projetos/aura-platform/deploy.sh ${{ github.ref_name }}
+      - name: Deploy local (sem SSH)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          export PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+          REPO_DIR=/home/helygp/projetos/aura-platform
 
-      - name: Espera antes da tentativa 2
-        if: steps.d1.outcome == 'failure'
-        run: sleep 30
+          # Credencial de git EFEMERA (token do job, escopo do repo, expira ao fim):
+          # fica no HOME do container do runner, nunca no .git/config do repo do host.
+          git config --global --add safe.directory "$REPO_DIR"
+          git config --global url."https://x-access-token:${GH_TOKEN}@github.com/".insteadOf "https://github.com/"
 
-      - name: Deploy via SSH (tentativa 2)
-        id: d2
-        if: steps.d1.outcome == 'failure'
-        continue-on-error: true
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: 31.97.151.162
-          username: root
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: 22
-          timeout: 120s
-          command_timeout: 20m
-          script: |
-            cd /home/helygp/projetos/aura-platform
-            git fetch origin
-            git checkout ${{ github.ref_name }}
-            git reset --hard origin/${{ github.ref_name }}
-            bash /home/helygp/projetos/aura-platform/deploy.sh ${{ github.ref_name }}
-
-      - name: Espera antes da tentativa 3
-        if: steps.d1.outcome == 'failure' && steps.d2.outcome == 'failure'
-        run: sleep 60
-
-      - name: Deploy via SSH (tentativa 3 - final)
-        id: d3
-        if: steps.d1.outcome == 'failure' && steps.d2.outcome == 'failure'
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: 31.97.151.162
-          username: root
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: 22
-          timeout: 120s
-          command_timeout: 20m
-          script: |
-            cd /home/helygp/projetos/aura-platform
-            git fetch origin
-            git checkout ${{ github.ref_name }}
-            git reset --hard origin/${{ github.ref_name }}
-            bash /home/helygp/projetos/aura-platform/deploy.sh ${{ github.ref_name }}
+          # deploy.sh ja faz git fetch/checkout/reset + build + deploy
+          bash "$REPO_DIR/deploy.sh" "${{ github.ref_name }}"
 
       - name: Status
         if: always()
-        run: echo "Deploy ${{ github.ref_name }} -- ${{ job.status }}"
+        run: echo "Deploy ${{ github.ref_name }} -- ${{ job.status }} (self-hosted)"
