@@ -6,7 +6,9 @@ export PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 
 BRANCH=${1:-staging}
 REPO_DIR="/home/helygp/projetos/aura-platform"
-LOG="/tmp/deploy-${BRANCH}.log"
+DEPLOY_LOG_DIR="${DEPLOY_LOG_DIR:-/tmp}"
+mkdir -p "$DEPLOY_LOG_DIR" 2>/dev/null || DEPLOY_LOG_DIR=/tmp
+LOG="$DEPLOY_LOG_DIR/deploy-${BRANCH}.log"
 [ -f "$REPO_DIR/.credentials/smtp.env" ] && . "$REPO_DIR/.credentials/smtp.env"
 
 echo "[$(date)] === Deploy iniciado — branch: $BRANCH ===" | tee $LOG
