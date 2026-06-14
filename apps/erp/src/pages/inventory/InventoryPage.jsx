@@ -449,58 +449,56 @@ export function InventoryPage() {
             )}
           </div>
 
-          {/* Linha 2 — filtros de atributo */}
-          {(availableCategories.length > 0 || Object.keys(attrFacets ?? {}).length > 0) && (
-            <div className="flex gap-2 flex-wrap items-center">
-              {availableCategories.length > 0 && (
-                <select
-                  value={filters.category ?? ''}
-                  onChange={e => setFilters({ category: e.target.value })}
-                  className="h-9 px-3 rounded-lg text-sm bg-[var(--color-bg-subtle)] border border-[var(--color-border)] text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] shrink-0"
-                >
-                  <option value="">Todas as categorias</option>
-                  {availableCategories.map(cat => (
-                    <option key={cat} value={cat}>{cat}</option>
-                  ))}
-                </select>
-              )}
+          {/* Linha 2 — atributos + estado do estoque (mesma linha) */}
+          <div className="flex gap-2 flex-wrap items-center">
+            {availableCategories.length > 0 && (
+              <select
+                value={filters.category ?? ''}
+                onChange={e => setFilters({ category: e.target.value })}
+                className="h-9 px-3 rounded-lg text-sm bg-[var(--color-bg-subtle)] border border-[var(--color-border)] text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] shrink-0"
+              >
+                <option value="">Todas as categorias</option>
+                {availableCategories.map(cat => (
+                  <option key={cat} value={cat}>{cat}</option>
+                ))}
+              </select>
+            )}
 
-              {/* Facetas de atributo (Cor, Tamanho, …) */}
-              {Object.entries(attrFacets ?? {}).map(([key, values]) => (
-                <AttrFacet
-                  key={key}
-                  label={key}
-                  values={values}
-                  selected={filters.attrs?.[key] ?? []}
-                  onToggle={(v) => toggleAttr(key, v)}
-                  onClear={() => clearAttr(key)}
-                />
-              ))}
+            {/* Facetas de atributo (Cor, Tamanho, …) */}
+            {Object.entries(attrFacets ?? {}).map(([key, values]) => (
+              <AttrFacet
+                key={key}
+                label={key}
+                values={values}
+                selected={filters.attrs?.[key] ?? []}
+                onToggle={(v) => toggleAttr(key, v)}
+                onClear={() => clearAttr(key)}
+              />
+            ))}
+
+            {/* estado do estoque — família junta, nunca quebra */}
+            <div className="flex gap-2 overflow-x-auto">
+              {[
+                { value: 'all',     label: 'Todos' },
+                { value: 'ok',      label: 'Em estoque' },
+                { value: 'critico', label: '\u26a0 Cr\u00edtico', warn: true },
+                { value: 'baixo',   label: 'Baixo' },
+                { value: 'zerado',  label: 'Zerado' },
+              ].map(({ value, label, warn }) => {
+                const active = filters.status === value
+                const cls = [
+                  'h-9 px-3 rounded-lg text-sm font-medium transition-colors whitespace-nowrap',
+                  active
+                    ? (warn ? 'bg-amber-500 text-white' : 'bg-[var(--color-primary)] text-white')
+                    : 'bg-[var(--color-bg-subtle)] border border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)]',
+                ].join(' ')
+                return (
+                  <button key={value} onClick={() => setFilters({ status: value })} className={cls}>
+                    {label}
+                  </button>
+                )
+              })}
             </div>
-          )}
-
-          {/* Linha 3 — estado do estoque (família junta; rola no mobile, nunca quebra) */}
-          <div className="flex gap-2 overflow-x-auto py-0.5 -mx-0.5 px-0.5">
-            {[
-              { value: 'all',     label: 'Todos' },
-              { value: 'ok',      label: 'Em estoque' },
-              { value: 'critico', label: '\u26a0 Cr\u00edtico', warn: true },
-              { value: 'baixo',   label: 'Baixo' },
-              { value: 'zerado',  label: 'Zerado' },
-            ].map(({ value, label, warn }) => {
-              const active = filters.status === value
-              const cls = [
-                'h-9 px-3 rounded-lg text-sm font-medium transition-colors whitespace-nowrap',
-                active
-                  ? (warn ? 'bg-amber-500 text-white' : 'bg-[var(--color-primary)] text-white')
-                  : 'bg-[var(--color-bg-subtle)] border border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)]',
-              ].join(' ')
-              return (
-                <button key={value} onClick={() => setFilters({ status: value })} className={cls}>
-                  {label}
-                </button>
-              )
-            })}
           </div>
         </div>
       </Card>
