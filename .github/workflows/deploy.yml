@@ -43,15 +43,9 @@ jobs:
           if [ "$DEPLOY_STATUS" = "success" ]; then ICON="✅"; PAL="OK"; else ICON="❌"; PAL="FALHOU"; fi
           if [ "$REF" = "main" ]; then AMB="PRODUÇÃO"; else AMB="staging"; fi
           LINE1=$(printf '%s' "$COMMIT_MSG" | head -1)
-          TXT="$ICON Deploy $AMB $PAL
-Branch: $REF
-$LINE1
-$RUN_URL"
+          TXT=$(printf '%s\n%s\n%s\n%s' "$ICON Deploy $AMB $PAL" "Branch: $REF" "$LINE1" "$RUN_URL")
           TXT_ESC=$(printf '%s' "$TXT" | sed 's/\\/\\\\/g; s/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
-          curl -s -m 20 -X POST "$WAHA_URL/api/sendText" \
-            -H "X-Api-Key: $WAHA_API_KEY" -H "Content-Type: application/json" \
-            -d "{\"session\":\"$WAHA_SESSION\",\"chatId\":\"$NOTIFY_CHAT_ID\",\"text\":\"$TXT_ESC\"}" \
-            >/dev/null && echo "notify enviado" || echo "notify falhou (ignorado)"
+          curl -s -m 20 -X POST "$WAHA_URL/api/sendText" -H "X-Api-Key: $WAHA_API_KEY" -H "Content-Type: application/json" -d "{\"session\":\"$WAHA_SESSION\",\"chatId\":\"$NOTIFY_CHAT_ID\",\"text\":\"$TXT_ESC\"}" >/dev/null && echo "notify enviado" || echo "notify falhou (ignorado)"
 
       - name: Status
         if: always()
