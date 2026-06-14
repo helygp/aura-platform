@@ -15,7 +15,8 @@
  */
 
 import { useSortable } from '../../hooks/useSortable.js'
-import React, { useState, useCallback } from 'react'
+import React, { useState, useCallback, useRef, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import {
   UserPlus, RefreshCw, MoreVertical, ShieldCheck, Pencil,
   Mail, Ban, RotateCcw, ChevronDown,
@@ -26,6 +27,7 @@ import { Card, Skeleton, Button, Modal } from '@aura/ui'
 import { InviteModal }       from './components/InviteModal.jsx'
 import { PermissionsMatrix } from './components/PermissionsMatrix.jsx'
 import { useUsers }          from './useUsers.js'
+import { useAuth }           from '../../auth/AuthContext.jsx'
 import {
   ROLES, ROLE_LIST, USER_STATUS, STATUS_META, fmtDate, userRoles,
 } from './usersTypes.js'
@@ -115,16 +117,40 @@ function StatusBadge({ status }) {
 function ActionsMenu({ user, onEdit, onRevoke, onReactivate, onResend }) {
   const [open,    setOpen]    = useState(false)
   const [loading, setLoading] = useState(null)
+  const [coords,  setCoords]  = useState(null)
+  const btnRef = useRef(null)
 
   const act = async (fn, key) => {
     setLoading(key); setOpen(false)
     try { await fn() } finally { setLoading(null) }
   }
 
+  const toggle = (e) => {
+    e.stopPropagation()
+    if (open) { setOpen(false); return }
+    const r = btnRef.current?.getBoundingClientRect()
+    if (r) setCoords({ top: r.bottom + 4, right: window.innerWidth - r.right })
+    setOpen(true)
+  }
+
+  /* Menu em portal (position:fixed) p/ escapar do overflow do grid.
+     Fecha ao rolar/redimensionar pra nao desalinhar. */
+  useEffect(() => {
+    if (!open) return
+    const close = () => setOpen(false)
+    window.addEventListener('scroll', close, true)
+    window.addEventListener('resize', close)
+    return () => {
+      window.removeEventListener('scroll', close, true)
+      window.removeEventListener('resize', close)
+    }
+  }, [open])
+
   return (
     <div className="relative">
       <button
-        onClick={() => setOpen(p => !p)}
+        ref={btnRef}
+        onClick={toggle}
         disabled={Boolean(loading)}
         className="w-8 h-8 flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface)] disabled:opacity-40 transition-colors"
         aria-label="Ações"
@@ -134,10 +160,14 @@ function ActionsMenu({ user, onEdit, onRevoke, onReactivate, onResend }) {
           : <MoreVertical size={15} />
         }
       </button>
-      {open && (
+      {open && coords && createPortal(
         <>
-          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-full mt-1 z-20 w-44 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] shadow-[var(--shadow-md)] overflow-hidden py-1">
+          <div className="fixed inset-0 z-[60]" onClick={() => setOpen(false)} />
+          <div
+            className="fixed z-[61] w-44 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] shadow-[var(--shadow-md)] overflow-hidden py-1"
+            style={{ top: coords.top, right: coords.right }}
+            onClick={(e) => e.stopPropagation()}
+          >
 
             <button
               onClick={() => { setOpen(false); onEdit() }}
@@ -177,19 +207,23 @@ function ActionsMenu({ user, onEdit, onRevoke, onReactivate, onResend }) {
               )
             )}
           </div>
-        </>
+        </>,
+        document.body
       )}
     </div>
   )
 }
 
 /* ─── Linha tabela ─── */
-function UserRow({ user, onEdit, onRevoke, onReactivate, onResend }) {
+function UserRow({ user, onEdit, onRevoke, onReactivate, onResend, isAdmin }) {
   const initial = (user.name ?? user.email).charAt(0).toUpperCase()
   const isRevoked = user.status === USER_STATUS.REVOKED
 
   return (
-    <tr className={`border-b border-[var(--color-border)] transition-colors hover:bg-[var(--color-bg-subtle)] ${isRevoked ? 'opacity-50' : ''}`}>
+    <tr
+      onClick={isAdmin ? () => onEdit(user) : undefined}
+      className={`border-b border-[var(--color-border)] transition-colors hover:bg-[var(--color-bg-subtle)] ${isRevoked ? 'opacity-50' : ''} ${isAdmin ? 'cursor-pointer' : ''}`}
+    >
       <td className="px-4 py-3">
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 rounded-full flex items-center justify-center shrink-0 text-sm font-bold text-white"
@@ -224,7 +258,7 @@ function UserRow({ user, onEdit, onRevoke, onReactivate, onResend }) {
           {user.lastLogin ? fmtDate(user.lastLogin) : '—'}
         </span>
       </td>
-      <td className="px-4 py-3">
+      <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
         <ActionsMenu
           user={user}
           onEdit={() => onEdit(user)}
@@ -317,6 +351,8 @@ export function UsersPage() {
     stats,
   } = useUsers()
   const { sorted: sortedUsers, sortKey: uSortKey, sortDir: uSortDir, handleSort: uHandleSort } = useSortable(users, 'name')
+  const { hasRole } = useAuth()
+  const isAdmin = hasRole('admin')
 
   const [modalOpen,    setModalOpen]    = useState(false)
   const [editTarget,   setEditTarget]   = useState(null)   // null = modo criar
@@ -415,6 +451,7 @@ export function UsersPage() {
                       onRevoke={setRevokeTarget}
                       onReactivate={reactivate}
                       onResend={handleResend}
+                      isAdmin={isAdmin}
                     />
                   ))}
                 </tbody>
