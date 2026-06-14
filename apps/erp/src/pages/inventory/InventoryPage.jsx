@@ -418,87 +418,90 @@ export function InventoryPage() {
 
       {/* ── Filtros ── */}
       <Card className="p-3">
-        <div className="flex gap-2 flex-wrap">
-          <div className="flex-1 min-w-[180px] relative">
-            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)] pointer-events-none" />
-            <input
-              type="text"
-              placeholder="Buscar por SKU, produto ou atributo (Preto, GG, 38…)"
-              value={filters.search}
-              onChange={e => setFilters({ search: e.target.value })}
-              className="
-                w-full h-9 pl-8 pr-3 rounded-lg text-sm
-                bg-[var(--color-bg-subtle)] border border-[var(--color-border)]
-                text-[var(--color-text)] placeholder:text-[var(--color-text-disabled)]
-                focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]
-                focus:bg-[var(--color-bg)]
-              "
-            />
+        <div className="flex flex-col gap-2">
+
+          {/* Linha 1 — busca + ordenação */}
+          <div className="flex gap-2 items-center">
+            <div className="flex-1 min-w-[180px] relative">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)] pointer-events-none" />
+              <input
+                type="text"
+                placeholder="Buscar por SKU, produto ou atributo (Preto, GG, 38…)"
+                value={filters.search}
+                onChange={e => setFilters({ search: e.target.value })}
+                className="
+                  w-full h-9 pl-8 pr-3 rounded-lg text-sm
+                  bg-[var(--color-bg-subtle)] border border-[var(--color-border)]
+                  text-[var(--color-text)] placeholder:text-[var(--color-text-disabled)]
+                  focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]
+                  focus:bg-[var(--color-bg)]
+                "
+              />
+            </div>
+            <SortPicker value={sortPreset} onChange={onChangePreset} />
+            {hasActiveFilters && (
+              <button
+                onClick={clearAll}
+                className="h-9 w-9 flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950 transition-colors"
+              >
+                <X size={14} />
+              </button>
+            )}
           </div>
 
-          {availableCategories.length > 0 && (
-            <select
-              value={filters.category ?? ''}
-              onChange={e => setFilters({ category: e.target.value })}
-              className="h-9 px-3 rounded-lg text-sm bg-[var(--color-bg-subtle)] border border-[var(--color-border)] text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] shrink-0"
-            >
-              <option value="">Todas as categorias</option>
-              {availableCategories.map(cat => (
-                <option key={cat} value={cat}>{cat}</option>
+          {/* Linha 2 — filtros de atributo */}
+          {(availableCategories.length > 0 || Object.keys(attrFacets ?? {}).length > 0) && (
+            <div className="flex gap-2 flex-wrap items-center">
+              {availableCategories.length > 0 && (
+                <select
+                  value={filters.category ?? ''}
+                  onChange={e => setFilters({ category: e.target.value })}
+                  className="h-9 px-3 rounded-lg text-sm bg-[var(--color-bg-subtle)] border border-[var(--color-border)] text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] shrink-0"
+                >
+                  <option value="">Todas as categorias</option>
+                  {availableCategories.map(cat => (
+                    <option key={cat} value={cat}>{cat}</option>
+                  ))}
+                </select>
+              )}
+
+              {/* Facetas de atributo (Cor, Tamanho, …) */}
+              {Object.entries(attrFacets ?? {}).map(([key, values]) => (
+                <AttrFacet
+                  key={key}
+                  label={key}
+                  values={values}
+                  selected={filters.attrs?.[key] ?? []}
+                  onToggle={(v) => toggleAttr(key, v)}
+                  onClear={() => clearAttr(key)}
+                />
               ))}
-            </select>
+            </div>
           )}
 
-          {/* Facetas de atributo (Cor, Tamanho, …) */}
-          {Object.entries(attrFacets ?? {}).map(([key, values]) => (
-            <AttrFacet
-              key={key}
-              label={key}
-              values={values}
-              selected={filters.attrs?.[key] ?? []}
-              onToggle={(v) => toggleAttr(key, v)}
-              onClear={() => clearAttr(key)}
-            />
-          ))}
-
-          {/* Separador visual */}
-          <div className="hidden md:block w-px h-6 bg-[var(--color-border)] mx-1" />
-
-          {[
-            { value: 'all',     label: 'Todos' },
-            { value: 'ok',      label: 'Em estoque' },
-            { value: 'critico', label: '\u26a0 Cr\u00edtico', warn: true },
-            { value: 'baixo',   label: 'Baixo' },
-            { value: 'zerado',  label: 'Zerado' },
-          ].map(({ value, label, warn }) => {
-            const active = filters.status === value
-            const cls = [
-              'h-9 px-3 rounded-lg text-sm font-medium transition-colors whitespace-nowrap',
-              active
-                ? (warn ? 'bg-amber-500 text-white' : 'bg-[var(--color-primary)] text-white')
-                : 'bg-[var(--color-bg-subtle)] border border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)]',
-            ].join(' ')
-            return (
-              <button key={value} onClick={() => setFilters({ status: value })} className={cls}>
-                {label}
-              </button>
-            )
-          })}
-
-          {/* Separador visual */}
-          <div className="hidden md:block w-px h-6 bg-[var(--color-border)] mx-1" />
-
-          {/* Picker de ordenação */}
-          <SortPicker value={sortPreset} onChange={onChangePreset} />
-
-          {hasActiveFilters && (
-            <button
-              onClick={clearAll}
-              className="h-9 w-9 flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950 transition-colors"
-            >
-              <X size={14} />
-            </button>
-          )}
+          {/* Linha 3 — estado do estoque (família junta; rola no mobile, nunca quebra) */}
+          <div className="flex gap-2 overflow-x-auto py-0.5 -mx-0.5 px-0.5">
+            {[
+              { value: 'all',     label: 'Todos' },
+              { value: 'ok',      label: 'Em estoque' },
+              { value: 'critico', label: '\u26a0 Cr\u00edtico', warn: true },
+              { value: 'baixo',   label: 'Baixo' },
+              { value: 'zerado',  label: 'Zerado' },
+            ].map(({ value, label, warn }) => {
+              const active = filters.status === value
+              const cls = [
+                'h-9 px-3 rounded-lg text-sm font-medium transition-colors whitespace-nowrap',
+                active
+                  ? (warn ? 'bg-amber-500 text-white' : 'bg-[var(--color-primary)] text-white')
+                  : 'bg-[var(--color-bg-subtle)] border border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)]',
+              ].join(' ')
+              return (
+                <button key={value} onClick={() => setFilters({ status: value })} className={cls}>
+                  {label}
+                </button>
+              )
+            })}
+          </div>
         </div>
       </Card>
 
