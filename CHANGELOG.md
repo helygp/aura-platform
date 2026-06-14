@@ -1,3 +1,7 @@
+## [unreleased] - 2026-06-14
+- fix(erp): menu de acoes da listagem de usuarios nao recorta mais (portal) + clique-na-linha p/ admin (#11)
+- ci: pipeline de deploy resiliente (concurrency + retry)
+
 # Changelog
 
 Todas as mudanças notáveis neste projeto serão documentadas aqui.
