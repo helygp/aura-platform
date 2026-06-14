@@ -23,17 +23,35 @@ jobs:
         run: |
           set -e
           export PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
-          # Log do deploy no host (fora do git), exportado explicitamente p/ o deploy.sh
           export DEPLOY_LOG_DIR=/home/helygp/projetos/deploy-logs
           REPO_DIR=/home/helygp/projetos/aura-platform
-
-          # Credencial de git EFEMERA (token do job, escopo do repo, expira ao fim):
-          # fica no HOME do container do runner, nunca no .git/config do repo do host.
           git config --global --add safe.directory "$REPO_DIR"
           git config --global url."https://x-access-token:${GH_TOKEN}@github.com/".insteadOf "https://github.com/"
-
-          # deploy.sh ja faz git fetch/checkout/reset + build + deploy
           bash "$REPO_DIR/deploy.sh" "${{ github.ref_name }}"
+
+      - name: Notificar WhatsApp
+        if: always()
+        env:
+          DEPLOY_STATUS: ${{ job.status }}
+          REF: ${{ github.ref_name }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          CFG=/home/helygp/projetos/.deploy-notify.env
+          [ -f "$CFG" ] || { echo "sem config de notify; pulando"; exit 0; }
+          . "$CFG"
+          if [ "$DEPLOY_STATUS" = "success" ]; then ICON="✅"; PAL="OK"; else ICON="❌"; PAL="FALHOU"; fi
+          if [ "$REF" = "main" ]; then AMB="PRODUÇÃO"; else AMB="staging"; fi
+          LINE1=$(printf '%s' "$COMMIT_MSG" | head -1)
+          TXT="$ICON Deploy $AMB $PAL
+Branch: $REF
+$LINE1
+$RUN_URL"
+          TXT_ESC=$(printf '%s' "$TXT" | sed 's/\\/\\\\/g; s/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
+          curl -s -m 20 -X POST "$WAHA_URL/api/sendText" \
+            -H "X-Api-Key: $WAHA_API_KEY" -H "Content-Type: application/json" \
+            -d "{\"session\":\"$WAHA_SESSION\",\"chatId\":\"$NOTIFY_CHAT_ID\",\"text\":\"$TXT_ESC\"}" \
+            >/dev/null && echo "notify enviado" || echo "notify falhou (ignorado)"
 
       - name: Status
         if: always()
