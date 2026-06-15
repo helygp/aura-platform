@@ -189,6 +189,9 @@ ordersRouter.post('/', authorize('admin','operador'), async (req, res) => {
     }
 
     await client.query('COMMIT')
+
+    // Ticket #49: limpa rascunho do usuario apos criacao bem-sucedida
+    try { await client.query('DELETE FROM order_drafts WHERE user_id = $1', [req.user.id]) } catch (_) { /* best-effort */ }
     res.status(201).json({ id: order.id, message: 'Pedido criado.', total, paymentMethod: pm })
 
     dispatch(req.tenantSlug ?? process.env.TENANT_SLUG, 'order.created', {
