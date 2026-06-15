@@ -46,6 +46,7 @@ function parseCommit(message) {
 const CAT = { feat: "Adicionado", fix: "Corrigido", perf: "Performance", refactor: "Alterado", revert: "Revertido" };
 const ICON = { feat: "\u2728", fix: "\uD83D\uDC1B", perf: "\u26A1", refactor: "\u267B\uFE0F", revert: "\u21A9\uFE0F" };
 const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
+const IGNORE_SCOPES = new Set(["ci", "build", "deps", "release", "chore", "infra", "deploy"]);
 
 (async () => {
   if (!TOKEN) throw new Error("GH_TOKEN ausente");
@@ -63,17 +64,13 @@ const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
   if (base) { const cmp = await gh("GET", `/repos/${REPO}/compare/${base}...${BRANCH}`); commits = cmp.commits || []; }
   else { commits = (await gh("GET", `/repos/${REPO}/commits?sha=${BRANCH}&per_page=100`)).reverse(); }
   const parsed = commits.map(c => ({ sha: c.sha.slice(0,7), ...parseCommit(c.commit.message) }));
+  const eff = parsed.filter(c => !(c.scope && IGNORE_SCOPES.has(c.scope)));
 
-  // 3. nivel de bump
+  // 3. nivel de bump (ignora escopos de infra)
   let level = null;
-  for (const c of parsed) {
-    if (c.breaking) { level = "major"; break; }
-    if (c.type === "feat") level = level === "minor" ? level : (level || "minor");
-    else if ((c.type === "fix" || c.type === "perf") && !level) level = "patch";
-  }
-  // major tem prioridade mesmo se ja achou outro
-  if (parsed.some(c => c.breaking)) level = "major";
-  else if (parsed.some(c => c.type === "feat")) level = level === "patch" ? "minor" : (level || "minor");
+  if (eff.some(c => c.breaking)) level = "major";
+  else if (eff.some(c => c.type === "feat")) level = "minor";
+  else if (eff.some(c => c.type === "fix" || c.type === "perf")) level = "patch";
 
   if (!level) {
     console.log(`# Nenhum commit feat/fix/perf/breaking desde ${base}. Commits analisados: ${parsed.length}.`);
@@ -90,7 +87,7 @@ const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
 
   // 4. monta secao CHANGELOG.md
   const groups = {};
-  for (const c of parsed) { const cat = CAT[c.type]; if (!cat) continue;
+  for (const c of eff) { const cat = CAT[c.type]; if (!cat) continue;
     (groups[cat] = groups[cat] || []).push(`- ${c.scope ? `**${c.scope}:** ` : ""}${cap(c.desc)} (${c.sha})`); }
   let mdSection = `## [${version}] \u2014 ${today}\n\n`;
   for (const cat of ["Adicionado","Alterado","Corrigido","Performance","Revertido"]) {
@@ -101,7 +98,7 @@ const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
   let highlights = [];
   if (bufFile && bufFile.text.trim()) { try { highlights = JSON.parse(bufFile.text); } catch (e) {} }
   if (!Array.isArray(highlights) || highlights.length === 0) {
-    highlights = parsed.filter(c => c.type === "feat" || c.type === "fix")
+    highlights = eff.filter(c => c.type === "feat" || c.type === "fix")
       .map(c => ({ icon: ICON[c.type] || "\u2022", text: cap(c.desc) }));
     if (highlights.length === 0) highlights = [{ icon: "\uD83D\uDD27", text: `Melhorias internas (v${version})` }];
   }
