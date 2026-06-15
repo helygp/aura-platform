@@ -1,6 +1,8 @@
 /**
  * pages/orders/components/OrderForm.jsx
  *
+ * Ticket #49: autosave de rascunho em banco (server-first + localStorage fallback).
+ *
  * Novo conceito (T5.1): dois painéis lado a lado.
  *   Esquerda: catálogo de produtos com busca — cards expansíveis por produto
  *             mostrando SKUs inline com estoque + stepper de quantidade.
@@ -15,9 +17,10 @@
  *   skus     : array  — fallback plano
  */
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react'
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useAuth } from '../../../auth/AuthContext.jsx'
-import { Search, Trash2, RefreshCw, ChevronDown, ChevronUp, ShoppingCart, Package, X } from 'lucide-react'
+import { useOrderDraft } from '../useOrderDraft.js'
+import { Search, Trash2, RefreshCw, ChevronDown, ChevronUp, ShoppingCart, Package, X, Save, Cloud, CloudOff, AlertTriangle } from 'lucide-react'
 import { Modal, Button } from '@aura/ui'
 import { ORDER_CHANNEL, fmtBRL, calcOrderTotals } from '../ordersTypes.js'
 
@@ -142,35 +145,126 @@ function CartItem({ item, onRemove, onQtyChange }) {
   )
 }
 
+/* ─── Indicador de status do rascunho ─── */
+function DraftStatus({ status, lastSavedAt }) {
+  if (status === 'saving')
+    return <span className="inline-flex items-center gap-1 text-[10px] text-blue-500"><RefreshCw size={10} className="animate-spin" /> Salvando…</span>
+  if (status === 'saved' && lastSavedAt)
+    return <span className="inline-flex items-center gap-1 text-[10px] text-green-600"><Cloud size={10} /> Salvo {lastSavedAt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span>
+  if (status === 'offline')
+    return <span className="inline-flex items-center gap-1 text-[10px] text-amber-500"><CloudOff size={10} /> Salvo localmente</span>
+  return null
+}
+
+/* ─── Banner de retomar rascunho ─── */
+function DraftBanner({ draft, onResume, onDiscard }) {
+  const when = draft?.updatedAt ? new Date(draft.updatedAt) : null
+  const timeStr = when
+    ? when.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+    : ''
+  return (
+    <div className="flex items-center gap-3 p-3 rounded-xl border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30">
+      <AlertTriangle size={16} className="text-amber-500 shrink-0" />
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium text-[var(--color-text)]">Pedido em andamento encontrado</p>
+        <p className="text-[11px] text-[var(--color-text-muted)]">
+          {draft.items?.length ?? 0} item{(draft.items?.length ?? 0) !== 1 ? 's' : ''}
+          {draft.customerName ? ` · ${draft.customerName}` : ''}
+          {timeStr ? ` · ${timeStr}` : ''}
+        </p>
+      </div>
+      <button type="button" onClick={onDiscard}
+        className="h-7 px-3 rounded-lg text-xs font-medium border border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-red-300 hover:text-red-500 transition-colors">
+        Descartar
+      </button>
+      <Button size="sm" onClick={onResume}>Retomar</Button>
+    </div>
+  )
+}
+
 /* ─── Form principal ─── */
 const EMPTY_FORM = { customerId: '', customerName: '', customerWhatsapp: '', channel: ORDER_CHANNEL.MANUAL, notes: '' }
 
 export function OrderForm({ open, onClose, onSave, customers = [], skus = [], products = [] }) {
   const { user } = useAuth()
-  const [form,    setForm]    = useState(EMPTY_FORM)
-  const [items,   setItems]   = useState([])         // carrinho: [{skuId, skuCode, productName, attributes, qty, priceUnit}]
-  const [qtys,    setQtys]    = useState({})          // skuId → qty no catálogo
-  const [search,  setSearch]  = useState('')
-  const [saving,  setSaving]  = useState(false)
-  const [errors,  setErrors]  = useState({})
+  const { draft: serverDraft, status: draftStatus, lastSavedAt, load: loadDraft, save: saveDraft, discard: discardDraft, clearLocal } = useOrderDraft()
 
+  const [form,        setForm]        = useState(EMPTY_FORM)
+  const [items,       setItems]       = useState([])         // carrinho
+  const [qtys,        setQtys]        = useState({})          // skuId → qty no catálogo
+  const [search,      setSearch]      = useState('')
+  const [saving,      setSaving]      = useState(false)
+  const [errors,      setErrors]      = useState({})
+  const [showBanner,  setShowBanner]  = useState(false)      // banner "Retomar?"
+  const [pendingDraft, setPendingDraft] = useState(null)      // draft pendente de decisão
+
+  // Flag: já tem conteúdo no form (pra saber quando autosave faz sentido)
+  const hasContent = items.length > 0 || form.customerId
+
+  /* ── Ao abrir o modal: carrega draft do servidor ── */
   useEffect(() => {
-    if (open) {
+    if (!open) return
+    let cancelled = false
+
+    async function init() {
+      // Reset estado visual
+      setForm(EMPTY_FORM)
+      setItems([])
+      setQtys({})
+      setErrors({})
+      setSearch('')
+      setShowBanner(false)
+      setPendingDraft(null)
+
+      // Tenta preselect do cliente se user vinculado a 1 só
       const linkedIds = user?.customerIds ?? []
-      let preselect = EMPTY_FORM
       if (linkedIds.length === 1) {
         const cust = customers.find(c => c.id === linkedIds[0])
-        if (cust) preselect = { ...EMPTY_FORM, customerId: cust.id, customerName: cust.name, customerWhatsapp: cust.whatsapp ?? '' }
+        if (cust) setForm({ ...EMPTY_FORM, customerId: cust.id, customerName: cust.name, customerWhatsapp: cust.whatsapp ?? '' })
       }
-      setForm(preselect)
-      setItems([]); setQtys({}); setErrors({}); setSearch('')
+
+      // Carrega draft
+      const draft = await loadDraft()
+      if (cancelled) return
+      if (draft && (draft.items?.length > 0 || draft.customerId)) {
+        setPendingDraft(draft)
+        setShowBanner(true)
+      }
     }
-  }, [open, user, customers])
+    init()
+    return () => { cancelled = true }
+  }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* ── Retomar draft ── */
+  const handleResume = useCallback(() => {
+    if (!pendingDraft) return
+    const d = pendingDraft
+    setForm({
+      customerId:        d.customerId ?? '',
+      customerName:      d.customerName ?? '',
+      customerWhatsapp:  d.customerWhatsapp ?? '',
+      channel:           d.channel ?? ORDER_CHANNEL.MANUAL,
+      notes:             d.notes ?? '',
+    })
+    setItems(d.items ?? [])
+    // Reconstrói qtys a partir dos items do draft
+    const q = {}
+    for (const item of (d.items ?? [])) { q[item.skuId] = item.qty }
+    setQtys(q)
+    setShowBanner(false)
+    setPendingDraft(null)
+  }, [pendingDraft])
+
+  /* ── Descartar draft ── */
+  const handleDiscardDraft = useCallback(() => {
+    setShowBanner(false)
+    setPendingDraft(null)
+    discardDraft()
+  }, [discardDraft])
 
   // Normaliza produtos — garante que products[] tem a estrutura certa
   const catalog = useMemo(() => {
     if (products.length) return products
-    // fallback: reconstrói a partir de skus planos
     const map = {}
     skus.forEach(s => {
       const key = s.productName
@@ -225,6 +319,20 @@ export function OrderForm({ open, onClose, onSave, customers = [], skus = [], pr
     setQtys(prev => ({ ...prev, [skuId]: qty }))
   }
 
+  /* ── Autosave: salva rascunho no servidor a cada mudança ── */
+  const prevPayloadRef = useRef('')
+  useEffect(() => {
+    if (!open || showBanner) return   // não salva enquanto banner está ativo
+    if (!hasContent) return            // nada pra salvar
+
+    const payload = { ...form, items }
+    const serialized = JSON.stringify(payload)
+    if (serialized === prevPayloadRef.current) return  // sem mudança real
+    prevPayloadRef.current = serialized
+
+    saveDraft(payload)
+  }, [form, items, open, showBanner, hasContent, saveDraft])
+
   const { subtotal } = calcOrderTotals(items)
 
   const handleSubmit = async () => {
@@ -235,6 +343,7 @@ export function OrderForm({ open, onClose, onSave, customers = [], skus = [], pr
     setSaving(true)
     try {
       await onSave({ ...form, items })
+      clearLocal()   // backend já apagou o draft; limpa espelho local
       onClose()
     } catch (e) {
       setErrors(prev => ({ ...prev, submit: e.message || 'Erro ao criar pedido.' }))
@@ -245,6 +354,11 @@ export function OrderForm({ open, onClose, onSave, customers = [], skus = [], pr
     <Modal open={open} onOpenChange={v => !v && onClose()}>
       <Modal.Content title="Novo pedido" size="xl">
         <div className="flex flex-col gap-4 py-1">
+
+          {/* ── Banner de rascunho ── */}
+          {showBanner && pendingDraft && (
+            <DraftBanner draft={pendingDraft} onResume={handleResume} onDiscard={handleDiscardDraft} />
+          )}
 
           {/* ── Linha superior: cliente + canal ── */}
           <div className="grid grid-cols-2 gap-3">
@@ -342,13 +456,28 @@ export function OrderForm({ open, onClose, onSave, customers = [], skus = [], pr
         </div>
 
         <Modal.Footer>
-          {errors.submit && <p className="text-xs text-red-500 w-full mb-1 text-center">{errors.submit}</p>}
-          <Button variant="secondary" onClick={onClose} disabled={saving}>Cancelar</Button>
-          <Button onClick={handleSubmit} disabled={saving}>
-            {saving
-              ? <><RefreshCw size={14} className="animate-spin" /> Criando…</>
-              : `Criar pedido${items.length ? ' · ' + fmtBRL(subtotal) : ''}`}
-          </Button>
+          <div className="flex items-center gap-3 w-full">
+            {/* Status do rascunho */}
+            <DraftStatus status={draftStatus} lastSavedAt={lastSavedAt} />
+
+            {/* Descartar rascunho */}
+            {hasContent && !showBanner && (
+              <button type="button" onClick={handleDiscardDraft}
+                className="text-[10px] text-[var(--color-text-muted)] hover:text-red-500 transition-colors underline underline-offset-2">
+                Descartar rascunho
+              </button>
+            )}
+
+            <div className="flex-1" />
+
+            {errors.submit && <p className="text-xs text-red-500 text-right">{errors.submit}</p>}
+            <Button variant="secondary" onClick={onClose} disabled={saving}>Cancelar</Button>
+            <Button onClick={handleSubmit} disabled={saving}>
+              {saving
+                ? <><RefreshCw size={14} className="animate-spin" /> Criando…</>
+                : `Criar pedido${items.length ? ' · ' + fmtBRL(subtotal) : ''}`}
+            </Button>
+          </div>
         </Modal.Footer>
       </Modal.Content>
     </Modal>

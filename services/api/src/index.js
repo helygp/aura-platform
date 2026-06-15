@@ -21,6 +21,7 @@ import { productsImportRouter } from './routes/productsImport.js'
 import { productAttributesRouter }  from './routes/productAttributes.js'
 import { productCategoriesRouter }  from './routes/productCategories.js'
 import { separationSheetRouter }     from './routes/separationSheet.js'
+import { orderDraftsRouter }         from './routes/orderDrafts.js'
 import { inventoryRouter } from './routes/inventory.js'
 import { ordersRouter }    from './routes/orders.js'
 import { customersRouter } from './routes/customers.js'
@@ -183,6 +184,7 @@ app.use('/api/products/import', productsImportRouter)
 app.use('/api/product-attributes', productAttributesRouter)
 app.use('/api/product-categories', productCategoriesRouter)
 app.use('/api/orders/separation-sheet', separationSheetRouter)
+app.use('/api/orders/drafts',           orderDraftsRouter)
 app.use('/api/products',  productsRouter)
 app.use('/api/inventory', inventoryRouter)
 app.use('/api/orders',    ordersRouter)

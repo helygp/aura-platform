@@ -1,27 +1,16 @@
 /**
  * pages/orders/useOrders.js
  * Sem dados mockados — usa apenas a API real.
+ *
+ * Ticket #49: trocado helper local por auth/authFetch.js (com auto-refresh em 401).
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useAuth } from '../../auth/AuthContext.jsx'
+import { authFetch } from '../../auth/authFetch.js'
 import { ORDER_STATUS, calcOrderTotals } from './ordersTypes.js'
 
 const PAGE_SIZE = 12
-
-/* ─── Helper de fetch autenticado ─── */
-function authFetch(url, opts = {}) {
-  const token = window.__aura_mem_token__ || ''
-  return fetch(url, {
-    ...opts,
-    credentials: 'include',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { 'Authorization': 'Bearer ' + token } : {}),
-      ...(opts.headers ?? {}),
-    },
-  })
-}
 
 const NOTE_TEMPLATES = {
   [ORDER_STATUS.CONFIRMED]: 'Pedido confirmado.',
