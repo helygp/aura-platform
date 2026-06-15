@@ -68,6 +68,20 @@ const ModalContent = React.forwardRef(function ModalContent(
   { className, title, description, size = 'md', hideClose = false, children, ...props },
   ref
 ) {
+  // Separa Modal.Footer dos demais filhos para renderiza-lo FORA do body scrollavel,
+  // ancorado no fundo do modal (irmao do header e do body).
+  // Sem isso, o footer (com botoes de acao) caia dentro do body e ficava "no meio"
+  // quando o conteudo era curto, ou rolava junto quando o conteudo era longo.
+  let footer = null
+  const body = []
+  React.Children.forEach(children, (child) => {
+    if (React.isValidElement(child) && child.type?.displayName === 'Modal.Footer') {
+      footer = child
+    } else {
+      body.push(child)
+    }
+  })
+
   return (
     <Dialog.Portal>
       <ModalOverlay />
@@ -124,8 +138,11 @@ const ModalContent = React.forwardRef(function ModalContent(
 
         {/* Body */}
         <div className="px-6 py-4 flex-1 overflow-y-auto overscroll-contain">
-          {children}
+          {body}
         </div>
+
+        {/* Footer (ancorado no fundo, FORA do body scrollavel) */}
+        {footer}
       </Dialog.Content>
     </Dialog.Portal>
   )
@@ -140,8 +157,9 @@ const ModalFooter = React.forwardRef(function ModalFooter({ className, children,
         'flex items-center justify-end gap-2',
         'border-t border-[var(--color-border)]',
         'bg-[var(--color-bg-subtle)]',
-        '-mx-6 -mb-4 mt-4 px-6 py-4',
+        'px-6 py-4',
         'rounded-b-[var(--radius-lg)]',
+        'shrink-0',
         className
       )}
       {...props}
