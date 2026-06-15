@@ -20,6 +20,18 @@ e o projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ---
 
+## [1.5.0] — 2026-06-15
+
+### Adicionado
+- **inventory:** Reorganiza filtros da tela de estoque em grupos (#12) (8b59454)
+
+### Alterado
+- **inventory:** Junta filtros de atributo e estado na mesma linha (#12) (cbd679e)
+
+### Corrigido
+- **products:** Bloqueia edição de cadastro p/ perfis sem permissão e exibe feedback de erro (#13) (d861bea)
+- **cockpit:** Botão voltar do Cockpit vira Fechar (aba nova) (#13) (861b72c)
+
 ## [1.4.0] — 2026-06-15
 
 ### Alterado
