@@ -1,10 +1,10 @@
 import { useState, useCallback } from 'react'
 
-const today = () => new Date().toISOString().slice(0, 10)
-const firstOfMonth = () => {
-  const d = new Date()
-  return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().slice(0, 10)
-}
+// today/firstOfMonth em TZ local (en-CA produz YYYY-MM-DD).
+// Antes era toISOString().slice(0,10) que retorna em UTC — em SP isso
+// vira "ontem" entre 00:00–02:59 e "amanhã" entre 21:00–23:59. (ticket #48)
+const today = () => new Date().toLocaleDateString('en-CA')
+const firstOfMonth = () => today().slice(0, 8) + '01'
 
 export function useReport(endpoint) {
   const [data,    setData]    = useState(null)
