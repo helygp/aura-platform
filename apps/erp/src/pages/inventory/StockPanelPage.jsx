@@ -346,7 +346,7 @@ function Header({ products, onBack, loading, onRefresh, lastUpdate }) {
 
   return (
     <div className="hdr">
-      <button className="hdr-back" onClick={onBack} title="Voltar">←</button>
+      <button className="hdr-back" onClick={onBack} title="Fechar" aria-label="Fechar cockpit">×</button>
       <div className="brand">
         <div className={`live${loading ? ' loading' : ''}`} />
         <span>COCKPIT</span>
@@ -499,7 +499,12 @@ export function StockPanelPage() {
 
       <Header
         products={products}
-        onBack={() => navigate(-1)}
+        onBack={() => {
+          // Cockpit abre em nova aba (target="_blank"): tenta fechar a aba; se não puder, volta para Estoque.
+          window.close()
+          // Se a aba não foi aberta via script, window.close() é ignorado — fallback seguro:
+          setTimeout(() => { if (!window.closed) navigate('/inventory') }, 100)
+        }}
         loading={loading}
         onRefresh={load}
         lastUpdate={lastUpdate}
