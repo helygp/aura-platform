@@ -1,3 +1,12 @@
+- ci: validacao self-hosted runner (2026-06-14T05:19:47.410Z)
+- ci: validacao self-hosted runner (2026-06-14T05:16:44.685Z)
+- ci: validacao self-hosted runner (2026-06-14T05:08:45.521Z)
+- ci: validacao self-hosted runner (2026-06-14T05:05:36.312Z)
+- ci: validacao self-hosted runner (2026-06-14T05:00:04.951Z)
+## [unreleased] - 2026-06-14
+- fix(erp): menu de acoes da listagem de usuarios nao recorta mais (portal) + clique-na-linha p/ admin (#11)
+- ci: pipeline de deploy resiliente (concurrency + retry)
+
 # Changelog
 
 Todas as mudanças notáveis neste projeto serão documentadas aqui.
