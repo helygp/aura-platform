@@ -19,10 +19,16 @@ reportsRouter.use(authenticate)
 reportsRouter.use(authorize('admin', 'financeiro', 'estoque'))
 
 /* ── helpers ── */
+// Retorna YYYY-MM-DD na TZ America/Sao_Paulo (en-CA produz ISO).
+function todayBR() {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' })
+}
+function firstOfMonthBR() {
+  return todayBR().slice(0, 8) + '01'
+}
 function period(req) {
-  const now   = new Date()
-  const start = req.query.start || new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0,10)
-  const end   = req.query.end   || now.toISOString().slice(0,10)
+  const start = req.query.start || firstOfMonthBR()
+  const end   = req.query.end   || todayBR()
   return { start, end }
 }
 
@@ -50,7 +56,7 @@ reportsRouter.get('/sales', async (req, res) => {
       // Por dia
       query(`
         SELECT
-          created_at::date AS dia,
+          created_at::date::text AS dia,
           COUNT(*)         AS pedidos,
           COALESCE(SUM(total) FILTER (WHERE status NOT IN ('cancelado','pendente')), 0) AS faturamento
         FROM orders
@@ -177,7 +183,7 @@ reportsRouter.get('/stock-critical', async (req, res) => {
         s.stock_min - s.stock AS diferenca,
         CASE WHEN s.stock = 0 THEN 'zerado' ELSE 'baixo' END AS status,
         (
-          SELECT MAX(o.created_at)::date
+          SELECT MAX(o.created_at)::date::text
           FROM order_items oi
           JOIN orders o ON o.id = oi.order_id
           WHERE oi.sku_id = s.id AND o.status NOT IN ('cancelado','pendente')
@@ -205,7 +211,7 @@ reportsRouter.get('/stock-idle', async (req, res) => {
         s.attributes  AS atributos,
         s.stock       AS estoque_atual,
         s.stock * s.price_wholesale AS valor_parado,
-        last_sale.ultima_venda,
+        last_sale.ultima_venda::text AS ultima_venda,
         CASE
           WHEN last_sale.ultima_venda IS NULL THEN 9999
           ELSE CURRENT_DATE - last_sale.ultima_venda
@@ -239,7 +245,7 @@ reportsRouter.get('/movements', async (req, res) => {
 
     const { rows } = await query(`
       SELECT
-        sm.created_at::date AS data,
+        sm.created_at::date::text AS data,
         sm.created_at       AS data_hora,
         p.name              AS produto,
         s.code              AS sku,
