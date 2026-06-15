@@ -11,6 +11,11 @@ e o projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ---
 
+## [1.4.0] — 2026-06-15
+
+### Alterado
+- **Estoque (ERP):** filtros da tela reorganizados em duas linhas para reduzir poluição visual (`apps/erp/src/pages/inventory/InventoryPage.jsx`). Ref. AuraSuporte #42 / issue #12.
+
 ## [1.3.0] — 2026-06-12
 
 ### Adicionado
