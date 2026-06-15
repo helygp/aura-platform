@@ -20,6 +20,13 @@ e o projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ---
 
+## [1.5.2] — 2026-06-15
+
+### Corrigido
+- **reports:** Datas off-by-one por timezone UTC (#16) — reports.js (9c6ddc5)
+- **reports:** Datas off-by-one por timezone UTC (#16) — useReports.js (1229051)
+- **reports:** Datas off-by-one por timezone UTC (#16) — ReportsPage.jsx (a14d1ed)
+
 ## [1.5.1] — 2026-06-15
 
 ### Corrigido
