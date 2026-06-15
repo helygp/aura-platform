@@ -20,6 +20,11 @@ e o projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ---
 
+## [1.5.1] — 2026-06-15
+
+### Corrigido
+- **ui/Modal:** Renderizar Modal.Footer fora do body scrollavel (#15) (4eb6e80)
+
 ## [1.5.0] — 2026-06-15
 
 ### Adicionado
