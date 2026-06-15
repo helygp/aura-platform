@@ -26,6 +26,8 @@ import { exportCSV, exportPDF }           from './exportUtils.js'
 const R$ = v => new Intl.NumberFormat('pt-BR', { style:'currency', currency:'BRL' }).format(+v||0)
 const N  = v => new Intl.NumberFormat('pt-BR').format(+v||0)
 // T3.3 — formatador de data robusto: nunca retorna "Invalid Date"
+// Ticket #48: também trata "YYYY-MM-DDT00:00:00.000Z" (driver pg serializa
+// colunas ::date assim) extraindo só a parte da data, evitando off-by-one.
 const D  = v => {
   if (v == null || v === '' || v === 'Invalid Date') return '—'
   try {
@@ -33,8 +35,11 @@ const D  = v => {
     if (typeof v === 'number')   d = new Date(v)
     else if (v instanceof Date)  d = v
     else {
-      const s = String(v).trim()
-      // apenas data (YYYY-MM-DD) → adiciona meio-dia UTC para evitar off-by-one de timezone
+      let s = String(v).trim()
+      // string ISO com hora 00:00 UTC = data-pura serializada pelo pg driver → trata como YYYY-MM-DD
+      const isoMidnightUTC = s.match(/^(\d{4}-\d{2}-\d{2})T00:00:00(?:\.0+)?Z$/)
+      if (isoMidnightUTC) s = isoMidnightUTC[1]
+      // YYYY-MM-DD → meio-dia LOCAL para evitar off-by-one de timezone
       d = /^\d{4}-\d{2}-\d{2}$/.test(s) ? new Date(s + 'T12:00:00') : new Date(s)
     }
     if (isNaN(d.getTime())) return '—'
