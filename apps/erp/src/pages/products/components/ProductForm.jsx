@@ -21,7 +21,7 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Upload, X, RefreshCw, Info, ChevronDown, Search, Plus } from 'lucide-react'
+import { Upload, X, RefreshCw, Info, ChevronDown, Search, Plus, Lock } from 'lucide-react'
 import { Button, Input, Badge } from '@aura/ui'
 import { AttributeBuilder, loadAttrDefs } from './AttributeBuilder.jsx'
 import { SkuGrid }           from './SkuGrid.jsx'
@@ -29,6 +29,7 @@ import {
   PRODUCT_TYPES, DEFAULT_CATEGORIES,
   generateSkus, validateSimpleProduct, validateVariantProduct,
 } from '../productsTypes.js'
+import { useAuth } from '../../../auth/AuthContext.jsx'
 
 /* ── Foto upload ── */
 function ImageUpload({ imageUrl, onImageChange }) {
@@ -275,7 +276,7 @@ function SortIcon({ active, dir }) {
 }
 
 /* ── Tabela compacta de SKUs para EDIÇÃO ── */
-function SkuEditTable({ skus, onChange, productCode, attrDefs: attrDefsProp }) {
+function SkuEditTable({ skus, onChange, productCode, attrDefs: attrDefsProp, readOnly = false }) {
   const [bulkPrice, setBulkPrice] = useState('')
   const [bulkStock, setBulkStock] = useState('')
   const [bulkOpen,  setBulkOpen]  = useState(false)
@@ -463,19 +464,21 @@ function SkuEditTable({ skus, onChange, productCode, attrDefs: attrDefsProp }) {
             </button>
           )}
         </div>
-        <button
-          type="button"
-          onClick={() => setAdding(a => !a)}
-          className={[
-            'h-8 px-3 rounded-lg text-xs font-medium border transition-colors flex items-center gap-1.5 shrink-0',
-            adding
-              ? 'bg-[var(--color-primary)] text-white border-[var(--color-primary)]'
-              : 'border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface)]',
-          ].join(' ')}
-        >
-          <Plus size={13} className={adding ? 'rotate-45 transition-transform' : 'transition-transform'} />
-          {adding ? 'Fechar' : 'Adicionar SKU'}
-        </button>
+        {!readOnly && (
+          <button
+            type="button"
+            onClick={() => setAdding(a => !a)}
+            className={[
+              'h-8 px-3 rounded-lg text-xs font-medium border transition-colors flex items-center gap-1.5 shrink-0',
+              adding
+                ? 'bg-[var(--color-primary)] text-white border-[var(--color-primary)]'
+                : 'border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface)]',
+            ].join(' ')}
+          >
+            <Plus size={13} className={adding ? 'rotate-45 transition-transform' : 'transition-transform'} />
+            {adding ? 'Fechar' : 'Adicionar SKU'}
+          </button>
+        )}
       </div>
 
       {/* ── Formulário de adicionar SKU ── */}
@@ -491,6 +494,7 @@ function SkuEditTable({ skus, onChange, productCode, attrDefs: attrDefsProp }) {
       )}
 
       {/* ── Ações em massa (colapsável) ── */}
+      {!readOnly && (
       <div className="mb-2">
         <button
           type="button"
@@ -551,6 +555,7 @@ function SkuEditTable({ skus, onChange, productCode, attrDefs: attrDefsProp }) {
           </div>
         )}
       </div>
+      )}
 
       {/* ── Tabela ── */}
       <div className="rounded-xl border border-[var(--color-border)] overflow-hidden">
@@ -612,16 +617,24 @@ function SkuEditTable({ skus, onChange, productCode, attrDefs: attrDefsProp }) {
                     <input
                       type="number" min="0" step="0.01"
                       value={sku.priceWholesale ?? ''}
+                      readOnly={readOnly}
                       onChange={e => updateSku(origIdx, 'priceWholesale', e.target.value)}
-                      className="w-full h-7 px-2 rounded-md text-xs bg-[var(--color-bg-subtle)] border border-[var(--color-border)] text-[var(--color-text)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]"
+                      className={[
+                        'w-full h-7 px-2 rounded-md text-xs bg-[var(--color-bg-subtle)] border border-[var(--color-border)] text-[var(--color-text)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]',
+                        readOnly ? 'opacity-70 cursor-not-allowed' : '',
+                      ].join(' ')}
                     />
                   </td>
                   <td className="px-3 py-2 min-w-[72px]">
                     <input
                       type="number" min="0"
                       value={sku.stockMin ?? 0}
+                      readOnly={readOnly}
                       onChange={e => updateSku(origIdx, 'stockMin', e.target.value)}
-                      className="w-full h-7 px-2 rounded-md text-xs bg-[var(--color-bg-subtle)] border border-[var(--color-border)] text-[var(--color-text)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]"
+                      className={[
+                        'w-full h-7 px-2 rounded-md text-xs bg-[var(--color-bg-subtle)] border border-[var(--color-border)] text-[var(--color-text)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]',
+                        readOnly ? 'opacity-70 cursor-not-allowed' : '',
+                      ].join(' ')}
                     />
                   </td>
                   <td className="px-3 py-2 text-center">
@@ -721,6 +734,10 @@ function TabBar({ tabs, active, onChange }) {
 
 /* ── Componente principal ── */
 export function ProductForm({ open, onClose, product, onSave }) {
+  const { hasRole } = useAuth()
+  const canEdit = hasRole('admin', 'estoque')
+  const readOnly = !canEdit
+
   const isEdit    = Boolean(product?.id)
   const isVariant = isEdit
     ? product?.type === PRODUCT_TYPES.VARIANT
@@ -729,6 +746,7 @@ export function ProductForm({ open, onClose, product, onSave }) {
   const [form,       setForm]       = useState(() => initialForm(product))
   const [errors,     setErrors]     = useState({})
   const [saving,     setSaving]     = useState(false)
+  const [saveError,  setSaveError]  = useState(null)
   const [skus,       setSkus]       = useState(product?.skus ?? [])
   const [activeTab,  setActiveTab]  = useState('info')
   const [categories, setCategories] = useState(DEFAULT_CATEGORIES)
@@ -767,6 +785,7 @@ export function ProductForm({ open, onClose, product, onSave }) {
       setForm(initialForm(product))
       setSkus(product?.skus ?? [])
       setErrors({})
+      setSaveError(null)
       setActiveTab('info')
       setCodeAutoMode(!product?.id)
     }
@@ -790,10 +809,15 @@ export function ProductForm({ open, onClose, product, onSave }) {
   }, [form.code, attrDefs]) // eslint-disable-line
 
   const handleSubmit = async () => {
+    if (readOnly) {
+      setSaveError('Você não tem permissão para alterar o cadastro de produtos.')
+      return
+    }
     const validate = form.type === PRODUCT_TYPES.VARIANT ? validateVariantProduct : validateSimpleProduct
     const errs = validate(form)
     if (Object.keys(errs).length) { setErrors(errs); return }
 
+    setSaveError(null)
     setSaving(true)
     try {
       const payload = {
@@ -810,6 +834,16 @@ export function ProductForm({ open, onClose, product, onSave }) {
       }
       await onSave(payload)
       onClose()
+    } catch (err) {
+      const status = err?.status ?? err?.response?.status
+      const apiMsg = err?.body?.error ?? err?.response?.data?.error ?? err?.message
+      if (status === 403) {
+        setSaveError('Sem permissão para alterar o cadastro de produtos. Fale com um administrador.')
+      } else if (status === 409) {
+        setSaveError(apiMsg || 'Conflito ao salvar (código já em uso).')
+      } else {
+        setSaveError(apiMsg || 'Não foi possível salvar. Tente novamente.')
+      }
     } finally {
       setSaving(false)
     }
@@ -869,6 +903,18 @@ export function ProductForm({ open, onClose, product, onSave }) {
             )}
 
             <div className="flex-1 overflow-y-auto overscroll-contain px-5 py-4 space-y-5">
+
+              {readOnly && (
+                <div className="flex items-start gap-2 p-3 rounded-xl border border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/30">
+                  <Lock size={14} className="text-amber-700 dark:text-amber-300 mt-0.5 shrink-0" />
+                  <div className="text-xs leading-snug">
+                    <p className="font-semibold text-amber-900 dark:text-amber-100">Somente leitura</p>
+                    <p className="text-amber-800 dark:text-amber-200">
+                      Seu perfil não permite alterar o cadastro de produtos (incluindo preços). Para editar, contate um administrador.
+                    </p>
+                  </div>
+                </div>
+              )}
 
               {(activeTab === 'info') && (
                 <>
@@ -1032,19 +1078,30 @@ export function ProductForm({ open, onClose, product, onSave }) {
                     </p>
                     <p className="text-xs text-[var(--color-text-muted)]">Preço e estoque mín. editáveis</p>
                   </div>
-                  <SkuEditTable skus={skus} onChange={setSkus} productCode={product?.code} attrDefs={attrDefs} />
+                  <SkuEditTable skus={skus} onChange={setSkus} productCode={product?.code} attrDefs={attrDefs} readOnly={readOnly} />
                 </div>
               )}
             </div>
 
-            <div className="px-5 py-4 border-t border-[var(--color-border)] bg-[var(--color-bg-subtle)] flex justify-end gap-3 shrink-0">
-              <Button variant="secondary" onClick={onClose} disabled={saving}>Cancelar</Button>
-              <Button onClick={handleSubmit} disabled={saving}>
-                {saving
-                  ? <><RefreshCw size={14} className="animate-spin" /> Salvando…</>
-                  : isEdit ? 'Salvar alterações' : 'Criar produto'
-                }
-              </Button>
+            <div className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-bg-subtle)] shrink-0">
+              {saveError && (
+                <div className="mb-2 p-2.5 rounded-lg border border-[var(--color-error)]/40 bg-[var(--color-error)]/10 text-xs text-[var(--color-error)]">
+                  {saveError}
+                </div>
+              )}
+              <div className="flex justify-end gap-3">
+                <Button variant="secondary" onClick={onClose} disabled={saving}>
+                  {readOnly ? 'Fechar' : 'Cancelar'}
+                </Button>
+                {!readOnly && (
+                  <Button onClick={handleSubmit} disabled={saving}>
+                    {saving
+                      ? <><RefreshCw size={14} className="animate-spin" /> Salvando…</>
+                      : isEdit ? 'Salvar alterações' : 'Criar produto'
+                    }
+                  </Button>
+                )}
+              </div>
             </div>
           </motion.aside>
         </>
