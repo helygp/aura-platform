@@ -20,6 +20,13 @@ e o projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ---
 
+## [1.5.3] — 2026-06-15
+
+### Corrigido
+- **ui/Modal:** Renderizar Modal.Footer fora do body scrollavel (#15) (6b5f71b)
+- **reports:** Datas off-by-one por timezone UTC (#16) (f45f707)
+- Autosave draft de pedido + refresh transparente (#17) (10edbb6)
+
 ## [1.5.2] — 2026-06-15
 
 ### Corrigido

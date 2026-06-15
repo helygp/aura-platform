@@ -1,6 +1,25 @@
 {
-  "current": "1.5.2",
+  "current": "1.5.3",
   "releases": [
+    {
+      "version": "1.5.3",
+      "date": "2026-06-15",
+      "title": "3 novidades nesta versão",
+      "highlights": [
+        {
+          "icon": "🐛",
+          "text": "Renderizar Modal.Footer fora do body scrollavel (#15)"
+        },
+        {
+          "icon": "🐛",
+          "text": "Datas off-by-one por timezone UTC (#16)"
+        },
+        {
+          "icon": "🐛",
+          "text": "Autosave draft de pedido + refresh transparente (#17)"
+        }
+      ]
+    },
     {
       "version": "1.5.2",
       "date": "2026-06-15",
