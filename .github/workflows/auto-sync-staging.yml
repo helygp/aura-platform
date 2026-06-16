@@ -37,8 +37,15 @@ jobs:
           REPO_DIR=/home/helygp/projetos/aura-platform
           export PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 
+          # Validacao: token presente?
+          if [ -z "$GH_TOKEN" ]; then
+            echo "ERRO: secret AUTO_SYNC_PAT vazio ou ausente."
+            echo "SYNC_RESULT=no_token" >> "$GITHUB_ENV"
+            exit 1
+          fi
+          echo "token presente (len=${#GH_TOKEN})"
+
           git config --global --add safe.directory "$REPO_DIR"
-          git config --global url."https://x-access-token:${GH_TOKEN}@github.com/".insteadOf "https://github.com/"
           git config --global user.email "auto-sync-bot@aurabr.app"
           git config --global user.name "aura-auto-sync"
 
@@ -70,7 +77,12 @@ jobs:
           # Fast-forward limpo: avanca staging local ate main e empurra
           git checkout staging
           git merge --ff-only origin/main
-          git push origin staging
+
+          # Push usando URL com token diretamente (bypassa quirks de
+          # credential helpers do runner self-hosted que ignoraram o
+          # insteadOf nas tentativas anteriores)
+          PUSH_URL="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git push "$PUSH_URL" staging
 
           echo "staging avancado em $BEHIND commit(s) ate main"
           echo "SYNC_RESULT=synced" >> "$GITHUB_ENV"
@@ -100,6 +112,10 @@ jobs:
             divergent)
               BODY_TXT="Auto-sync FALHOU: staging diverge de main ($SYNC_AHEAD frente / $SYNC_BEHIND atras). Merge manual necessario."
               ICON="⚠️"
+              ;;
+            no_token)
+              BODY_TXT="Auto-sync FALHOU: secret AUTO_SYNC_PAT vazio. Reconfigurar."
+              ICON="🔑"
               ;;
             *)
               BODY_TXT="Auto-sync com status incerto. Ver run."
