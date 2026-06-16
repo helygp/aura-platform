@@ -21,6 +21,14 @@ e o projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ---
 
+## [1.6.0] — 2026-06-16
+
+### Adicionado
+- **orders:** Exibir total de unidades em detalhe e listagem (#26) (95e1ff7)
+
+### Alterado
+- **erp:** Remover redundancia perfil/logout no rodape do Sidebar (#18) (d755f2f)
+
 ## [1.5.3] — 2026-06-15
 
 ### Corrigido
