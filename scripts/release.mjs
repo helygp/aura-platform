@@ -94,17 +94,33 @@ const IGNORE_SCOPES = new Set(["ci", "build", "deps", "release", "chore", "infra
     if (groups[cat]) mdSection += `### ${cat}\n${groups[cat].join("\n")}\n\n`; }
 
   // 5. highlights do changelog.json: buffer humano > fallback derivado
+  // Fallback evita expor commit subjects crus: dedupa por (#N) e tira sufixo "— arquivo.ext"
   const bufFile = await b64(BUF_PATH);
   let highlights = [];
   if (bufFile && bufFile.text.trim()) { try { highlights = JSON.parse(bufFile.text); } catch (e) {} }
+  let usedFallback = false;
   if (!Array.isArray(highlights) || highlights.length === 0) {
-    highlights = eff.filter(c => c.type === "feat" || c.type === "fix")
-      .map(c => ({ icon: ICON[c.type] || "\u2022", text: cap(c.desc) }));
+    usedFallback = true;
+    const FILE_SUFFIX = /\s*[—-]\s*\S+\.(?:js|jsx|ts|tsx|mjs|cjs|json|css|scss|html|md)\b.*$/i;
+    const PR_TAIL    = /\s*\(#(\d+)\)\s*$/;
+    const seen = new Map(); // chave = "pr#N" ou "txt:<desc>" — ultimo commit do mesmo PR vence (texto mais limpo)
+    for (const c of eff.filter(c => c.type === "feat" || c.type === "fix")) {
+      const desc = c.desc.replace(FILE_SUFFIX, "").trim();
+      const pr   = desc.match(PR_TAIL);
+      const key  = pr ? `pr#${pr[1]}` : `txt:${desc.toLowerCase()}`;
+      const cur  = seen.get(key);
+      // mantém o desc mais curto (= mais limpo, sem ruído de cherry-pick)
+      if (!cur || desc.length < cur.desc.length) seen.set(key, { type: c.type, desc });
+    }
+    highlights = Array.from(seen.values()).map(c => ({ icon: ICON[c.type] || "\u2022", text: cap(c.desc) }));
     if (highlights.length === 0) highlights = [{ icon: "\uD83D\uDD27", text: `Melhorias internas (v${version})` }];
   }
   const clFile = await b64(CL_PATH);
   const cl = JSON.parse(clFile.text);
-  const title = highlights.length === 1 ? highlights[0].text : `${highlights.length} novidades nesta versão`;
+  // Title: buffer curado com 1 highlight pode usar o texto; fallback NUNCA expoe texto tecnico como title
+  const title = (!usedFallback && highlights.length === 1)
+    ? highlights[0].text
+    : (highlights.length === 1 ? "1 novidade nesta versão" : `${highlights.length} novidades nesta versão`);
   const newRelease = { version, date: today, title, highlights };
 
   // dry-run: so imprime

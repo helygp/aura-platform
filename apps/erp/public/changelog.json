@@ -4,68 +4,52 @@
     {
       "version": "1.5.3",
       "date": "2026-06-15",
-      "title": "3 novidades nesta versão",
+      "title": "Rascunho automático de pedidos",
       "highlights": [
         {
-          "icon": "🐛",
-          "text": "Renderizar Modal.Footer fora do body scrollavel (#15)"
-        },
-        {
-          "icon": "🐛",
-          "text": "Datas off-by-one por timezone UTC (#16)"
-        },
-        {
-          "icon": "🐛",
-          "text": "Autosave draft de pedido + refresh transparente (#17)"
+          "icon": "💾",
+          "text": "Pedido em criação é salvo sozinho — se a sessão expirar ou der refresh, você volta exatamente de onde parou"
         }
       ]
     },
     {
       "version": "1.5.2",
       "date": "2026-06-15",
-      "title": "3 novidades nesta versão",
+      "title": "Data correta nos relatórios de histórico",
       "highlights": [
         {
-          "icon": "🐛",
-          "text": "Datas off-by-one por timezone UTC (#16) — reports.js"
-        },
-        {
-          "icon": "🐛",
-          "text": "Datas off-by-one por timezone UTC (#16) — useReports.js"
-        },
-        {
-          "icon": "🐛",
-          "text": "Datas off-by-one por timezone UTC (#16) — ReportsPage.jsx"
+          "icon": "📅",
+          "text": "Relatórios de histórico mostram a data certa do pedido (sem voltar 1 dia por causa do fuso)"
         }
       ]
     },
     {
       "version": "1.5.1",
       "date": "2026-06-15",
-      "title": "Renderizar Modal.Footer fora do body scrollavel (#15)",
+      "title": "Botão “Criar pedido” sempre visível",
       "highlights": [
         {
-          "icon": "🐛",
-          "text": "Renderizar Modal.Footer fora do body scrollavel (#15)"
+          "icon": "👁️",
+          "text": "Botão “Criar pedido” não fica mais escondido no meio da tela de novo pedido"
         }
       ]
     },
     {
       "version": "1.5.0",
       "date": "2026-06-15",
-      "title": "3 novidades nesta versão",
+      "title": "Mais ajustes na tela de Estoque + correções de Cadastro",
       "highlights": [
         {
-          "icon": "✨",
-          "text": "Reorganiza filtros da tela de estoque em grupos (#12)"
+          "icon": "🎛️",
+          "text": "Estoque: filtros de atributo e estado agora na mesma linha — tela mais compacta"
         },
         {
-          "icon": "🐛",
-          "text": "Bloqueia edição de cadastro p/ perfis sem permissão e exibe feedback de erro (#13)"
+          "icon": "🔒",
+          "text": "Cadastro de produtos: usuários sem permissão veem aviso claro em vez de erro ao tentar editar"
         },
         {
-          "icon": "🐛",
-          "text": "Botão voltar do Cockpit vira Fechar (aba nova) (#13)"
+          "icon": "✖️",
+          "text": "Cockpit aberto em aba nova: botão “Voltar” agora vira “Fechar” (faz mais sentido pro contexto)"
         }
       ]
     },
