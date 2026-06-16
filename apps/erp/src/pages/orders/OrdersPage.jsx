@@ -236,6 +236,15 @@ export function OrdersPage() {
     if (location.state?.openNew) { setFormOpen(true); window.history.replaceState({}, '') }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Sincroniza o pedido aberto no drawer com a lista atualizada do hook.
+  // Quando algum item é cancelado, editado, ou o pedido tem status alterado em
+  // background, o cancelItem/editItem do useOrders chama fetchAll() que recarrega
+  // `orders`; esse effect propaga a versão fresca pro detailOrder. Se o pedido
+  // sumir da lista (ex: deleted), fecha o drawer.
+  useEffect(() => {
+    setDetailOrder(prev => prev ? orders.find(o => o.id === prev.id) ?? null : prev)
+  }, [orders])
+
   const openDetail = useCallback((order) => setDetailOrder(order), [])
   const closeDetail = useCallback(() => setDetailOrder(null), [])
 

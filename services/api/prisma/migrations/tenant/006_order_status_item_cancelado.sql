@@ -1,0 +1,30 @@
+-- ─── 006_order_status_item_cancelado.sql ────────────────────────────────
+-- Adiciona valor 'item_cancelado' ao enum order_status.
+--
+-- Contexto: services/api/src/routes/orders.js, no endpoint
+--   PATCH /api/orders/:id/items/:itemId/cancel
+-- após cancelar um item, faz:
+--   INSERT INTO order_history (order_id, status, note, user_name)
+--   VALUES ($1, 'item_cancelado', ...)
+-- onde order_history.status é do tipo enum order_status. Como o valor
+-- 'item_cancelado' nunca foi adicionado ao enum, o INSERT explodia com
+--   invalid input value for enum order_status: "item_cancelado"
+-- e o endpoint retornava 500.
+--
+-- Esse era o SEGUNDO bug encadeado depois do 005_order_items_updated_at:
+-- enquanto a primeira UPDATE quebrava por coluna ausente, o INSERT no
+-- order_history quebraria por enum incompleto.
+--
+-- Decisão semântica: order_history.status é usado como "tipo de evento" do
+-- histórico, então faz sentido aceitar valores não-status como 'item_cancelado'.
+-- Refactorar pra um enum separado de eventos fica como dívida futura.
+--
+-- Aplicada manualmente em prod-staging (aura_staging) em 2026-06-16 ~20:41 UTC
+-- com superuser postgres. Para os 3 tenants prod (acme, fastmalhas,
+-- forroplastic) será aplicada no merge staging→main após aprovação do Hely,
+-- com restart dos respectivos api-* (ALTER TYPE ADD VALUE não invalida prepared
+-- statements de connections existentes do pool node-pg).
+--
+-- Refs: ticket #54, GitHub issue #25.
+
+ALTER TYPE order_status ADD VALUE IF NOT EXISTS 'item_cancelado';

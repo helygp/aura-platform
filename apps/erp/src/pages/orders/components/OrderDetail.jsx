@@ -217,7 +217,14 @@ export function OrderDetail({ order, onClose, onStatusChange, onItemCancel }) {
         title: 'Item cancelado',
         description: 'Estoque devolvido ao produto.',
       })
-    } catch (e) { console.error('cancelItem', e.message) }
+    } catch (e) {
+      console.error('cancelItem', e.message)
+      toast({
+        variant: 'error',
+        title: 'Não foi possível cancelar',
+        description: e.message || 'Tente novamente em instantes.',
+      })
+    }
     finally {
       setCancellingItem(null)
       setConfirmCancelId(null)
