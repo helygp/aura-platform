@@ -1,0 +1,111 @@
+name: Drift check staging
+
+# Detecta divergencia entre `main` e `staging` e ALERTA (nao modifica nada).
+#
+# Modelo de desenvolvimento (GitLab Flow):
+#   feature branch -> staging -> (Hely testa) -> merge staging->main -> producao
+#   staging e a fonte da verdade; main so recebe o que ja foi testado.
+#
+# Excecao: hotfix urgente direto em main. Nesse caso staging fica defasado.
+# Este workflow NAO corrige automaticamente (decisao: evitar merge automatico
+# em codigo proximo de producao). Ele apenas AVISA pelo WhatsApp pra que o
+# Hely (ou Claude num ticket) faca o merge manual quando puder:
+#   git checkout staging && git merge main && git push
+#
+# Origem: ticket #52 expos drift que so foi descoberto tarde (staging exibia
+# v1.3.0 enquanto prod ja estava 1.5.3). O objetivo aqui e detectar cedo.
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+# So o check mais recente importa.
+concurrency:
+  group: drift-check-staging
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Verificar drift main vs staging
+    runs-on: [self-hosted, aura-vps]
+
+    steps:
+      - name: Comparar branches
+        run: |
+          set -e
+          REPO_DIR=/home/helygp/projetos/aura-platform
+          export PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+
+          git config --global --add safe.directory "$REPO_DIR"
+          cd "$REPO_DIR"
+
+          # Fetch e read-only; nao precisa de credencial de escrita.
+          git fetch --prune origin main staging
+
+          # Quantos commits staging esta atras de main (precisa receber)
+          BEHIND=$(git rev-list --count origin/staging..origin/main)
+          # Quantos commits staging tem que main nao tem (trabalho proprio)
+          AHEAD=$(git rev-list --count origin/main..origin/staging)
+
+          echo "staging atras de main: $BEHIND commit(s)"
+          echo "staging frente a main: $AHEAD commit(s)"
+
+          echo "DRIFT_BEHIND=$BEHIND" >> "$GITHUB_ENV"
+          echo "DRIFT_AHEAD=$AHEAD" >> "$GITHUB_ENV"
+
+          if [ "$BEHIND" = "0" ]; then
+            echo "Sem drift relevante: staging tem tudo que main tem."
+            echo "DRIFT_STATE=ok" >> "$GITHUB_ENV"
+          else
+            # main tem commit(s) que staging nao tem -> precisa de merge manual
+            echo "ATENCAO: main tem $BEHIND commit(s) que staging nao tem."
+            echo "Resolver com: git checkout staging && git merge main && git push"
+            echo "DRIFT_STATE=drift" >> "$GITHUB_ENV"
+
+            # Lista resumida dos commits que faltam em staging (pro alerta)
+            COMMITS=$(git log --format='- %h %s' origin/staging..origin/main | head -8)
+            # Sanitiza pra uma linha por commit no env multiline
+            {
+              echo "DRIFT_COMMITS<<EOF_COMMITS"
+              echo "$COMMITS"
+              echo "EOF_COMMITS"
+            } >> "$GITHUB_ENV"
+          fi
+
+      - name: Alertar WhatsApp se houver drift
+        if: always()
+        run: |
+          CFG=/home/helygp/projetos/.deploy-notify.env
+          [ -f "$CFG" ] || { echo "sem config de notify; pulando"; exit 0; }
+          . "$CFG"
+
+          # So notifica quando HA drift. Caso comum (ok) e silencioso.
+          if [ "$DRIFT_STATE" != "drift" ]; then
+            echo "sem drift, nao notifica"
+            exit 0
+          fi
+
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          BODY_TXT="⚠️ Drift detectado: main tem $DRIFT_BEHIND commit(s) que staging NAO tem."
+          HINT="Quando puder, sincronize: git checkout staging && git merge main && git push"
+
+          # Monta mensagem multilinha: alerta + lista de commits + hint + link
+          TXT=$(printf '%s\n\nCommits faltando em staging:\n%s\n\n%s\n\n%s' \
+            "$BODY_TXT" "$DRIFT_COMMITS" "$HINT" "$RUN_URL")
+          TXT_ESC=$(printf '%s' "$TXT" | sed 's/\\/\\\\/g; s/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
+
+          curl -s -m 20 -X POST "$WAHA_URL/api/sendText" \
+            -H "X-Api-Key: $WAHA_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{\"session\":\"$WAHA_SESSION\",\"chatId\":\"$NOTIFY_CHAT_ID\",\"text\":\"$TXT_ESC\"}" >/dev/null \
+            && echo "alerta enviado" || echo "alerta falhou (ignorado)"
+
+      - name: Status
+        if: always()
+        run: echo "Drift check -- state=$DRIFT_STATE behind=$DRIFT_BEHIND ahead=$DRIFT_AHEAD job=${{ job.status }}"
