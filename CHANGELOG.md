@@ -4,6 +4,7 @@
 - ci: validacao self-hosted runner (2026-06-14T05:05:36.312Z)
 - ci: validacao self-hosted runner (2026-06-14T05:00:04.951Z)
 ## [unreleased] - 2026-06-14
+- refactor(erp): remover redundancia perfil/logout no rodape do Sidebar (#18)
 - fix(erp): menu de acoes da listagem de usuarios nao recorta mais (portal) + clique-na-linha p/ admin (#11)
 - ci: pipeline de deploy resiliente (concurrency + retry)
 
