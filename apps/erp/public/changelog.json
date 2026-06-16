@@ -1,6 +1,21 @@
 {
-  "current": "1.6.0",
+  "current": "1.6.1",
   "releases": [
+    {
+      "version": "1.6.1",
+      "date": "2026-06-16",
+      "title": "2 novidades nesta versão",
+      "highlights": [
+        {
+          "icon": "🐛",
+          "text": "Toast de sucesso/erro no cancelamento parcial de item (#25)"
+        },
+        {
+          "icon": "🐛",
+          "text": "Missing brace closing try block in handleCancelItem"
+        }
+      ]
+    },
     {
       "version": "1.6.0",
       "date": "2026-06-16",

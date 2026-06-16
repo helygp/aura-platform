@@ -21,6 +21,12 @@ e o projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ---
 
+## [1.6.1] — 2026-06-16
+
+### Corrigido
+- **orders:** Toast de sucesso/erro no cancelamento parcial de item (#25) (86b4ec6)
+- **orders:** Missing brace closing try block in handleCancelItem (44d8288)
+
 ## [1.6.0] — 2026-06-16
 
 ### Adicionado
