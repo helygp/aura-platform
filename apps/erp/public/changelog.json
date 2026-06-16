@@ -1,6 +1,17 @@
 {
-  "current": "1.6.1",
+  "current": "1.6.2",
   "releases": [
+    {
+      "version": "1.6.2",
+      "date": "2026-06-16",
+      "title": "1 novidade nesta versão",
+      "highlights": [
+        {
+          "icon": "🐛",
+          "text": "Adiciona order_items.updated_at + toast de erro no cancelamento (#25)"
+        }
+      ]
+    },
     {
       "version": "1.6.1",
       "date": "2026-06-16",

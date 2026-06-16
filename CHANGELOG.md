@@ -21,6 +21,12 @@ e o projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ---
 
+## [1.6.2] — 2026-06-16
+
+### Corrigido
+- **orders:** Adiciona order_items.updated_at + toast de erro no cancelamento (#25) (939fde7)
+- **orders:** Sync drawer ao cancelar item + enum order_status com item_cancelado (#25) (6b1ce0a)
+
 ## [1.6.1] — 2026-06-16
 
 ### Corrigido
