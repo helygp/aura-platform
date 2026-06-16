@@ -79,37 +79,38 @@ jobs:
 
       - name: Notificar WhatsApp
         if: always()
-        env:
-          SYNC_RESULT: ${{ env.SYNC_RESULT }}
-          SYNC_COUNT: ${{ env.SYNC_COUNT }}
-          SYNC_AHEAD: ${{ env.SYNC_AHEAD }}
-          SYNC_BEHIND: ${{ env.SYNC_BEHIND }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           CFG=/home/helygp/projetos/.deploy-notify.env
           [ -f "$CFG" ] || { echo "sem config de notify; pulando"; exit 0; }
           . "$CFG"
 
-          # Silenciar o caso comum (ja em dia) pra nao gerar ruido
+          # Variaveis SYNC_* vem do step anterior via GITHUB_ENV, ja exportadas como env do shell.
+          # Silenciar o caso comum (ja em dia) pra nao gerar ruido.
           if [ "$SYNC_RESULT" = "already_synced" ]; then
             echo "sync ja em dia, nao notifica"
             exit 0
           fi
 
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
           case "$SYNC_RESULT" in
             synced)
-              TXT="🔄 Auto-sync: staging avancou +$SYNC_COUNT commit(s) ate main"
+              BODY_TXT="Auto-sync OK: staging avancou +$SYNC_COUNT commit(s) ate main"
+              ICON="🔄"
               ;;
             divergent)
-              TXT="⚠️ Auto-sync FALHOU: staging diverge de main ($SYNC_AHEAD frente / $SYNC_BEHIND atras). Merge manual necessario."
+              BODY_TXT="Auto-sync FALHOU: staging diverge de main ($SYNC_AHEAD frente / $SYNC_BEHIND atras). Merge manual necessario."
+              ICON="⚠️"
               ;;
             *)
-              TXT="❓ Auto-sync com status incerto. Ver run."
+              BODY_TXT="Auto-sync com status incerto. Ver run."
+              ICON="❓"
               ;;
           esac
-          TXT="$TXT
-$RUN_URL"
+
+          TXT=$(printf '%s %s\n%s' "$ICON" "$BODY_TXT" "$RUN_URL")
           TXT_ESC=$(printf '%s' "$TXT" | sed 's/\\/\\\\/g; s/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
+
           curl -s -m 20 -X POST "$WAHA_URL/api/sendText" \
             -H "X-Api-Key: $WAHA_API_KEY" \
             -H "Content-Type: application/json" \
@@ -118,4 +119,4 @@ $RUN_URL"
 
       - name: Status
         if: always()
-        run: echo "Auto-sync staging -- resultado=${{ env.SYNC_RESULT }} job=${{ job.status }}"
+        run: echo "Auto-sync staging -- resultado=$SYNC_RESULT job=${{ job.status }}"
