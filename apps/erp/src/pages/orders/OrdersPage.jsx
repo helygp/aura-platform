@@ -31,7 +31,7 @@ import { useOrders }    from './useOrders.js'
 import {
   ORDER_STATUS, ORDER_CHANNEL, CHANNEL_META,
   PAYMENT_METHOD_META,
-  fmtBRL, fmtDateShort, orderNumber,
+  fmtBRL, fmtDateShort, orderNumber, calcOrderTotals,
 } from './ordersTypes.js'
 
 /* ─── PaymentBadge ─── */
@@ -53,7 +53,7 @@ function OrdersSkeleton() {
         <table className="w-full text-sm">
           <thead className="bg-[var(--color-bg-subtle)] border-b border-[var(--color-border)]">
             <tr>
-              {['Pedido', 'Cliente', 'Canal', 'Pagamento', 'Itens', 'Total', 'Status', 'Data', ''].map(h => (
+              {['Pedido', 'Cliente', 'Canal', 'Pagamento', 'Unidades', 'Total', 'Status', 'Data', ''].map(h => (
                 <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap">{h}</th>
               ))}
             </tr>
@@ -97,6 +97,7 @@ function StatChip({ icon: Icon, label, value, color }) {
 /* ─── Linha de pedido ─── */
 function OrderRow({ order, onClick }) {
   const ch = CHANNEL_META[order.channel] ?? { label: order.channel, icon: '•' }
+  const { totalUnits } = calcOrderTotals(order.items)
   return (
     <tr
       onClick={() => onClick(order)}
@@ -116,8 +117,8 @@ function OrderRow({ order, onClick }) {
       <td className="px-4 py-3">
         <PaymentBadge method={order.paymentMethod} />
       </td>
-      <td className="px-4 py-3">
-        <span className="text-sm text-[var(--color-text-muted)] tabular-nums">{order.items.length}</span>
+      <td className="px-4 py-3 text-right">
+        <span className="text-sm text-[var(--color-text-muted)] tabular-nums">{totalUnits}</span>
       </td>
       <td className="px-4 py-3">
         <span className="text-sm font-semibold text-[var(--color-text)] tabular-nums">{fmtBRL(order.total)}</span>
@@ -143,6 +144,7 @@ function OrderRow({ order, onClick }) {
 /* ─── Card mobile de pedido ─── */
 function OrderCard({ order, onClick }) {
   const ch = CHANNEL_META[order.channel] ?? { label: order.channel, icon: '•' }
+  const { totalUnits } = calcOrderTotals(order.items)
   return (
     <div
       onClick={() => onClick(order)}
@@ -154,7 +156,7 @@ function OrderCard({ order, onClick }) {
       </div>
       <p className="text-sm font-medium text-[var(--color-text)] truncate mb-1">{order.customerName}</p>
       <div className="flex items-center justify-between gap-2 mb-1.5">
-        <span className="text-xs text-[var(--color-text-muted)]">{ch.icon} {ch.label} · {order.items.length} item{order.items.length !== 1 ? 's' : ''} · {fmtDateShort(order.createdAt)}</span>
+        <span className="text-xs text-[var(--color-text-muted)]">{ch.icon} {ch.label} · {totalUnits} unidade{totalUnits !== 1 ? 's' : ''} · {fmtDateShort(order.createdAt)}</span>
         <span className="text-sm font-bold text-[var(--color-text)] shrink-0">{fmtBRL(order.total)}</span>
       </div>
       <PaymentBadge method={order.paymentMethod} />
@@ -191,7 +193,7 @@ const ORDER_COLS = [
   { label: 'Cliente',   key: 'customerName',  sortable: true },
   { label: 'Canal',     key: 'channel',       sortable: true },
   { label: 'Pagamento', key: 'paymentMethod', sortable: true },
-  { label: 'Itens',     key: '_items',        sortable: false, align: 'right' },
+  { label: 'Unidades',  key: '_units',        sortable: false, align: 'right' },
   { label: 'Total',     key: 'total',         sortable: true,  align: 'right' },
   { label: 'Status',    key: 'status',        sortable: true },
   { label: 'Data',      key: 'createdAt',     sortable: true },
@@ -246,7 +248,7 @@ export function OrdersPage() {
         { label: 'Cliente',  key: 'customerName' },
         { label: 'Status',   key: 'status' },
         { label: 'Canal',    key: 'channel' },
-        { label: 'Itens',    get: o => (o.items ?? []).length, align: 'right' },
+        { label: 'Unidades', get: o => calcOrderTotals(o.items).totalUnits, align: 'right' },
         { label: 'Total',    get: o => `R$ ${Number(o.total).toFixed(2)}`, align: 'right' },
         { label: 'Data',     get: o => o.createdAt ? new Date(o.createdAt).toLocaleDateString('pt-BR') : '—' },
       ],

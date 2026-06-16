@@ -76,9 +76,14 @@ export const fmtDateShort = (iso) =>
     .format(new Date(iso))
 
 /* ─── Calcula totais de um pedido ─── */
+// totalUnits = soma das qty (ignora itens cancelados — alinhado com o header "Itens (N)")
 export function calcOrderTotals(items) {
-  const subtotal = items.reduce((s, i) => s + (Number(i.priceUnit) * Number(i.qty)), 0)
-  return { subtotal, total: subtotal }
+  const list = items ?? []
+  const subtotal = list.reduce((s, i) => s + (Number(i.priceUnit) * Number(i.qty)), 0)
+  const totalUnits = list
+    .filter(i => i.status !== 'cancelado')
+    .reduce((s, i) => s + Number(i.qty), 0)
+  return { subtotal, total: subtotal, totalUnits }
 }
 
 /* ─── Gera número de pedido legível ─── */

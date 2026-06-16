@@ -25,7 +25,7 @@ import {
   X, Printer, ChevronRight, MessageCircle, Send,
   User, Clock, Package, CheckCircle2, XCircle, Ban,
 } from 'lucide-react'
-import { Button } from '@aura/ui'
+import { Button, useToast } from '@aura/ui'
 import { StatusBadge } from './StatusBadge.jsx'
 import {
   STATUS_META, STATUS_TRANSITIONS, CHANNEL_META,
@@ -190,6 +190,8 @@ export function OrderDetail({ order, onClose, onStatusChange, onItemCancel }) {
   const [cancellingItem,  setCancellingItem]  = useState(null)
   const [confirmCancelId, setConfirmCancelId] = useState(null)
 
+  const { toast } = useToast()
+
   const handleSendWhatsApp = async () => {
     setWppSending(true)
     try {
@@ -202,15 +204,24 @@ export function OrderDetail({ order, onClose, onStatusChange, onItemCancel }) {
   }
 
   const transitions = order ? STATUS_TRANSITIONS[order.status] ?? [] : []
-  const { subtotal } = order ? calcOrderTotals(order.items) : { subtotal: 0 }
+  const { subtotal, totalUnits } = order ? calcOrderTotals(order.items) : { subtotal: 0, totalUnits: 0 }
   const channelMeta = CHANNEL_META[order?.channel] ?? { label: order?.channel, icon: '•' }
 
   const handleCancelItem = async (itemId) => {
     if (!onItemCancel) return
     setCancellingItem(itemId)
-    try { await onItemCancel(order.id, itemId) }
+    try {
+      await onItemCancel(order.id, itemId)
+      toast({
+        variant: 'success',
+        title: 'Item cancelado',
+        description: 'Estoque devolvido ao produto.',
+      })
     catch (e) { console.error('cancelItem', e.message) }
-    finally { setCancellingItem(null); setConfirmCancelId(null) }
+    } finally {
+      setCancellingItem(null)
+      setConfirmCancelId(null)
+    }
   }
 
   const handleStatusClick = (newStatus) => setConfirmStatus(newStatus)
@@ -391,6 +402,9 @@ export function OrderDetail({ order, onClose, onStatusChange, onItemCancel }) {
               {/* ── Resumo financeiro ── */}
               <div className="p-4 border-b border-[var(--color-border)]">
                 <div className="space-y-1.5">
+                  <div className="flex justify-between text-sm text-[var(--color-text-muted)]">
+                    <span>Unidades</span><span className="tabular-nums">{totalUnits}</span>
+                  </div>
                   <div className="flex justify-between text-sm text-[var(--color-text-muted)]">
                     <span>Subtotal</span><span>{fmtBRL(subtotal)}</span>
                   </div>
