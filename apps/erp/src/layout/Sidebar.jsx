@@ -6,18 +6,22 @@
  * Estado de colapso persistido em localStorage.
  * Itens com newTab:true abrem em nova aba.
  *
+ * Rodapé contém apenas o VersionBadge — informações do usuário e
+ * logout ficam no dropdown do Header (sempre acessível, mobile e desktop)
+ * para evitar redundância visual. Ver ticket #52 / issue #18.
+ *
  * Props:
  *   tenantInfo : { name, logoUrl }
  */
 
 import React, { useState, useCallback } from 'react'
-import { NavLink, useNavigate } from 'react-router-dom'
+import { NavLink } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   LayoutDashboard, Package, Warehouse, ShoppingCart, UserCog,
   Users, MessageCircle, Settings, CreditCard, BarChart2, Wallet, ChevronLeft,
-  ChevronRight, LogOut, Monitor,
+  ChevronRight, Monitor,
 } from 'lucide-react'
 import { useAuth } from '../auth/AuthContext.jsx'
 import { NAV_ITEMS } from './navItems.js'
@@ -44,8 +48,7 @@ const NAV_CLS_BASE = `
 
 export function Sidebar({ tenantInfo }) {
   const { t }              = useTranslation()
-  const { user, logout, hasRole } = useAuth()
-  const navigate           = useNavigate()
+  const { user, hasRole }  = useAuth()
   const [collapsed, setCollapsed] = useState(readCollapsed)
 
   const toggleCollapse = useCallback(() => {
@@ -55,11 +58,6 @@ export function Sidebar({ tenantInfo }) {
       return next
     })
   }, [])
-
-  const handleLogout = useCallback(async () => {
-    await logout()
-    navigate('/login', { replace: true })
-  }, [logout, navigate])
 
   /* Filtra itens pelo papel do usuário */
   const visibleItems = NAV_ITEMS.filter(item =>
@@ -167,63 +165,8 @@ export function Sidebar({ tenantInfo }) {
         })}
       </nav>
 
-      {/* ── Rodapé: usuário + logout ── */}
-      <div className="border-t border-[var(--color-border)] p-2 space-y-1 shrink-0">
-        {/* Avatar + nome */}
-        <div className="flex items-center gap-3 px-3 py-2">
-          <div className="
-            w-7 h-7 rounded-full flex items-center justify-center shrink-0
-            bg-[var(--color-primary-muted)] text-[var(--color-primary)]
-            text-xs font-bold
-          ">
-            {(user?.name ?? user?.email ?? 'U').charAt(0).toUpperCase()}
-          </div>
-          <AnimatePresence>
-            {!collapsed && (
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                className="flex-1 min-w-0"
-              >
-                <p className="text-xs font-medium text-[var(--color-text-primary)] truncate">
-                  {user?.name ?? user?.email}
-                </p>
-                <p className="text-[10px] text-[var(--color-text-tertiary)] truncate capitalize">
-                  {user?.role}
-                </p>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
-
-        {/* Botão logout */}
-        <button
-          onClick={handleLogout}
-          className="
-            w-full flex items-center gap-3 rounded-lg px-3 py-2.5
-            text-sm font-medium text-[var(--color-text-secondary)]
-            hover:bg-red-50 hover:text-red-600
-            dark:hover:bg-red-950 dark:hover:text-red-400
-            transition-colors duration-150
-          "
-          title={collapsed ? t('nav.logout') : undefined}
-        >
-          <LogOut size={18} className="shrink-0" />
-          <AnimatePresence>
-            {!collapsed && (
-              <motion.span
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-              >
-                {t('nav.logout')}
-              </motion.span>
-            )}
-          </AnimatePresence>
-        </button>
-
-        {/* Versão (centralizada no expandido, oculta quando colapsado) */}
+      {/* ── Rodapé: versão ── */}
+      <div className="border-t border-[var(--color-border)] p-2 shrink-0">
         <AnimatePresence>
           {!collapsed && (
             <motion.div
