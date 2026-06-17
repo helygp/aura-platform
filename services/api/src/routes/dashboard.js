@@ -12,11 +12,12 @@ import { query }        from '../lib/tenantDb.js'
 export const dashboardRouter = Router()
 dashboardRouter.use(authenticate)
 
+// Timezone canônico do negócio — usado em todos os recortes "por dia".
+// Containers (Node/Postgres) rodam em UTC; sem isso, "hoje" começa às 21h BRT.
+const TZ = 'America/Sao_Paulo'
+
 dashboardRouter.get('/summary', async (req, res) => {
   try {
-    const today = new Date()
-    today.setHours(0, 0, 0, 0)
-
     const [
       revenueToday,
       revenueYesterday,
@@ -25,35 +26,38 @@ dashboardRouter.get('/summary', async (req, res) => {
       activeCustomers,
       chartRows,
     ] = await Promise.all([
-      /* Receita hoje */
-      query(`SELECT COALESCE(SUM(total),0) AS val FROM orders
-             WHERE status != 'cancelado' AND created_at >= $1`, [today]),
-      /* Receita ontem */
+      /* Receita hoje (recorte em America/Sao_Paulo) */
       query(`SELECT COALESCE(SUM(total),0) AS val FROM orders
              WHERE status != 'cancelado'
-               AND created_at >= $1 AND created_at < $2`,
-        [new Date(today.getTime() - 86400000), today]),
+               AND created_at >= date_trunc('day', now() AT TIME ZONE $1) AT TIME ZONE $1`,
+        [TZ]),
+      /* Receita ontem (recorte em America/Sao_Paulo) */
+      query(`SELECT COALESCE(SUM(total),0) AS val FROM orders
+             WHERE status != 'cancelado'
+               AND created_at >= (date_trunc('day', now() AT TIME ZONE $1) - interval '1 day') AT TIME ZONE $1
+               AND created_at <  date_trunc('day', now() AT TIME ZONE $1) AT TIME ZONE $1`,
+        [TZ]),
       /* Pedidos pendentes */
       query(`SELECT COUNT(*) AS val FROM orders WHERE status = 'pendente'`),
       /* SKUs críticos (zerado ou abaixo do mínimo) */
       query(`SELECT COUNT(*) AS val FROM skus WHERE stock <= stock_min`),
       /* Clientes ativos */
       query(`SELECT COUNT(*) AS val FROM customers WHERE status = 'ativo'`),
-      /* Gráfico: vendas últimos 7 dias */
+      /* Gráfico: vendas últimos 7 dias (recorte em America/Sao_Paulo) */
       query(`
         SELECT
           to_char(d::date, 'Dy DD') AS date,
           COALESCE(SUM(o.total), 0)  AS total
         FROM generate_series(
-          (now() - interval '6 days')::date,
-          now()::date,
+          ((now() AT TIME ZONE $1)::date - interval '6 days'),
+          (now() AT TIME ZONE $1)::date,
           '1 day'::interval
         ) d
         LEFT JOIN orders o
-          ON o.created_at::date = d::date
+          ON (o.created_at AT TIME ZONE $1)::date = d::date
          AND o.status != 'cancelado'
         GROUP BY d ORDER BY d
-      `),
+      `, [TZ]),
     ])
 
     const rev     = parseFloat(revenueToday.rows[0].val)
