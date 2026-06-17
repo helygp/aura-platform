@@ -1,1 +1,10 @@
-[]
+[
+  {
+    "icon": "📊",
+    "text": "Relatório de Vendas: gráfico e KPIs agora respeitam o fuso de Brasília — pedidos noturnos não aparecem mais no dia seguinte"
+  },
+  {
+    "icon": "🌙",
+    "text": "Modo escuro corrigido: fundo e cor do nome da empresa agora seguem o tema em todas as telas"
+  }
+]

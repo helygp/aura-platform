@@ -50,17 +50,17 @@ reportsRouter.get('/sales', async (req, res) => {
           COALESCE(SUM(total) FILTER (WHERE status NOT IN ('cancelado','pendente')), 0) AS faturamento,
           COALESCE(AVG(total) FILTER (WHERE status NOT IN ('cancelado','pendente')), 0) AS ticket_medio
         FROM orders
-        WHERE created_at::date BETWEEN $1 AND $2${custClause}
+        WHERE (created_at AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN $1 AND $2${custClause}
       `, baseParams),
 
       // Por dia
       query(`
         SELECT
-          created_at::date::text AS dia,
+          (created_at AT TIME ZONE 'America/Sao_Paulo')::date::text AS dia,
           COUNT(*)         AS pedidos,
           COALESCE(SUM(total) FILTER (WHERE status NOT IN ('cancelado','pendente')), 0) AS faturamento
         FROM orders
-        WHERE created_at::date BETWEEN $1 AND $2${custClause}
+        WHERE (created_at AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN $1 AND $2${custClause}
         GROUP BY dia ORDER BY dia
       `, baseParams),
 
@@ -71,7 +71,7 @@ reportsRouter.get('/sales', async (req, res) => {
           COUNT(*) AS pedidos,
           COALESCE(SUM(total) FILTER (WHERE status NOT IN ('cancelado','pendente')), 0) AS faturamento
         FROM orders
-        WHERE created_at::date BETWEEN $1 AND $2${custClause}
+        WHERE (created_at AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN $1 AND $2${custClause}
         GROUP BY channel ORDER BY faturamento DESC
       `, baseParams),
 
@@ -79,7 +79,7 @@ reportsRouter.get('/sales', async (req, res) => {
       query(`
         SELECT status, COUNT(*) AS total
         FROM orders
-        WHERE created_at::date BETWEEN $1 AND $2${custClause}
+        WHERE (created_at AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN $1 AND $2${custClause}
         GROUP BY status ORDER BY total DESC
       `, baseParams),
     ])
@@ -121,7 +121,7 @@ reportsRouter.get('/products', async (req, res) => {
       JOIN orders o  ON o.id  = oi.order_id
       JOIN skus   s  ON s.id  = oi.sku_id
       JOIN products p ON p.id = s.product_id
-      WHERE o.created_at::date BETWEEN $1 AND $2
+      WHERE (o.created_at AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN $1 AND $2
         AND o.status NOT IN ('cancelado', 'pendente')
       GROUP BY p.name, oi.sku_code, oi.attributes, p.category, s.stock, s.stock_min
       ORDER BY qtd_vendida DESC
@@ -245,7 +245,7 @@ reportsRouter.get('/movements', async (req, res) => {
 
     const { rows } = await query(`
       SELECT
-        sm.created_at::date::text AS data,
+        (sm.created_at AT TIME ZONE 'America/Sao_Paulo')::date::text AS data,
         sm.created_at       AS data_hora,
         p.name              AS produto,
         s.code              AS sku,
@@ -264,7 +264,7 @@ reportsRouter.get('/movements', async (req, res) => {
       JOIN skus     s ON s.id  = sm.sku_id
       JOIN products p ON p.id  = s.product_id
       LEFT JOIN orders o ON o.id = sm.order_id
-      WHERE sm.created_at::date BETWEEN $1 AND $2
+      WHERE (sm.created_at AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN $1 AND $2
       ORDER BY sm.created_at DESC
       LIMIT $3
     `, [start, end, limit])
