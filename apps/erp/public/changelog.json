@@ -1,6 +1,17 @@
 {
-  "current": "1.6.2",
+  "current": "1.6.3",
   "releases": [
+    {
+      "version": "1.6.3",
+      "date": "2026-06-17",
+      "title": "1 novidade nesta versão",
+      "highlights": [
+        {
+          "icon": "🐛",
+          "text": "Timezone America/Sao_Paulo no dashboard summary (#28)"
+        }
+      ]
+    },
     {
       "version": "1.6.2",
       "date": "2026-06-16",

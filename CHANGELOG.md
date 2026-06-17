@@ -21,6 +21,11 @@ e o projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ---
 
+## [1.6.3] — 2026-06-17
+
+### Corrigido
+- **api:** Timezone America/Sao_Paulo no dashboard summary (#28) (80adf32)
+
 ## [1.6.2] — 2026-06-16
 
 ### Corrigido
