@@ -88,7 +88,15 @@ reportsRouter.get('/sales', async (req, res) => {
       period:     { start, end },
       customerId: customerId || null,
       kpi:        kpi.rows[0],
-      byDay:      byDay.rows,
+      // Ticket #72: pg driver retorna NUMERIC como string → Recharts auto-domain
+      // do YAxis faz min/max lexicográfico (ex: "80.00" > "1500.00"), e valores
+      // numericamente maiores que o "max lexical" somem acima da área visível.
+      // Mesmo padrão do dashboard.js: converter faturamento pra number aqui.
+      byDay:      byDay.rows.map(r => ({
+        dia:         r.dia,
+        pedidos:     parseInt(r.pedidos, 10),
+        faturamento: parseFloat(r.faturamento) || 0,
+      })),
       byChannel:  byChannel.rows,
       byStatus:   byStatus.rows,
     })
