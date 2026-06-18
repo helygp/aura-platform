@@ -21,6 +21,12 @@ e o projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ---
 
+## [1.6.4] — 2026-06-18
+
+### Corrigido
+- **theme:** Aliases --color-background e --color-text-primary para dark mode funcionar (#62) (effaf62)
+- **reports:** Usar timezone America/Sao_Paulo nas queries de relatórios (#60) (499f3e4)
+
 ## [1.6.3] — 2026-06-17
 
 ### Corrigido

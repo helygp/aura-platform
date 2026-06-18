@@ -1,6 +1,21 @@
 {
-  "current": "1.6.3",
+  "current": "1.6.4",
   "releases": [
+    {
+      "version": "1.6.4",
+      "date": "2026-06-18",
+      "title": "2 novidades nesta versão",
+      "highlights": [
+        {
+          "icon": "📊",
+          "text": "Relatório de Vendas: gráfico e KPIs agora respeitam o fuso de Brasília — pedidos noturnos não aparecem mais no dia seguinte"
+        },
+        {
+          "icon": "🌙",
+          "text": "Modo escuro corrigido: fundo e cor do nome da empresa agora seguem o tema em todas as telas"
+        }
+      ]
+    },
     {
       "version": "1.6.3",
       "date": "2026-06-17",
