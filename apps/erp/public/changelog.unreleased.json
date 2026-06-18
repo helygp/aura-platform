@@ -6,5 +6,9 @@
   {
     "icon": "🌙",
     "text": "Modo escuro corrigido: fundo e cor do nome da empresa agora seguem o tema em todas as telas"
+  },
+  {
+    "icon": "📈",
+    "text": "Relatório de Vendas: gráfico de Faturamento por dia agora mostra a curva completa, sem cortar nos valores mais altos"
   }
 ]
