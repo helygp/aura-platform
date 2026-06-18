@@ -21,6 +21,37 @@ e o projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ---
 
+## [1.6.4] — 2026-06-18
+
+### Corrigido
+- **theme:** Aliases --color-background e --color-text-primary para dark mode funcionar (#62) (effaf62)
+- **reports:** Usar timezone America/Sao_Paulo nas queries de relatórios (#60) (499f3e4)
+
+## [1.6.3] — 2026-06-17
+
+### Corrigido
+- **api:** Timezone America/Sao_Paulo no dashboard summary (#28) (80adf32)
+
+## [1.6.2] — 2026-06-16
+
+### Corrigido
+- **orders:** Adiciona order_items.updated_at + toast de erro no cancelamento (#25) (939fde7)
+- **orders:** Sync drawer ao cancelar item + enum order_status com item_cancelado (#25) (6b1ce0a)
+
+## [1.6.1] — 2026-06-16
+
+### Corrigido
+- **orders:** Toast de sucesso/erro no cancelamento parcial de item (#25) (86b4ec6)
+- **orders:** Missing brace closing try block in handleCancelItem (44d8288)
+
+## [1.6.0] — 2026-06-16
+
+### Adicionado
+- **orders:** Exibir total de unidades em detalhe e listagem (#26) (95e1ff7)
+
+### Alterado
+- **erp:** Remover redundancia perfil/logout no rodape do Sidebar (#18) (d755f2f)
+
 ## [1.5.3] — 2026-06-15
 
 ### Corrigido
