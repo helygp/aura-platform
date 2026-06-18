@@ -78,11 +78,12 @@ export async function loginService({ identifier, email, password }) {
   const valid = await bcrypt.compare(password, user.passwordHash)
   if (!valid) throw new AuthError('Credenciais inválidas.')
 
-  // Nova família de refresh a cada login
+  // Nova família de refresh a cada login + marca último acesso
+  // (piggyback no mesmo UPDATE — custo zero, 1 statement só)
   const family = randomUUID()
   await prisma.user.update({
     where: { id: user.id },
-    data:  { refreshFamily: family },
+    data:  { refreshFamily: family, lastLoginAt: new Date() },
   })
 
   const tenantSlug = user.tenant?.slug ?? user.tenantSlug
