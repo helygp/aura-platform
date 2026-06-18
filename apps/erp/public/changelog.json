@@ -4,11 +4,11 @@
     {
       "version": "1.6.5",
       "date": "2026-06-18",
-      "title": "1 novidade nesta versão",
+      "title": "Gráfico de Faturamento por dia completo",
       "highlights": [
         {
-          "icon": "🐛",
-          "text": "Converter byDay.faturamento pra number (#72)"
+          "icon": "📈",
+          "text": "Relatório de Vendas: gráfico de Faturamento por dia agora mostra a curva completa, sem cortar nos valores mais altos"
         }
       ]
     },
@@ -30,48 +30,48 @@
     {
       "version": "1.6.3",
       "date": "2026-06-17",
-      "title": "1 novidade nesta versão",
+      "title": "Dashboard no fuso correto",
       "highlights": [
         {
-          "icon": "🐛",
-          "text": "Timezone America/Sao_Paulo no dashboard summary (#28)"
+          "icon": "🕐",
+          "text": "Dashboard: cartões de resumo agora respeitam o fuso de Brasília — números do dia batem com o que aconteceu"
         }
       ]
     },
     {
       "version": "1.6.2",
       "date": "2026-06-16",
-      "title": "1 novidade nesta versão",
+      "title": "Cancelamento de item: bugs corrigidos",
       "highlights": [
         {
-          "icon": "🐛",
-          "text": "Adiciona order_items.updated_at + toast de erro no cancelamento (#25)"
+          "icon": "🔄",
+          "text": "Cancelamento de item: corrigido bug em que o pedido não atualizava sozinho na tela e erros passavam silenciosos"
         }
       ]
     },
     {
       "version": "1.6.1",
       "date": "2026-06-16",
-      "title": "2 novidades nesta versão",
+      "title": "Feedback no cancelamento de item",
       "highlights": [
         {
-          "icon": "🐛",
-          "text": "Toast de sucesso/erro no cancelamento parcial de item (#25)"
-        },
-        {
-          "icon": "🐛",
-          "text": "Missing brace closing try block in handleCancelItem"
+          "icon": "✅",
+          "text": "Cancelamento de item de pedido: agora mostra confirmação na tela (sucesso ou erro)"
         }
       ]
     },
     {
       "version": "1.6.0",
       "date": "2026-06-16",
-      "title": "1 novidade nesta versão",
+      "title": "Pedidos: contagem de unidades e menu mais limpo",
       "highlights": [
         {
-          "icon": "✨",
-          "text": "Exibir total de unidades em detalhe e listagem (#26)"
+          "icon": "📦",
+          "text": "Pedidos: nova coluna \"Unidades\" no listing e no detalhe — mostra o total de peças do pedido"
+        },
+        {
+          "icon": "🧹",
+          "text": "Menu lateral: removida duplicação de perfil/logout no rodapé"
         }
       ]
     },
