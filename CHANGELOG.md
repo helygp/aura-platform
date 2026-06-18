@@ -21,6 +21,11 @@ e o projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ---
 
+## [1.6.5] — 2026-06-18
+
+### Corrigido
+- **reports:** Converter byDay.faturamento pra number (#72) (c811010)
+
 ## [1.6.4] — 2026-06-18
 
 ### Corrigido
