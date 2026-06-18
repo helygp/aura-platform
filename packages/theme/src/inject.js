@@ -95,6 +95,7 @@ export function buildCssVars(config, isDark) {
 
     // Neutros (palette do mood × scheme)
     '--color-bg':             palette.bg,
+    '--color-background':     palette.bg,         // alias retrocompat (ticket #62)
     '--color-bg-subtle':      palette.bgSubtle,
     '--color-surface':        palette.surface,
     '--color-border':         palette.border,
@@ -102,6 +103,7 @@ export function buildCssVars(config, isDark) {
 
     // Texto
     '--color-text':           palette.text,
+    '--color-text-primary':   palette.text,       // alias retrocompat (ticket #62)
     '--color-text-muted':     palette.textMuted,
     '--color-text-disabled':  palette.textDisabled,
     '--color-text-secondary': palette.textMuted,
