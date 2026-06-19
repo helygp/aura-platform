@@ -41,6 +41,8 @@ echo "[$(date)] ERP OK" | tee -a $LOG
 if [ "$BRANCH" = "staging" ]; then
   docker stop api-staging 2>/dev/null; docker rm api-staging 2>/dev/null || true
   docker run -d --name api-staging --restart unless-stopped \
+    -v /var/run/docker.sock:/var/run/docker.sock \
+    -v /usr/bin/docker:/usr/bin/docker:ro \
     --memory 384m --memory-swap 384m --cpus 0.75 \
     --network prod_default \
     --network supabase_supabase_net \
@@ -85,6 +87,8 @@ elif [ "$BRANCH" = "main" ]; then
     esac
     docker stop api-$SLUG && docker rm api-$SLUG
     docker run -d --name api-$SLUG --restart unless-stopped \
+    -v /var/run/docker.sock:/var/run/docker.sock \
+    -v /usr/bin/docker:/usr/bin/docker:ro \
     --memory 384m --memory-swap 384m --cpus 0.75 \
       --network prod_default --network supabase_supabase_net --network tenant_${SLUG}_net \
       -e NODE_ENV=production -e PORT=3001 -e TENANT_SLUG=$SLUG \
