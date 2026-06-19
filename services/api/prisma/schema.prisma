@@ -95,6 +95,8 @@ model User {
   createdAt       DateTime  @default(now()) @map("created_at")
   updatedAt       DateTime  @updatedAt       @map("updated_at")
   passwordResetTokens PasswordResetToken[]
+  loginEvents         LoginEvent[]
+  sessions            UserSession[]
 
   @@unique([tenantId, email])
   @@map("users")
@@ -112,6 +114,44 @@ model PasswordResetToken {
   @@index([userId])
   @@index([expiresAt])
   @@map("password_reset_tokens")
+}
+
+model LoginEvent {
+  id             String   @id @default(cuid())
+  userId         String?  @map("user_id")
+  user           User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  tenantId       String?  @map("tenant_id")
+  tenantSlug     String?  @map("tenant_slug")
+  identifier     String
+  success        Boolean
+  failureReason  String?  @map("failure_reason")
+  ip             String?
+  userAgent      String?  @map("user_agent")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@index([userId, createdAt])
+  @@index([tenantSlug, createdAt])
+  @@index([success, createdAt])
+  @@map("login_events")
+}
+
+model UserSession {
+  id              String    @id @default(cuid())
+  userId          String    @map("user_id")
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenantId        String    @map("tenant_id")
+  tenantSlug      String    @map("tenant_slug")
+  startedAt       DateTime  @default(now()) @map("started_at")
+  lastActivityAt  DateTime  @default(now()) @map("last_activity_at")
+  expiresAt       DateTime? @map("expires_at")
+  revokedAt       DateTime? @map("revoked_at")
+  ip              String?
+  userAgent       String?   @map("user_agent")
+
+  @@index([userId, revokedAt])
+  @@index([lastActivityAt])
+  @@index([tenantSlug, revokedAt])
+  @@map("user_sessions")
 }
 
 enum UserRole {

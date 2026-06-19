@@ -16,6 +16,33 @@ import { prismaMaster as prisma } from '../lib/prisma-master.js'
 
 const CONTAINER_TENANT = process.env.TENANT_SLUG ?? null
 
+// ─── Heartbeat de sessão (debounce in-memory) ───
+// Atualiza user_sessions.last_activity_at no máximo 1x a cada 5min por sessão.
+// Fire-and-forget: nunca bloqueia o request.
+const HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000
+const heartbeatCache = new Map()  // sessionId -> lastUpdateMs
+
+function fireSessionHeartbeat(sessionId) {
+  if (!sessionId) return
+  const now = Date.now()
+  const last = heartbeatCache.get(sessionId) || 0
+  if (now - last < HEARTBEAT_INTERVAL_MS) return
+  heartbeatCache.set(sessionId, now)
+
+  // Limite simples de memória — limpa entradas antigas a cada 1000 sessões
+  if (heartbeatCache.size > 1000) {
+    const cutoff = now - HEARTBEAT_INTERVAL_MS * 2
+    for (const [k, v] of heartbeatCache) {
+      if (v < cutoff) heartbeatCache.delete(k)
+    }
+  }
+
+  prisma.userSession.updateMany({
+    where: { id: sessionId, revokedAt: null },
+    data:  { lastActivityAt: new Date() },
+  }).catch(err => console.error('[heartbeat]', err.message))
+}
+
 export async function authenticate(req, res, next) {
   // Aceita cookie httpOnly OU header Authorization: Bearer
   const cookieToken = req.cookies?.aura_access
@@ -77,8 +104,12 @@ export async function authenticate(req, res, next) {
       email:      user.email,
       login:      user.login,
       name:       user.name,
+      sessionId:  payload.sid ?? null,
       mustChangePassword: user.mustChangePassword ?? false,
     }
+
+    // Heartbeat fire-and-forget (não bloqueia request)
+    fireSessionHeartbeat(payload.sid)
 
     next()
   } catch (err) {

@@ -32,13 +32,16 @@ function parseTTL(ttl) {
  * - Se role vier null, deriva de roles[0].
  * - Sempre emite ambos no payload para máxima compat.
  */
-export async function signAccessToken({ tokenId, tenantSlug, role, roles }) {
+export async function signAccessToken({ tokenId, tenantSlug, role, roles, sid }) {
   const rolesArr = Array.isArray(roles) && roles.length > 0
     ? roles
     : (role ? [role] : [])
   const primary = role || rolesArr[0] || null
 
-  return new SignJWT({ tenantSlug, role: primary, roles: rolesArr })
+  const payload = { tenantSlug, role: primary, roles: rolesArr }
+  if (sid) payload.sid = sid
+
+  return new SignJWT(payload)
     .setProtectedHeader({ alg: 'HS256' })
     .setSubject(tokenId)           // opaco — não é userId
     .setIssuedAt()
@@ -52,8 +55,10 @@ export async function verifyAccessToken(token) {
 }
 
 /* ─── Refresh Token ─── */
-export async function signRefreshToken({ tokenId, family }) {
-  return new SignJWT({ family })
+export async function signRefreshToken({ tokenId, family, sid }) {
+  const payload = { family }
+  if (sid) payload.sid = sid
+  return new SignJWT(payload)
     .setProtectedHeader({ alg: 'HS256' })
     .setSubject(tokenId)
     .setIssuedAt()

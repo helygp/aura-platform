@@ -43,6 +43,16 @@ const resetSchema = z.object({
   newPassword: z.string().min(8, 'A senha deve ter pelo menos 8 caracteres.').max(128),
 })
 
+/* ─── Helper: extrai IP e user-agent (Traefik usa X-Forwarded-For) ─── */
+function extractMeta(req) {
+  const xff = req.headers['x-forwarded-for']
+  const ip = (typeof xff === 'string' ? xff.split(',')[0].trim() : null)
+    || req.ip || null
+  const ua = req.headers['user-agent']
+  const userAgent = ua ? String(ua).slice(0, 500) : null
+  return { ip, userAgent }
+}
+
 /* ─── POST /auth/login ─── */
 authRouter.post('/login', async (req, res) => {
   const parsed = loginSchema.safeParse(req.body)
@@ -54,7 +64,7 @@ authRouter.post('/login', async (req, res) => {
   }
 
   try {
-    const { accessToken, refreshToken, user } = await loginService(parsed.data)
+    const { accessToken, refreshToken, user } = await loginService(parsed.data, extractMeta(req))
     setAuthCookies(res, { accessToken, refreshToken })
 
     return res.status(200).json({
@@ -76,7 +86,7 @@ authRouter.post('/refresh', async (req, res) => {
   const token = req.cookies?.aura_refresh
 
   try {
-    const { accessToken, refreshToken, user } = await refreshService(token)
+    const { accessToken, refreshToken, user } = await refreshService(token, extractMeta(req))
     setAuthCookies(res, { accessToken, refreshToken })
 
     return res.status(200).json({ user })
@@ -93,7 +103,7 @@ authRouter.post('/refresh', async (req, res) => {
 /* ─── POST /auth/logout ─── */
 authRouter.post('/logout', authenticate, async (req, res) => {
   try {
-    await logoutService(req.auth.tokenId)
+    await logoutService(req.auth.tokenId, req.auth.sessionId)
   } catch {}
   finally {
     clearAuthCookies(res)
