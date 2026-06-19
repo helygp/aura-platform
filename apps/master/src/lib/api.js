@@ -45,4 +45,14 @@ export const api = {
   metrics: {
     get: () => request('/master/metrics'),
   },
+  analytics: {
+    users:    (slug)            => request(`/master/analytics/${slug}/users`),
+    sessions: (slug, params={}) => {
+      const q = new URLSearchParams(params).toString()
+      return request(`/master/analytics/${slug}/sessions${q ? '?' + q : ''}`)
+    },
+    health:   (slug)            => request(`/master/analytics/${slug}/health`),
+    logs:     (slug, container, tail=200) =>
+      request(`/master/analytics/${slug}/logs/${container}?tail=${tail}`),
+  },
 }

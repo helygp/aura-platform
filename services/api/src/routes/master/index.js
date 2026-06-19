@@ -15,14 +15,16 @@
  */
 
 import { Router } from 'express'
-import { masterTenantsRouter } from './tenants.js'
-import { masterBillingRouter } from './billing.js'
-import { masterMetricsRouter } from './metrics.js'
+import { masterTenantsRouter }   from './tenants.js'
+import { masterBillingRouter }   from './billing.js'
+import { masterMetricsRouter }   from './metrics.js'
+import { masterAnalyticsRouter } from './analytics.js'
 
 export { billingWebhookRouter } from './webhook.js'
 
 export const masterRouter = Router()
 
-masterRouter.use('/tenants', masterTenantsRouter)
-masterRouter.use('/billing', masterBillingRouter)
-masterRouter.use('/metrics', masterMetricsRouter)
+masterRouter.use('/tenants',   masterTenantsRouter)
+masterRouter.use('/billing',   masterBillingRouter)
+masterRouter.use('/metrics',   masterMetricsRouter)
+masterRouter.use('/analytics', masterAnalyticsRouter)
