@@ -192,3 +192,180 @@ masterAnalyticsRouter.get('/:slug/logs/:container', async (req, res) => {
     res.status(500).json({ error: 'Erro interno.' })
   }
 })
+
+
+/* GET /:slug/heatmap — matrix 7x24 de logins dos últimos 30d */
+masterAnalyticsRouter.get('/:slug/heatmap', async (req, res) => {
+  try {
+    const tenant  = await resolveTenant(req.params.slug)
+    const since30d = new Date(Date.now() - 30 * 86400000)
+
+    const events = await prisma.loginEvent.findMany({
+      where:  { tenantSlug: tenant.slug, success: true, createdAt: { gte: since30d } },
+      select: { createdAt: true },
+    })
+
+    // matrix[weekday 0-6][hour 0-23] = count
+    const matrix = Array.from({ length: 7 }, () => new Array(24).fill(0))
+    for (const e of events) {
+      const d = new Date(e.createdAt)
+      matrix[d.getUTCDay()][d.getUTCHours()]++
+    }
+
+    const max = Math.max(...matrix.flat())
+    res.json({ matrix, max, totalLogins: events.length, days: 30 })
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message })
+    console.error('[analytics/heatmap]', err)
+    res.status(500).json({ error: 'Erro interno.' })
+  }
+})
+
+/* GET /:slug/events — audit log paginado de login_events */
+masterAnalyticsRouter.get('/:slug/events', async (req, res) => {
+  try {
+    const tenant = await resolveTenant(req.params.slug)
+    const {
+      userId, success, page = '1', limit = '50',
+      from, to,
+    } = req.query
+
+    const pageN  = Math.max(1, parseInt(page, 10))
+    const limitN = Math.min(200, Math.max(1, parseInt(limit, 10)))
+
+    const where = { tenantSlug: tenant.slug }
+    if (userId)             where.userId  = userId
+    if (success !== undefined && success !== '') {
+      where.success = success === 'true'
+    }
+    if (from || to) {
+      where.createdAt = {}
+      if (from) where.createdAt.gte = new Date(from)
+      if (to)   where.createdAt.lte = new Date(to)
+    }
+
+    const [events, total] = await Promise.all([
+      prisma.loginEvent.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip:  (pageN - 1) * limitN,
+        take:  limitN,
+        include: { user: { select: { name: true, login: true, role: true } } },
+      }),
+      prisma.loginEvent.count({ where }),
+    ])
+
+    res.json({
+      data: events,
+      meta: { page: pageN, limit: limitN, total, pages: Math.ceil(total / limitN) },
+    })
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message })
+    console.error('[analytics/events]', err)
+    res.status(500).json({ error: 'Erro interno.' })
+  }
+})
+
+/* POST /:slug/users/:userId/revoke — revoga todas as sessões ativas do usuário */
+masterAnalyticsRouter.post('/:slug/users/:userId/revoke', async (req, res) => {
+  try {
+    const tenant = await resolveTenant(req.params.slug)
+    const { userId } = req.params
+
+    // Confirma que o usuário pertence ao tenant
+    const user = await prisma.user.findFirst({
+      where: { id: userId, tenantId: tenant.id },
+      select: { id: true, name: true, login: true },
+    })
+    if (!user) return res.status(404).json({ error: 'Usuário não encontrado neste tenant.' })
+
+    const result = await prisma.userSession.updateMany({
+      where: { userId, tenantSlug: tenant.slug, revokedAt: null },
+      data:  { revokedAt: new Date() },
+    })
+
+    // Invalida refresh family (força relogin)
+    await prisma.user.update({
+      where: { id: userId },
+      data:  { refreshFamily: null },
+    })
+
+    res.json({
+      ok:      true,
+      revoked: result.count,
+      user:    { id: user.id, name: user.name, login: user.login },
+    })
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message })
+    console.error('[analytics/revoke]', err)
+    res.status(500).json({ error: 'Erro interno.' })
+  }
+})
+
+/* GET /:slug/suspicious — usuários com atividade suspeita (>5 falhas em 24h) */
+masterAnalyticsRouter.get('/:slug/suspicious', async (req, res) => {
+  try {
+    const tenant   = await resolveTenant(req.params.slug)
+    const since24h = new Date(Date.now() - 86400000)
+    const threshold = parseInt(req.query.threshold ?? '5', 10)
+
+    // Falhas por userId nas últimas 24h
+    const allFailures = await prisma.loginEvent.groupBy({
+      by:     ['userId', 'identifier'],
+      where:  { tenantSlug: tenant.slug, success: false, createdAt: { gte: since24h } },
+      _count: { _all: true },
+    })
+    const failuresByUser = allFailures
+      .filter(f => f._count._all >= threshold)
+      .sort((a, b) => b._count._all - a._count._all)
+
+    // Enriquece com dados do usuário quando userId existe
+    const userIds = failuresByUser.map(f => f.userId).filter(Boolean)
+    const users = userIds.length
+      ? await prisma.user.findMany({
+          where:  { id: { in: userIds } },
+          select: { id: true, name: true, login: true, email: true, role: true },
+        })
+      : []
+    const userMap = Object.fromEntries(users.map(u => [u.id, u]))
+
+    // IPs de origem das falhas
+    const failureIps = await prisma.loginEvent.findMany({
+      where:  {
+        tenantSlug: tenant.slug,
+        success:    false,
+        createdAt:  { gte: since24h },
+        OR: failuresByUser.map(f => ({
+          identifier: f.identifier,
+          ...(f.userId ? { userId: f.userId } : {}),
+        })),
+      },
+      select:  { ip: true, identifier: true, createdAt: true },
+      orderBy: { createdAt: 'desc' },
+      take:    200,
+    })
+
+    // Agrupa IPs por identifier
+    const ipsByIdentifier = {}
+    for (const e of failureIps) {
+      if (!ipsByIdentifier[e.identifier]) ipsByIdentifier[e.identifier] = new Set()
+      if (e.ip) ipsByIdentifier[e.identifier].add(e.ip)
+    }
+
+    res.json({
+      suspicious: failuresByUser.map(f => ({
+        userId:     f.userId,
+        identifier: f.identifier,
+        failures24h: f._count._all,
+        user:       f.userId ? (userMap[f.userId] ?? null) : null,
+        ips:        [...(ipsByIdentifier[f.identifier] ?? [])],
+      })),
+      threshold,
+      checkedAt: new Date().toISOString(),
+    })
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message })
+    console.error('[analytics/suspicious]', err)
+    res.status(500).json({ error: 'Erro interno.' })
+  }
+})

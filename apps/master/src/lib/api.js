@@ -46,13 +46,21 @@ export const api = {
     get: () => request('/master/metrics'),
   },
   analytics: {
-    users:    (slug)            => request(`/master/analytics/${slug}/users`),
-    sessions: (slug, params={}) => {
+    users:      (slug)            => request(`/master/analytics/${slug}/users`),
+    sessions:   (slug, params={}) => {
       const q = new URLSearchParams(params).toString()
       return request(`/master/analytics/${slug}/sessions${q ? '?' + q : ''}`)
     },
-    health:   (slug)            => request(`/master/analytics/${slug}/health`),
-    logs:     (slug, container, tail=200) =>
+    health:     (slug)            => request(`/master/analytics/${slug}/health`),
+    logs:       (slug, container, tail=200) =>
       request(`/master/analytics/${slug}/logs/${container}?tail=${tail}`),
+    heatmap:    (slug)            => request(`/master/analytics/${slug}/heatmap`),
+    events:     (slug, params={}) => {
+      const q = new URLSearchParams(params).toString()
+      return request(`/master/analytics/${slug}/events${q ? '?' + q : ''}`)
+    },
+    revoke:     (slug, userId)    =>
+      request(`/master/analytics/${slug}/users/${userId}/revoke`, { method: 'POST' }),
+    suspicious: (slug)            => request(`/master/analytics/${slug}/suspicious`),
   },
 }

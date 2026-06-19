@@ -63,3 +63,33 @@ export function useAnalyticsLogs(slug, container) {
   }, [slug, container])
   return { data, loading, error, fetch: load }
 }
+
+export function useAnalyticsHeatmap(slug) {
+  const [data, setData]     = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError]   = useState(null)
+  const load = useCallback(async () => {
+    if (!slug) return
+    setLoading(true); setError(null)
+    try   { setData(await api.analytics.heatmap(slug)) }
+    catch (e) { setError(e.message) }
+    finally   { setLoading(false) }
+  }, [slug])
+  useEffect(() => { load() }, [load])
+  return { data, loading, error, refetch: load }
+}
+
+export function useAnalyticsSuspicious(slug) {
+  const [data, setData]     = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError]   = useState(null)
+  const load = useCallback(async () => {
+    if (!slug) return
+    setLoading(true); setError(null)
+    try   { setData(await api.analytics.suspicious(slug)) }
+    catch (e) { setError(e.message) }
+    finally   { setLoading(false) }
+  }, [slug])
+  useEffect(() => { load() }, [load])
+  return { data, loading, error, refetch: load }
+}
