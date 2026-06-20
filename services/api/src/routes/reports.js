@@ -32,73 +32,218 @@ function period(req) {
   return { start, end }
 }
 
-/* ── 1. Resumo de vendas ── */
+/* ── 1. Resumo de vendas ──
+ * Ticket #76 (issue #35): suporte a filtros category + attr_key/attr_value,
+ * card "Unidades Vendidas" e toggle valor/unidades no gráfico.
+ *
+ * Quando há filtro de categoria ou atributo, faturamento e unidades são
+ * calculados a partir dos order_items filtrados (SUM qty*price_unit / SUM qty)
+ * e "pedidos" passa a ser COUNT DISTINCT order_id desses itens.
+ * Sem filtro de item, mantém o comportamento original (SUM orders.total) e
+ * adiciona unidades via subquery em order_items, preservando compat.
+ */
 reportsRouter.get('/sales', async (req, res) => {
   try {
     const { start, end } = period(req)
     const customerId = req.query.customer_id || null
-    const custClause = customerId ? ` AND customer_id = $3` : ''
-    const baseParams  = customerId ? [start, end, customerId] : [start, end]
+    const category   = req.query.category    || null
+    const attrKey    = req.query.attr_key    || null
+    const attrValue  = req.query.attr_value  || null
+    const hasItemFilter = !!(category || (attrKey && attrValue))
 
-    const [kpi, byDay, byChannel, byStatus] = await Promise.all([
-      // KPIs principais
-      query(`
-        SELECT
-          COUNT(*)                                             AS total_pedidos,
-          COUNT(*) FILTER (WHERE status = 'entregue')         AS pedidos_entregues,
-          COUNT(*) FILTER (WHERE status = 'cancelado')        AS pedidos_cancelados,
-          COALESCE(SUM(total) FILTER (WHERE status NOT IN ('cancelado','pendente')), 0) AS faturamento,
-          COALESCE(AVG(total) FILTER (WHERE status NOT IN ('cancelado','pendente')), 0) AS ticket_medio
-        FROM orders
-        WHERE (created_at AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN $1 AND $2${custClause}
-      `, baseParams),
+    let kpi, byDay, byChannel, byStatus
 
-      // Por dia
-      query(`
-        SELECT
-          (created_at AT TIME ZONE 'America/Sao_Paulo')::date::text AS dia,
-          COUNT(*)         AS pedidos,
-          COALESCE(SUM(total) FILTER (WHERE status NOT IN ('cancelado','pendente')), 0) AS faturamento
-        FROM orders
-        WHERE (created_at AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN $1 AND $2${custClause}
-        GROUP BY dia ORDER BY dia
-      `, baseParams),
+    if (!hasItemFilter) {
+      // ── caminho rápido: sem filtro de item, queries em orders + subquery unidades
+      const custClause = customerId ? ` AND customer_id = $3` : ''
+      const itemCustClause = customerId ? ` AND o2.customer_id = $3` : ''
+      const baseParams  = customerId ? [start, end, customerId] : [start, end]
 
-      // Por canal
-      query(`
-        SELECT
-          channel,
-          COUNT(*) AS pedidos,
-          COALESCE(SUM(total) FILTER (WHERE status NOT IN ('cancelado','pendente')), 0) AS faturamento
-        FROM orders
-        WHERE (created_at AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN $1 AND $2${custClause}
-        GROUP BY channel ORDER BY faturamento DESC
-      `, baseParams),
+      const [kpiR, byDayR, byChannelR, byStatusR] = await Promise.all([
+        query(`
+          SELECT
+            COUNT(*)                                             AS total_pedidos,
+            COUNT(*) FILTER (WHERE status = 'entregue')         AS pedidos_entregues,
+            COUNT(*) FILTER (WHERE status = 'cancelado')        AS pedidos_cancelados,
+            COALESCE(SUM(total) FILTER (WHERE status NOT IN ('cancelado','pendente')), 0) AS faturamento,
+            COALESCE(AVG(total) FILTER (WHERE status NOT IN ('cancelado','pendente')), 0) AS ticket_medio,
+            COALESCE((
+              SELECT SUM(oi.qty)
+              FROM order_items oi
+              JOIN orders o2 ON o2.id = oi.order_id
+              WHERE (o2.created_at AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN $1 AND $2
+                AND o2.status NOT IN ('cancelado','pendente')${itemCustClause}
+            ), 0) AS total_unidades
+          FROM orders
+          WHERE (created_at AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN $1 AND $2${custClause}
+        `, baseParams),
 
-      // Por status
-      query(`
-        SELECT status, COUNT(*) AS total
-        FROM orders
-        WHERE (created_at AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN $1 AND $2${custClause}
-        GROUP BY status ORDER BY total DESC
-      `, baseParams),
-    ])
+        query(`
+          SELECT
+            d.dia::text AS dia,
+            d.pedidos,
+            d.faturamento,
+            COALESCE(u.unidades, 0) AS unidades
+          FROM (
+            SELECT
+              (created_at AT TIME ZONE 'America/Sao_Paulo')::date AS dia,
+              COUNT(*) AS pedidos,
+              COALESCE(SUM(total) FILTER (WHERE status NOT IN ('cancelado','pendente')), 0) AS faturamento
+            FROM orders
+            WHERE (created_at AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN $1 AND $2${custClause}
+            GROUP BY dia
+          ) d
+          LEFT JOIN (
+            SELECT
+              (o2.created_at AT TIME ZONE 'America/Sao_Paulo')::date AS dia,
+              SUM(oi.qty) AS unidades
+            FROM order_items oi
+            JOIN orders o2 ON o2.id = oi.order_id
+            WHERE (o2.created_at AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN $1 AND $2
+              AND o2.status NOT IN ('cancelado','pendente')${itemCustClause}
+            GROUP BY dia
+          ) u ON u.dia = d.dia
+          ORDER BY d.dia
+        `, baseParams),
+
+        query(`
+          SELECT
+            channel,
+            COUNT(*) AS pedidos,
+            COALESCE(SUM(total) FILTER (WHERE status NOT IN ('cancelado','pendente')), 0) AS faturamento
+          FROM orders
+          WHERE (created_at AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN $1 AND $2${custClause}
+          GROUP BY channel ORDER BY faturamento DESC
+        `, baseParams),
+
+        query(`
+          SELECT status, COUNT(*) AS total
+          FROM orders
+          WHERE (created_at AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN $1 AND $2${custClause}
+          GROUP BY status ORDER BY total DESC
+        `, baseParams),
+      ])
+      kpi = kpiR; byDay = byDayR; byChannel = byChannelR; byStatus = byStatusR
+    } else {
+      // ── caminho com filtro de item: tudo via order_items + skus + products
+      const params = [start, end]
+      let idx = 3
+      const where = []
+      if (customerId) { where.push(`o.customer_id = $${idx++}`); params.push(customerId) }
+      if (category)   { where.push(`p.category    = $${idx++}`); params.push(category)   }
+      if (attrKey && attrValue) {
+        // s.attributes->>$k = $v  →  passa key e value como params separados
+        where.push(`s.attributes->>$${idx++} = $${idx++}`)
+        params.push(attrKey, attrValue)
+      }
+      const extra = where.length ? ' AND ' + where.join(' AND ') : ''
+
+      // CTE única reusada — todos os agregados saem dos itens filtrados
+      const baseSQL = `
+        WITH itens AS (
+          SELECT
+            o.id        AS order_id,
+            o.channel   AS channel,
+            o.status    AS status,
+            (o.created_at AT TIME ZONE 'America/Sao_Paulo')::date AS dia,
+            oi.qty      AS qty,
+            oi.qty * oi.price_unit AS subtotal
+          FROM orders o
+          JOIN order_items oi ON oi.order_id = o.id
+          JOIN skus      s    ON s.id  = oi.sku_id
+          JOIN products  p    ON p.id  = s.product_id
+          WHERE (o.created_at AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN $1 AND $2${extra}
+        )
+      `
+
+      const [kpiR, byDayR, byChannelR, byStatusR] = await Promise.all([
+        query(baseSQL + `
+          SELECT
+            COUNT(DISTINCT order_id)                                    AS total_pedidos,
+            COUNT(DISTINCT order_id) FILTER (WHERE status = 'entregue') AS pedidos_entregues,
+            COUNT(DISTINCT order_id) FILTER (WHERE status = 'cancelado')AS pedidos_cancelados,
+            COALESCE(SUM(subtotal) FILTER (WHERE status NOT IN ('cancelado','pendente')), 0) AS faturamento,
+            COALESCE(SUM(qty)      FILTER (WHERE status NOT IN ('cancelado','pendente')), 0) AS total_unidades,
+            CASE
+              WHEN COUNT(DISTINCT order_id) FILTER (WHERE status NOT IN ('cancelado','pendente')) > 0
+              THEN COALESCE(SUM(subtotal) FILTER (WHERE status NOT IN ('cancelado','pendente')), 0)
+                 / COUNT(DISTINCT order_id) FILTER (WHERE status NOT IN ('cancelado','pendente'))
+              ELSE 0
+            END AS ticket_medio
+          FROM itens
+        `, params),
+
+        query(baseSQL + `
+          SELECT
+            dia::text AS dia,
+            COUNT(DISTINCT order_id) AS pedidos,
+            COALESCE(SUM(subtotal) FILTER (WHERE status NOT IN ('cancelado','pendente')), 0) AS faturamento,
+            COALESCE(SUM(qty)      FILTER (WHERE status NOT IN ('cancelado','pendente')), 0) AS unidades
+          FROM itens
+          GROUP BY dia ORDER BY dia
+        `, params),
+
+        query(baseSQL + `
+          SELECT
+            channel,
+            COUNT(DISTINCT order_id) AS pedidos,
+            COALESCE(SUM(subtotal) FILTER (WHERE status NOT IN ('cancelado','pendente')), 0) AS faturamento
+          FROM itens
+          GROUP BY channel ORDER BY faturamento DESC
+        `, params),
+
+        query(baseSQL + `
+          SELECT status, COUNT(DISTINCT order_id) AS total
+          FROM itens
+          GROUP BY status ORDER BY total DESC
+        `, params),
+      ])
+      kpi = kpiR; byDay = byDayR; byChannel = byChannelR; byStatus = byStatusR
+    }
 
     res.json({
       period:     { start, end },
       customerId: customerId || null,
+      filters:    { category: category || null, attr_key: attrKey || null, attr_value: attrValue || null },
       kpi:        kpi.rows[0],
-      // Ticket #72: pg driver retorna NUMERIC como string → Recharts auto-domain
-      // do YAxis faz min/max lexicográfico (ex: "80.00" > "1500.00"), e valores
-      // numericamente maiores que o "max lexical" somem acima da área visível.
-      // Mesmo padrão do dashboard.js: converter faturamento pra number aqui.
+      // Ticket #72: NUMERIC vem como string do pg driver → converte aqui.
       byDay:      byDay.rows.map(r => ({
         dia:         r.dia,
         pedidos:     parseInt(r.pedidos, 10),
         faturamento: parseFloat(r.faturamento) || 0,
+        unidades:    parseInt(r.unidades, 10) || 0,
       })),
       byChannel:  byChannel.rows,
       byStatus:   byStatus.rows,
+    })
+  } catch(e) { res.status(500).json({ error: e.message }) }
+})
+
+/* ── 1b. Filtros disponíveis pra tela de Vendas ──
+ * Issue #35: lista categorias e atributos (chave:valor) usados, alimenta os
+ * dois selects novos no front. Cacheado no client.
+ */
+reportsRouter.get('/sales/filters', async (req, res) => {
+  try {
+    const [cats, attrs] = await Promise.all([
+      query(`
+        SELECT DISTINCT category AS value
+        FROM products
+        WHERE category IS NOT NULL AND category <> ''
+        ORDER BY category
+      `, []),
+      query(`
+        SELECT DISTINCT key, value
+        FROM skus s, jsonb_each_text(s.attributes::jsonb)
+        WHERE s.attributes IS NOT NULL
+          AND jsonb_typeof(s.attributes::jsonb) = 'object'
+          AND value IS NOT NULL AND value <> ''
+        ORDER BY key, value
+      `, []),
+    ])
+    res.json({
+      categories: cats.rows.map(r => r.value),
+      attributes: attrs.rows.map(r => ({ key: r.key, value: r.value })),
     })
   } catch(e) { res.status(500).json({ error: e.message }) }
 })

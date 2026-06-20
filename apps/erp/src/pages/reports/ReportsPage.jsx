@@ -324,15 +324,24 @@ export function ReportsPage() {
 }
 
 /* ═══════════════════════════════════════════
-   1. VENDAS
+   1. VENDAS — issue #35 (ticket AuraSuporte #76)
+   • Card "Unidades Vendidas" (5º KPI)
+   • Toggle valor R$ / unidades no gráfico
+   • Filtros novos: categoria + atributo (key:value)
 ═══════════════════════════════════════════ */
 function SalesReport({ companyName }) {
-  const [start, setStart]         = useState(firstOfMonth())
-  const [end,   setEnd]           = useState(today())
+  const [start, setStart]           = useState(firstOfMonth())
+  const [end,   setEnd]             = useState(today())
   const [customerId, setCustomerId] = useState('')
+  const [category,   setCategory]   = useState('')
+  const [attrIdx,    setAttrIdx]    = useState('')   // formato "key|value" no select
   const [customers,  setCustomers]  = useState([])
+  const [categories, setCategories] = useState([])
+  const [attributes, setAttributes] = useState([])   // [{key,value}]
+  const [chartMetric, setChartMetric] = useState('valor') // 'valor' | 'unidades'
   const { data, loading, error, fetch: load } = useReport('sales')
 
+  // clientes
   useEffect(() => {
     const tok = window.__aura_mem_token__ || ''
     fetch('/api/customers?limit=999', {
@@ -344,18 +353,58 @@ function SalesReport({ companyName }) {
       .catch(() => {})
   }, [])
 
+  // categorias + atributos (issue #35)
+  useEffect(() => {
+    const tok = window.__aura_mem_token__ || ''
+    fetch('/api/reports/sales/filters', {
+      credentials: 'include',
+      headers: tok ? { Authorization: 'Bearer ' + tok } : {},
+    })
+      .then(r => r.json())
+      .then(d => {
+        setCategories(d.categories ?? [])
+        setAttributes(d.attributes ?? [])
+      })
+      .catch(() => {})
+  }, [])
+
   const [dirty, setDirty] = useState(false)
-  const doLoad = () => { const p={start,end}; if(customerId) p.customer_id=customerId; load(p); setDirty(false) }
+  const doLoad = () => {
+    const p = { start, end }
+    if (customerId) p.customer_id = customerId
+    if (category)   p.category    = category
+    if (attrIdx) {
+      const [k, ...rest] = attrIdx.split('|')
+      const v = rest.join('|')
+      if (k && v) { p.attr_key = k; p.attr_value = v }
+    }
+    load(p); setDirty(false)
+  }
   useEffect(() => { doLoad() }, []) // eslint-disable-line
-  useEffect(() => { setDirty(true) }, [start, end, customerId])
+  useEffect(() => { setDirty(true) }, [start, end, customerId, category, attrIdx])
 
   const kpi  = data?.kpi  || {}
   const rows = data?.byDay || []
 
+  const isUnidades = chartMetric === 'unidades'
+  const dataKey = isUnidades ? 'unidades' : 'faturamento'
+  const yFmt    = isUnidades ? (v=>N(v)) : (v=>R$(v))
+  const tipFmt  = isUnidades ? (v=>[N(v),'Unidades']) : (v=>[R$(v),'Faturamento'])
+  const chartLabel = isUnidades ? 'Unidades por dia' : 'Faturamento por dia'
+
   const pdfCols = [
     { label:'Dia',          key:'dia',         get: r => D(r.dia) },
     { label:'Pedidos',      key:'pedidos',      align:'right' },
+    { label:'Unidades',     key:'unidades',     align:'right' },
     { label:'Faturamento',  key:'faturamento',  get: r => R$(r.faturamento), align:'right' },
+  ]
+
+  const summaryItems = [
+    { label:'Faturamento',       value: R$(kpi.faturamento) },
+    { label:'Pedidos',           value: N(kpi.total_pedidos) },
+    { label:'Unidades Vendidas', value: N(kpi.total_unidades) },
+    { label:'Ticket Médio',      value: R$(kpi.ticket_medio) },
+    { label:'Cancelados',        value: N(kpi.pedidos_cancelados) },
   ]
 
   return (
@@ -376,41 +425,78 @@ function SalesReport({ companyName }) {
               ))}
             </select>
           </div>
+          {/* issue #35: filtro de categoria */}
+          {categories.length > 0 && (
+            <select
+              value={category}
+              onChange={e => setCategory(e.target.value)}
+              className="h-8 px-2 text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-subtle)] text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
+            >
+              <option value="">Todas as categorias</option>
+              {categories.map(c => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+            </select>
+          )}
+          {/* issue #35: filtro de atributo (chave:valor) */}
+          {attributes.length > 0 && (
+            <select
+              value={attrIdx}
+              onChange={e => setAttrIdx(e.target.value)}
+              className="h-8 px-2 text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-subtle)] text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
+            >
+              <option value="">Todos os atributos</option>
+              {attributes.map((a, i) => {
+                const v = `${a.key}|${a.value}`
+                return <option key={i} value={v}>{a.key}: {a.value}</option>
+              })}
+            </select>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <FilterBtn onClick={doLoad} loading={loading} dirty={dirty} />
           <ExportBar loading={loading}
-            onPreview={() => openPreview({ title:'Relatório de Vendas', subtitle:`Período: ${D(start)} a ${D(end)}`, companyName, columns:pdfCols, rows, summary:[{label:'Faturamento',value:R$(kpi.faturamento)},{label:'Pedidos',value:N(kpi.total_pedidos)},{label:'Ticket Médio',value:R$(kpi.ticket_medio)}] })}
+            onPreview={() => openPreview({ title:'Relatório de Vendas', subtitle:`Período: ${D(start)} a ${D(end)}`, companyName, columns:pdfCols, rows, summary: summaryItems })}
             onCSV={() => exportCSV('vendas', pdfCols, rows)}
             onPDF={() => exportPDF({
-            title: 'Relatório de Vendas',
-            subtitle: `Período: ${D(start)} a ${D(end)}`,
-            companyName,
-            columns: pdfCols,
-            rows,
-            summary: [
-              { label:'Faturamento',   value: R$(kpi.faturamento) },
-              { label:'Pedidos',       value: N(kpi.total_pedidos) },
-              { label:'Ticket Médio',  value: R$(kpi.ticket_medio) },
-              { label:'Cancelados',    value: N(kpi.pedidos_cancelados) },
-            ],
-          })}
+              title: 'Relatório de Vendas',
+              subtitle: `Período: ${D(start)} a ${D(end)}`,
+              companyName,
+              columns: pdfCols,
+              rows,
+              summary: summaryItems,
+            })}
           />
         </div>
       </div>
 
-      {/* KPIs */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <KpiCard label="Faturamento"   value={R$(kpi.faturamento)}       />
-        <KpiCard label="Pedidos"       value={N(kpi.total_pedidos)}       />
-        <KpiCard label="Ticket Médio"  value={R$(kpi.ticket_medio)}       />
-        <KpiCard label="Cancelamentos" value={N(kpi.pedidos_cancelados)}  color="text-red-500" />
+      {/* KPIs — 5 cards (issue #35: Unidades Vendidas adicionado) */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+        <KpiCard label="Faturamento"       value={R$(kpi.faturamento)}       />
+        <KpiCard label="Pedidos"           value={N(kpi.total_pedidos)}       />
+        <KpiCard label="Unidades Vendidas" value={N(kpi.total_unidades)}      />
+        <KpiCard label="Ticket Médio"      value={R$(kpi.ticket_medio)}       />
+        <KpiCard label="Cancelamentos"     value={N(kpi.pedidos_cancelados)}  color="text-red-500" />
       </div>
 
-      {/* Gráfico */}
+      {/* Gráfico com toggle valor/unidades (issue #35) */}
       {rows.length > 0 && (
         <div className="p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-subtle)]">
-          <p className="text-xs font-semibold text-[var(--color-text-muted)] mb-3 uppercase tracking-wide">Faturamento por dia</p>
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wide">{chartLabel}</p>
+            <div className="inline-flex rounded-lg border border-[var(--color-border)] overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setChartMetric('valor')}
+                className={`px-3 h-7 text-xs font-medium transition-colors ${chartMetric==='valor' ? 'bg-[var(--color-primary)] text-white' : 'bg-transparent text-[var(--color-text-muted)] hover:bg-[var(--color-surface)]'}`}
+              >Valor R$</button>
+              <button
+                type="button"
+                onClick={() => setChartMetric('unidades')}
+                className={`px-3 h-7 text-xs font-medium transition-colors border-l border-[var(--color-border)] ${chartMetric==='unidades' ? 'bg-[var(--color-primary)] text-white' : 'bg-transparent text-[var(--color-text-muted)] hover:bg-[var(--color-surface)]'}`}
+              >Unidades</button>
+            </div>
+          </div>
           <ResponsiveContainer width="100%" height={180}>
             <AreaChart data={rows} margin={{ top:4, right:4, left:0, bottom:0 }}>
               <defs>
@@ -421,9 +507,9 @@ function SalesReport({ companyName }) {
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
               <XAxis dataKey="dia" tick={{fontSize:10}} tickFormatter={v=>D(v)} />
-              <YAxis tick={{fontSize:10}} tickFormatter={v=>R$(v)} width={80} />
-              <Tooltip formatter={v=>[R$(v),'Faturamento']} labelFormatter={D} />
-              <Area type="monotone" dataKey="faturamento" stroke="var(--color-primary)"
+              <YAxis tick={{fontSize:10}} tickFormatter={yFmt} width={isUnidades ? 50 : 80} />
+              <Tooltip formatter={tipFmt} labelFormatter={D} />
+              <Area type="monotone" dataKey={dataKey} stroke="var(--color-primary)"
                 strokeWidth={2} fill="url(#gSales)" />
             </AreaChart>
           </ResponsiveContainer>
