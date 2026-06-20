@@ -63,4 +63,32 @@ export const api = {
       request(`/master/analytics/${slug}/users/${userId}/revoke`, { method: 'POST' }),
     suspicious: (slug)            => request(`/master/analytics/${slug}/suspicious`),
   },
+  backups: {
+    summary:    ()       => request('/master/backups'),
+    policies:   ()       => request('/master/backups/policies'),
+    jobs:       (limit=100) => request(`/master/backups/jobs?limit=${limit}`),
+    heatmap:    ()       => request('/master/backups/jobs/heatmap'),
+    runNow:     (slug, label) =>
+      request(`/master/backups/run-now/${slug}`, {
+        method: 'POST',
+        body:   JSON.stringify({ label: label || null }),
+      }),
+    snapshotAll:(label)  =>
+      request('/master/backups/snapshot-all', {
+        method: 'POST',
+        body:   JSON.stringify({ label: label || null }),
+      }),
+    settings: {
+      get:    ()           => request('/master/backups/settings'),
+      update: (changes)    => request('/master/backups/settings', {
+        method: 'PATCH',
+        body:   JSON.stringify(changes),
+      }),
+    },
+    updatePolicy: (slug, changes) =>
+      request(`/master/backups/policies/${slug}`, {
+        method: 'PATCH',
+        body:   JSON.stringify(changes),
+      }),
+  },
 }

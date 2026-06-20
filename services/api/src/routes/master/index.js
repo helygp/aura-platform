@@ -9,6 +9,7 @@
  *   PATCH  /master/tenants/:slug/status
  *   GET    /master/billing
  *   GET    /master/metrics
+ *   /master/backups/*                ← Fase 1: painel de backups (proxy)
  *
  * Webhook montado em /billing/webhook no index.js principal
  * (precisa de express.raw — não pode estar dentro do /master com express.json já aplicado)
@@ -19,6 +20,7 @@ import { masterTenantsRouter }   from './tenants.js'
 import { masterBillingRouter }   from './billing.js'
 import { masterMetricsRouter }   from './metrics.js'
 import { masterAnalyticsRouter } from './analytics.js'
+import { masterBackupsRouter }   from './backups.js'
 
 export { billingWebhookRouter } from './webhook.js'
 
@@ -28,3 +30,4 @@ masterRouter.use('/tenants',   masterTenantsRouter)
 masterRouter.use('/billing',   masterBillingRouter)
 masterRouter.use('/metrics',   masterMetricsRouter)
 masterRouter.use('/analytics', masterAnalyticsRouter)
+masterRouter.use('/backups',   masterBackupsRouter)
