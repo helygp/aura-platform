@@ -536,6 +536,7 @@ function StockReport({ companyName }) {
     { label:'Variação',         key:'atributos', get: r => attrStr(r.atributos) },
     { label:'Categoria',        key:'categoria' },
     { label:'Estoque',          key:'estoque',      align:'right' },
+    { label:'Vendido',          key:'qtd_vendida',  align:'right' },
     { label:'Mínimo',           key:'estoque_minimo', align:'right' },
     { label:'Preço',            key:'preco',         get: r => R$(r.preco), align:'right' },
     { label:'Valor em Estoque', key:'valor_em_estoque', get: r => R$(r.valor_em_estoque), align:'right' },
@@ -548,6 +549,7 @@ function StockReport({ companyName }) {
     { label:'Variação',     render: r => attrStr(r.atributos) || '—' },
     { label:'Categoria',    key:'categoria',       sortable:true },
     { label:'Estoque',      key:'estoque',    align:'right', sortable:true },
+    { label:'Vendido',      key:'qtd_vendida', align:'right', sortable:true },
     { label:'Mínimo',       key:'estoque_minimo', align:'right', sortable:true },
     { label:'Preço',        render: r => R$(r.preco), align:'right', sortable:true, sortKey:'preco' },
     { label:'Val. Estoque', render: r => R$(r.valor_em_estoque), align:'right', sortable:true, sortKey:'valor_em_estoque' },
@@ -567,17 +569,21 @@ function StockReport({ companyName }) {
           onPDF={() => exportPDF({
             title:'Estoque Atual', companyName, columns: cols, rows,
             summary:[
-              { label:'Total SKUs',    value: N(summary.total_skus) },
-              { label:'Valor Total',   value: R$(summary.valor_total) },
-              { label:'SKUs Críticos', value: N(summary.skus_criticos) },
+              { label:'Total SKUs',      value: N(summary.total_skus) },
+              { label:'Total Unidades',   value: N(summary.total_units) },
+              { label:'Unid. Vendidas',   value: N(summary.total_vendido) },
+              { label:'Valor Total',      value: R$(summary.valor_total) },
+              { label:'SKUs Críticos',    value: N(summary.skus_criticos) },
             ],
           })}
         />
       </div>
       <div className="grid grid-cols-3 gap-3">
-        <KpiCard label="Total SKUs"    value={N(summary.total_skus)} />
+        <KpiCard label="Total SKUs"      value={N(summary.total_skus)} />
+        <KpiCard label="Total Unidades"   value={N(summary.total_units)} />
+        <KpiCard label="Unidades Vendidas" value={N(summary.total_vendido)} />
         <KpiCard label="Valor em Estoque" value={R$(summary.valor_total)} />
-        <KpiCard label="SKUs Críticos" value={N(summary.skus_criticos)} color="text-amber-500" />
+        <KpiCard label="SKUs Críticos"    value={N(summary.skus_criticos)} color="text-amber-500" />
       </div>
       <TableShell headers={headers} rows={rows} loading={loading} empty="Nenhum SKU encontrado." />
     </div>
