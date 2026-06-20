@@ -50,11 +50,14 @@ export function useCustomers() {
   const filtered = useMemo(() => {
     let list = allCustomers
     const q = filters.search.trim().toLowerCase()
-    if (q) list = list.filter(c =>
-      c.name.toLowerCase().includes(q) ||
-      (c.document ?? '').replace(/\D/g, '').includes(q.replace(/\D/g, '')) ||
-      (c.whatsapp ?? '').replace(/\D/g, '').includes(q.replace(/\D/g, ''))
-    )
+    if (q) {
+      const qNum = q.replace(/\D/g, '')
+      list = list.filter(c =>
+        (c.name ?? '').toLowerCase().includes(q) ||
+        (qNum && (c.document ?? '').replace(/\D/g, '').includes(qNum)) ||
+        (qNum && (c.whatsapp ?? '').replace(/\D/g, '').includes(qNum))
+      )
+    }
     if (filters.status) list = list.filter(c => c.status === filters.status)
     return list
   }, [allCustomers, filters])
