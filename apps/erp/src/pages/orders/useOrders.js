@@ -159,8 +159,11 @@ export function useOrders() {
   [allOrders])
 
   /* ─── Cancelar item parcial ─── */
-  const cancelItem = useCallback(async (orderId, itemId) => {
-    const res = await authFetch(`/api/orders/${orderId}/items/${itemId}/cancel`, { method: 'PATCH' })
+  const cancelItem = useCallback(async (orderId, itemId, cancelQty) => {
+    const res = await authFetch(`/api/orders/${orderId}/items/${itemId}/cancel`, {
+      method: 'PATCH',
+      body: cancelQty ? JSON.stringify({ cancelQty }) : undefined,
+    })
     if (!res.ok) {
       const d = await res.json().catch(() => ({}))
       throw new Error(d.error || 'Erro ao cancelar item')
