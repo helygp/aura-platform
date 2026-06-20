@@ -21,6 +21,7 @@ jobs:
 
     steps:
       - name: Release (versionamento automatico)
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_BRANCH: ${{ github.ref_name }}
