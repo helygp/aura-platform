@@ -419,22 +419,42 @@ ordersRouter.patch('/:id/items/:itemId/cancel', authorize('admin','operador'), a
       })
     }
 
-    // Marca item como cancelado (não remove)
-    await client.query(
-      "UPDATE order_items SET status='cancelado', updated_at=NOW() WHERE id=$1",
-      [itemId]
+    // Cancelamento parcial: cancelQty pode ser < item.qty (apenas se qty > 1)
+    const cancelQty = Math.min(
+      Math.max(1, parseInt(req.body?.cancelQty) || item.qty),
+      item.qty
     )
+    const isPartial = cancelQty < item.qty
 
-    // Devolve estoque
+    if (isPartial) {
+      // Reduz qty do item original; insere linha cancelada separada
+      await client.query(
+        'UPDATE order_items SET qty = $1, updated_at = NOW() WHERE id = $2',
+        [item.qty - cancelQty, itemId]
+      )
+      await client.query(`
+        INSERT INTO order_items (order_id, sku_id, sku_code, product_name, attributes, qty, price_unit, status)
+        SELECT order_id, sku_id, sku_code, product_name, attributes, $1, price_unit, 'cancelado'
+        FROM order_items WHERE id = $2
+      `, [cancelQty, itemId])
+    } else {
+      // Cancela linha inteira
+      await client.query(
+        "UPDATE order_items SET status='cancelado', updated_at=NOW() WHERE id=$1",
+        [itemId]
+      )
+    }
+
+    // Devolve apenas a qty cancelada ao estoque
     await client.query(
       'UPDATE skus SET stock = stock + $1, updated_at = NOW() WHERE id = $2',
-      [item.qty, item.sku_id]
+      [cancelQty, item.sku_id]
     )
 
     await logMovement(client, {
-      skuId: item.sku_id, type: 'entrada', qty: item.qty,
+      skuId: item.sku_id, type: 'entrada', qty: cancelQty,
       qtyBefore: item.stock,
-      reason: `Cancelamento item pedido ${orderId.slice(-6).toUpperCase()}`,
+      reason: `Cancelamento ${isPartial ? 'parcial' : ''} item pedido ${orderId.slice(-6).toUpperCase()}`,
       userName, orderId, customerName: item.customer_name,
     })
 
@@ -449,10 +469,11 @@ ordersRouter.patch('/:id/items/:itemId/cancel', authorize('admin','operador'), a
       [parseFloat(totals.new_total) || 0, orderId]
     )
 
+    const noteQty = isPartial ? `${cancelQty} de ${item.qty}` : `${item.qty}`
     await client.query(`
       INSERT INTO order_history (order_id, status, note, user_name)
       VALUES ($1, 'item_cancelado', $2, $3)
-    `, [orderId, `Item cancelado: ${item.product_name} (${item.qty}x) — estoque devolvido`, userName])
+    `, [orderId, `Item cancelado: ${item.product_name} (${noteQty}x) — estoque devolvido`, userName])
 
     await client.query('COMMIT')
     res.json({ ok: true, newOrderTotal: parseFloat(totals.new_total) || 0 })

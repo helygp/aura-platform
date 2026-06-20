@@ -157,6 +157,13 @@ reportsRouter.get('/stock', async (req, res) => {
         s.stock_min   AS estoque_minimo,
         s.price_wholesale AS preco,
         s.stock * s.price_wholesale AS valor_em_estoque,
+        COALESCE((
+          SELECT SUM(oi.qty)
+          FROM order_items oi
+          JOIN orders o ON o.id = oi.order_id
+          WHERE oi.sku_id = s.id
+            AND COALESCE(oi.status,'ativo') != 'cancelado'
+        ), 0) AS qtd_vendida,
         CASE
           WHEN s.stock = 0           THEN 'zerado'
           WHEN s.stock < s.stock_min THEN 'baixo'
@@ -172,8 +179,10 @@ reportsRouter.get('/stock', async (req, res) => {
     const total_skus    = rows.length
     const valor_total   = rows.reduce((a, r) => a + parseFloat(r.valor_em_estoque || 0), 0)
     const skus_criticos = rows.filter(r => r.status !== 'ok').length
+    const total_units   = rows.reduce((a, r) => a + parseInt(r.estoque || 0), 0)
+    const total_vendido = rows.reduce((a, r) => a + parseInt(r.qtd_vendida || 0), 0)
 
-    res.json({ rows, summary: { total_skus, valor_total, skus_criticos } })
+    res.json({ rows, summary: { total_skus, valor_total, skus_criticos, total_units, total_vendido } })
   } catch(e) { res.status(500).json({ error: e.message }) }
 })
 

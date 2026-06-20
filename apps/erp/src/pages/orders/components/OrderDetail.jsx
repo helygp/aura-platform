@@ -188,7 +188,7 @@ export function OrderDetail({ order, onClose, onStatusChange, onItemCancel }) {
   const [wppSending,      setWppSending]      = useState(false)
   const [wppSent,         setWppSent]         = useState(false)
   const [cancellingItem,  setCancellingItem]  = useState(null)
-  const [confirmCancelId, setConfirmCancelId] = useState(null)
+  const [cancelModal,     setCancelModal]     = useState(null) // { id, productName, qty, cancelQty }
 
   const { toast } = useToast()
 
@@ -207,27 +207,19 @@ export function OrderDetail({ order, onClose, onStatusChange, onItemCancel }) {
   const { subtotal, totalUnits } = order ? calcOrderTotals(order.items) : { subtotal: 0, totalUnits: 0 }
   const channelMeta = CHANNEL_META[order?.channel] ?? { label: order?.channel, icon: '•' }
 
-  const handleCancelItem = async (itemId) => {
-    if (!onItemCancel) return
+  const handleCancelItem = async () => {
+    if (!onItemCancel || !cancelModal) return
+    const { id: itemId, cancelQty } = cancelModal
     setCancellingItem(itemId)
     try {
-      await onItemCancel(order.id, itemId)
-      toast({
-        variant: 'success',
-        title: 'Item cancelado',
-        description: 'Estoque devolvido ao produto.',
-      })
+      await onItemCancel(order.id, itemId, cancelQty)
+      toast({ variant: 'success', title: 'Item cancelado', description: 'Estoque devolvido ao produto.' })
     } catch (e) {
       console.error('cancelItem', e.message)
-      toast({
-        variant: 'error',
-        title: 'Não foi possível cancelar',
-        description: e.message || 'Tente novamente em instantes.',
-      })
-    }
-    finally {
+      toast({ variant: 'error', title: 'Não foi possível cancelar', description: e.message || 'Tente novamente.' })
+    } finally {
       setCancellingItem(null)
-      setConfirmCancelId(null)
+      setCancelModal(null)
     }
   }
 
@@ -389,21 +381,42 @@ export function OrderDetail({ order, onClose, onStatusChange, onItemCancel }) {
                   Itens ({order.items.filter(i=>i.status!=='cancelado').length}{order.items.some(i=>i.status==='cancelado')?` (+${order.items.filter(i=>i.status==='cancelado').length} cancelado${order.items.filter(i=>i.status==='cancelado').length>1?'s':''})`:''}) 
                 </p>
                 {order.items.map(item => (
-                  confirmCancelId === item.id ? (
-                    <div key={item.id} className="flex items-center gap-2 py-2.5 border-b border-[var(--color-border)] last:border-0 bg-red-50 dark:bg-red-950/20 rounded-lg px-2">
-                      <p className="text-xs text-red-600 flex-1">Cancelar <strong>{item.productName}</strong>? Estoque devolvido.</p>
-                      <button onClick={() => setConfirmCancelId(null)} className="text-xs px-2 py-1 rounded border border-[var(--color-border)] hover:bg-[var(--color-surface)]">Não</button>
-                      <button onClick={() => handleCancelItem(item.id)} disabled={cancellingItem === item.id}
-                        className="text-xs px-2 py-1 rounded bg-red-500 text-white hover:bg-red-600 disabled:opacity-50">
-                        {cancellingItem === item.id ? '…' : 'Sim'}
-                      </button>
-                    </div>
-                  ) : (
-                    <OrderItem key={item.id} item={item}
-                      onCancel={onItemCancel && item.status !== 'cancelado' && ['pendente','confirmado','separando'].includes(order.status) ? () => setConfirmCancelId(item.id) : null}
-                      cancelling={cancellingItem === item.id} />
-                  )
+                  <OrderItem key={item.id} item={item}
+                    onCancel={onItemCancel && item.status !== 'cancelado' && ['pendente','confirmado','separando'].includes(order.status)
+                      ? () => setCancelModal({ id: item.id, productName: item.productName, qty: item.qty, cancelQty: 1 })
+                      : null}
+                    cancelling={cancellingItem === item.id} />
                 ))}
+                {/* Modal cancelamento parcial */}
+                {cancelModal && (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setCancelModal(null)}>
+                    <div className="bg-[var(--color-bg)] rounded-xl shadow-xl p-5 w-72 space-y-3" onClick={e=>e.stopPropagation()}>
+                      <p className="text-sm font-semibold text-[var(--color-text)]">Cancelar item</p>
+                      <p className="text-xs text-[var(--color-text-muted)] truncate">{cancelModal.productName}</p>
+                      {cancelModal.qty > 1 && (
+                        <div className="space-y-1">
+                          <label className="text-xs text-[var(--color-text-muted)]">Quantidade a cancelar (máx {cancelModal.qty})</label>
+                          <div className="flex items-center gap-2">
+                            <button onClick={() => setCancelModal(m=>({...m, cancelQty: Math.max(1, m.cancelQty-1)}))}
+                              className="w-7 h-7 rounded-lg border border-[var(--color-border)] text-sm hover:bg-[var(--color-surface)] flex items-center justify-center">-</button>
+                            <span className="flex-1 text-center font-semibold text-[var(--color-text)]">{cancelModal.cancelQty}</span>
+                            <button onClick={() => setCancelModal(m=>({...m, cancelQty: Math.min(m.qty, m.cancelQty+1)}))}
+                              className="w-7 h-7 rounded-lg border border-[var(--color-border)] text-sm hover:bg-[var(--color-surface)] flex items-center justify-center">+</button>
+                          </div>
+                          <p className="text-[10px] text-[var(--color-text-disabled)] text-center">{cancelModal.cancelQty === cancelModal.qty ? 'Cancelamento total' : `Parcial — ${cancelModal.qty - cancelModal.cancelQty}x permanecem`}</p>
+                        </div>
+                      )}
+                      <p className="text-xs text-red-500">{cancelModal.cancelQty}x serão devolvidos ao estoque.</p>
+                      <div className="flex gap-2 pt-1">
+                        <button onClick={() => setCancelModal(null)} className="flex-1 text-xs py-1.5 rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-surface)]">Não</button>
+                        <button onClick={handleCancelItem} disabled={cancellingItem === cancelModal.id}
+                          className="flex-1 text-xs py-1.5 rounded-lg bg-red-500 text-white hover:bg-red-600 disabled:opacity-50">
+                          {cancellingItem === cancelModal.id ? '…' : 'Cancelar'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* ── Resumo financeiro ── */}
