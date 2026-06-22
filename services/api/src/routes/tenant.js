@@ -290,6 +290,44 @@ tenantRouter.post('/cancel', async (req, res) => {
   }
 })
 
+/* ── GET /api/tenant/whatsapp-config ── */
+tenantRouter.get('/whatsapp-config', authorize('admin'), async (req, res) => {
+  try {
+    const { rows } = await query("SELECT value FROM settings WHERE key='whatsapp_config'")
+    const cfg = rows[0]?.value ?? {}
+    res.json({
+      url:     cfg.url     ?? '',
+      apiKey:  cfg.apiKey  ?? '',
+      session: cfg.session ?? '',
+    })
+  } catch (err) {
+    console.error('[tenant/whatsapp-config GET]', err.message)
+    res.status(500).json({ error: 'Erro interno.' })
+  }
+})
+
+/* ── PUT /api/tenant/whatsapp-config ── */
+tenantRouter.put('/whatsapp-config', authorize('admin'), async (req, res) => {
+  try {
+    const { url, apiKey, session } = req.body ?? {}
+    const payload = {}
+    if (url     !== undefined) payload.url     = String(url).trim()
+    if (apiKey  !== undefined) payload.apiKey  = String(apiKey).trim()
+    if (session !== undefined) payload.session = String(session).trim() || 'default'
+    if (!Object.keys(payload).length) return res.status(400).json({ error: 'Nenhum campo enviado.' })
+
+    await query(`
+      INSERT INTO settings (key, value) VALUES ('whatsapp_config', $1::jsonb)
+      ON CONFLICT (key) DO UPDATE SET value = settings.value || $1::jsonb, updated_at = now()
+    `, [JSON.stringify(payload)])
+
+    res.json({ ok: true })
+  } catch (err) {
+    console.error('[tenant/whatsapp-config PUT]', err.message)
+    res.status(500).json({ error: 'Erro interno.' })
+  }
+})
+
 /* ── Helpers internos ─────────────────────────────────────── */
 
 const SUPPORT_EMAIL = process.env.SUPPORT_EMAIL ?? 'suporte@aurabr.app'
