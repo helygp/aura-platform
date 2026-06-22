@@ -33,16 +33,26 @@ tenantRouter.get('/me', async (req, res) => {
     })
     if (!tenant) return res.status(404).json({ error: 'Tenant não encontrado.' })
 
-    let logoUrl = null
+    let logoUrl     = null
+    let displayName = null
+    let storeEnabled = true
     try {
-      const { rows } = await query("SELECT value FROM settings WHERE key='theme'")
-      if (rows[0]) logoUrl = rows[0].value?.logoUrl ?? null
+      const { rows } = await query("SELECT key, value FROM settings WHERE key IN ('theme','store_config')")
+      for (const row of rows) {
+        if (row.key === 'theme')        logoUrl      = row.value?.logoUrl     ?? null
+        if (row.key === 'store_config') {
+          displayName  = row.value?.displayName  ?? null
+          storeEnabled = row.value?.storeEnabled ?? true
+        }
+      }
     } catch {}
 
     res.json({
       id:           tenant.id,
       slug:         tenant.slug,
-      name:         tenant.name,
+      name:         displayName ?? tenant.name,
+      displayName,
+      storeEnabled,
       status:       tenant.status,
       theme_config: tenant.themeConfig ?? {},
       logoUrl,
@@ -78,6 +88,28 @@ tenantRouter.put('/theme', async (req, res) => {
   }
 })
 
+/* ── PUT /api/tenant/settings ── */
+tenantRouter.put('/settings', authorize('admin'), async (req, res) => {
+  try {
+    const { displayName, storeEnabled } = req.body ?? {}
+    const payload = {}
+    if (displayName  !== undefined) payload.displayName  = String(displayName).trim().slice(0, 120)
+    if (storeEnabled !== undefined) payload.storeEnabled = Boolean(storeEnabled)
+    if (!Object.keys(payload).length) return res.status(400).json({ error: 'Nenhum campo enviado.' })
+
+    // Merge parcial: preserva chaves não enviadas
+    await query(`
+      INSERT INTO settings (key, value) VALUES ('store_config', $1::jsonb)
+      ON CONFLICT (key) DO UPDATE SET value = settings.value || $1::jsonb, updated_at = now()
+    `, [JSON.stringify(payload)])
+
+    res.json({ ok: true })
+  } catch (err) {
+    console.error('[tenant/settings]', err.message)
+    res.status(500).json({ error: 'Erro interno.' })
+  }
+})
+
 /* ── GET /api/tenant/billing ── */
 tenantRouter.get('/billing', async (req, res) => {
   try {
@@ -85,7 +117,7 @@ tenantRouter.get('/billing', async (req, res) => {
       where:   { slug: req.user.tenantSlug },
       include: {
         plan:    true,
-        billing: {
+        billings: {
           orderBy: { createdAt: 'desc' },
           take:    12,
           select:  { id: true, period: true, amount: true, status: true, type: true, paidAt: true, invoiceRef: true },
@@ -98,6 +130,15 @@ tenantRouter.get('/billing', async (req, res) => {
     const pagarmePortalUrl = tenant.pagarmeSubscriptionId
       ? `https://app.pagar.me/subscriptions/${tenant.pagarmeSubscriptionId}`
       : null
+
+    const isAdmin = req.user?.role === 'ADMIN'
+
+    // Calcula se há condições contratuais especiais
+    const hasSpecialContract = isAdmin && (
+      tenant.contractPrice != null ||
+      tenant.contractLimits != null ||
+      (tenant.accessLevel && tenant.accessLevel !== 'NORMAL')
+    )
 
     res.json({
       plan: {
@@ -118,7 +159,15 @@ tenantRouter.get('/billing', async (req, res) => {
         pagarmeSubscriptionId: tenant.pagarmeSubscriptionId,
         pagarmePortalUrl,
       },
-      history: tenant.billing.map(b => ({
+      // Condições especiais — só visível para ADMIN
+      contract: isAdmin ? {
+        hasSpecial:     hasSpecialContract,
+        accessLevel:    tenant.accessLevel,
+        contractPrice:  tenant.contractPrice != null ? parseFloat(tenant.contractPrice) : null,
+        contractLimits: tenant.contractLimits ?? null,
+        accessNote:     tenant.accessNote ?? null,
+      } : null,
+      history: tenant.billings.map(b => ({
         id:        b.id,
         period:    b.period,
         amount:    parseFloat(b.amount),
