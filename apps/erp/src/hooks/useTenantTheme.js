@@ -23,9 +23,11 @@ const DEFAULT_THEME = {
 }
 
 const DEFAULT_INFO = {
-  name:    'Aura Platform',
-  slug:    '',
-  logoUrl: null,
+  name:        'Aura Platform',
+  displayName: null,
+  storeEnabled: true,
+  slug:        '',
+  logoUrl:     null,
 }
 
 function readCache() {
@@ -76,9 +78,11 @@ export function useTenantTheme() {
           metaPixelId:      json.theme_config?.metaPixelId      ?? null,
         }
         const info = {
-          name:             json.name    ?? DEFAULT_INFO.name,
-          slug:             json.slug    ?? DEFAULT_INFO.slug,
-          logoUrl:          json.logoUrl ?? null,
+          name:             json.name         ?? DEFAULT_INFO.name,
+          displayName:      json.displayName  ?? null,
+          storeEnabled:     json.storeEnabled ?? true,
+          slug:             json.slug         ?? DEFAULT_INFO.slug,
+          logoUrl:          json.logoUrl      ?? null,
           ga4MeasurementId: json.theme_config?.ga4MeasurementId ?? null,
         }
 
