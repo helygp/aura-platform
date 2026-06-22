@@ -3,7 +3,10 @@
  *
  * Integração direta com o WAHA do tenant.
  * Cada tenant tem sua própria instância WAHA — isolamento total.
- * Configuração via env: WAHA_URL, WAHA_API_KEY, WAHA_SESSION
+ *
+ * Configuração dinâmica via DB (settings key: whatsapp_config).
+ * Fallback para env vars WAHA_URL / WAHA_API_KEY / WAHA_SESSION.
+ * Cache em memória de 60s para não bater o banco em cada request.
  *
  * GET  /api/whatsapp/session        — status da sessão
  * POST /api/whatsapp/session/start  — inicia/reconecta sessão
@@ -24,18 +27,45 @@ export const whatsappRouter = Router()
 whatsappRouter.use(authenticate)
 whatsappRouter.use(authorize('admin', 'operador'))
 
-const WAHA_URL     = process.env.WAHA_URL     || ''
-const WAHA_API_KEY = process.env.WAHA_API_KEY || ''
-const WAHA_SESSION = process.env.WAHA_SESSION || 'default'
+/* ── Config dinâmica com cache 60s ── */
+let _cfgCache    = null
+let _cfgCachedAt = 0
+const CFG_TTL    = 60_000
+
+async function getWahaConfig() {
+  const now = Date.now()
+  if (_cfgCache && (now - _cfgCachedAt) < CFG_TTL) return _cfgCache
+  try {
+    const { rows } = await query("SELECT value FROM settings WHERE key='whatsapp_config'")
+    const db = rows[0]?.value ?? {}
+    _cfgCache = {
+      url:     db.url     || process.env.WAHA_URL     || '',
+      apiKey:  db.apiKey  || process.env.WAHA_API_KEY || '',
+      session: db.session || process.env.WAHA_SESSION || 'default',
+    }
+  } catch {
+    _cfgCache = {
+      url:     process.env.WAHA_URL     || '',
+      apiKey:  process.env.WAHA_API_KEY || '',
+      session: process.env.WAHA_SESSION || 'default',
+    }
+  }
+  _cfgCachedAt = now
+  return _cfgCache
+}
+
+/* Invalida o cache (chamado após salvar nova config via UI) */
+export function invalidateWahaCache() { _cfgCache = null; _cfgCachedAt = 0 }
 
 /* ── Helper HTTP para o WAHA ── */
 async function waha(path, opts = {}) {
-  if (!WAHA_URL) throw new Error('WhatsApp não configurado para este tenant')
-  const res = await fetch(`${WAHA_URL}/api/${path}`, {
+  const cfg = await getWahaConfig()
+  if (!cfg.url) throw new Error('WhatsApp não configurado para este tenant')
+  const res = await fetch(`${cfg.url}/api/${path}`, {
     ...opts,
     headers: {
       'Content-Type': 'application/json',
-      'X-Api-Key': WAHA_API_KEY,
+      'X-Api-Key': cfg.apiKey,
       ...(opts.headers ?? {}),
     },
   })
@@ -62,7 +92,8 @@ function toChatId(to) {
 /* ── GET /api/whatsapp/session ── */
 whatsappRouter.get('/session', async (req, res) => {
   try {
-    const data = await wahaJson(`sessions/${WAHA_SESSION}`)
+    const { session } = await getWahaConfig()
+    const data = await wahaJson(`sessions/${session}`)
     res.json({
       status: data.status,
       phone:  data.me?.id?.split('@')[0] ?? null,
@@ -76,9 +107,9 @@ whatsappRouter.get('/session', async (req, res) => {
 /* ── POST /api/whatsapp/session/start ── */
 whatsappRouter.post('/session/start', async (req, res) => {
   try {
-    // Tenta restart — funciona mesmo se já está FAILED
+    const { session } = await getWahaConfig()
     const data = await wahaJson(
-      `sessions/${WAHA_SESSION}/restart`,
+      `sessions/${session}/restart`,
       { method: 'POST', body: '{}' }
     )
     res.json({ ok: true, status: data.status ?? 'STARTING' })
@@ -90,7 +121,8 @@ whatsappRouter.post('/session/start', async (req, res) => {
 /* ── POST /api/whatsapp/session/stop ── */
 whatsappRouter.post('/session/stop', async (req, res) => {
   try {
-    await waha(`sessions/${WAHA_SESSION}/stop`, { method: 'POST', body: '{}' })
+    const { session } = await getWahaConfig()
+    await waha(`sessions/${session}/stop`, { method: 'POST', body: '{}' })
     res.json({ ok: true })
   } catch (e) {
     res.status(500).json({ error: e.message })
@@ -100,8 +132,8 @@ whatsappRouter.post('/session/stop', async (req, res) => {
 /* ── GET /api/whatsapp/qr ── */
 whatsappRouter.get('/qr', async (req, res) => {
   try {
-    // NOWEB engine: GET /api/{session}/auth/qr retorna PNG bytes
-    const r = await waha(`${WAHA_SESSION}/auth/qr`)
+    const { session } = await getWahaConfig()
+    const r = await waha(`${session}/auth/qr`)
     const buf = await r.arrayBuffer()
     const b64 = Buffer.from(buf).toString('base64')
     res.json({ qr: 'data:image/png;base64,' + b64 })
@@ -117,12 +149,13 @@ whatsappRouter.post('/send', async (req, res) => {
     if (!to || !message) {
       return res.status(400).json({ error: 'to e message são obrigatórios' })
     }
+    const { session } = await getWahaConfig()
     const data = await wahaJson('sendText', {
       method: 'POST',
       body: JSON.stringify({
         chatId:  toChatId(to),
         text:    message,
-        session: WAHA_SESSION,
+        session,
       }),
     })
     res.json({ ok: true, message_id: data.id ?? data._data?.id?._serialized })
@@ -184,7 +217,8 @@ whatsappRouter.put('/orders/:id', async (req, res) => {
 /* ── GET /api/whatsapp/messages ── */
 whatsappRouter.get('/messages', async (req, res) => {
   try {
-    const data = await wahaJson(`${WAHA_SESSION}/chats?limit=30`)
+    const { session } = await getWahaConfig()
+    const data = await wahaJson(`${session}/chats?limit=30`)
     const chats = Array.isArray(data) ? data : (data.chats ?? [])
     const messages = chats.map((c, i) => ({
       id:          `chat-${i}`,

@@ -63,9 +63,13 @@ storeTenantRouter.get('/theme', async (req, res) => {
       return res.status(403).json({ error: 'Loja inativa.' })
 
     let ts = {}
+    let storeConfig = {}
     try {
-      const { rows } = await query("SELECT value FROM settings WHERE key = 'theme'", [], slug)
-      if (rows[0]?.value) ts = rows[0].value
+      const { rows } = await query("SELECT key, value FROM settings WHERE key IN ('theme','store_config')", [], slug)
+      for (const row of rows) {
+        if (row.key === 'theme')        ts          = row.value ?? {}
+        if (row.key === 'store_config') storeConfig = row.value ?? {}
+      }
     } catch { /* não fatal */ }
 
     const tc     = tenant.themeConfig ?? {}
@@ -74,7 +78,7 @@ storeTenantRouter.get('/theme', async (req, res) => {
     const radius   = resolveRadius(tc.radiusStyle, tc.radius)
 
     const theme = {
-      slug: tenant.slug, name: tenant.name,
+      slug: tenant.slug, name: storeConfig.displayName ?? tenant.name,
       logoUrl:    ts.logoUrl    ?? null,
       faviconUrl: ts.faviconUrl ?? null,
       colors,
