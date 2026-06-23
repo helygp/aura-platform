@@ -46,6 +46,7 @@ model Tenant {
   status        TenantStatus  @default(TRIAL)
   themeConfig   Json          @default("{}") @map("theme_config")
   dbName        String?       @unique @map("db_name")
+  dbUrl         String?       @map("db_url")
   wahaSession   String?       @map("waha_session")
 
   // ── Pagar.me (Sprint 4) ───────────────────────────────
@@ -55,6 +56,15 @@ model Tenant {
   // paid | failed | pending | canceled | trial_ending
   nextBillingDate       DateTime? @map("next_billing_date") @db.Date
   trialEndsAt           DateTime? @map("trial_ends_at")
+
+  // ── Subscription lifecycle / contract overrides (migration 005) ──
+  gracePeriodDays  Int       @default(3)        @map("grace_period_days")
+  accessLevel      String    @default("NORMAL") @map("access_level")
+  // NORMAL=padrão | FULL=acesso total independente de plano | COURTESY=sem cobrança
+  accessNote       String?   @map("access_note")
+  accessExpiresAt  DateTime? @map("access_expires_at")
+  contractPrice    Decimal?  @map("contract_price")  @db.Decimal(10,2)
+  contractLimits   Json?     @map("contract_limits")
 
   createdAt     DateTime      @default(now()) @map("created_at")
   updatedAt     DateTime      @updatedAt       @map("updated_at")

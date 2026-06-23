@@ -129,7 +129,7 @@ export function BillingPage() {
     </div>
   )
 
-  const { plan, subscription, history } = billing
+  const { plan, subscription, history, contract } = billing
   const trialDays = daysUntil(subscription.trialEndsAt)
   const isTrial   = subscription.status === 'TRIAL'
   const isActive  = subscription.status === 'ACTIVE'
@@ -181,6 +181,7 @@ export function BillingPage() {
       {/* ── Cartão de status ── */}
       <div className="grid sm:grid-cols-2 gap-4">
 
+
         {/* Plano atual */}
         <Card className="p-5">
           <div className="flex items-start justify-between mb-4">
@@ -192,24 +193,50 @@ export function BillingPage() {
             </div>
             <StatusBadge status={subscription.status} />
           </div>
-          <p className="text-2xl font-bold text-[var(--color-text)] capitalize">{plan?.name ?? '—'}</p>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="text-2xl font-bold text-[var(--color-text)] capitalize">{plan?.name ?? '—'}</p>
+            {contract?.hasSpecial && (
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/15 text-indigo-400 font-medium border border-indigo-500/25">
+                condições especiais
+              </span>
+            )}
+          </div>
+
           <p className="text-[var(--color-text-muted)] text-sm mt-1">
-            {fmtBRL(plan?.priceMonthly)}<span className="text-xs">/mês</span>
+            {contract?.contractPrice != null
+              ? <>{fmtBRL(contract.contractPrice)}<span className="text-xs">/mês</span></>
+              : <>{fmtBRL(plan?.priceMonthly)}<span className="text-xs">/mês</span></>
+            }
           </p>
+
           <div className="mt-4 pt-4 border-t border-[var(--color-border)] grid grid-cols-2 gap-3 text-xs text-[var(--color-text-muted)]">
             <div>
               <p className="font-medium text-[var(--color-text)]">
-                {plan?.maxUsers === -1 ? 'Ilimitado' : plan?.maxUsers ?? '—'}
+                {(contract?.contractLimits?.maxUsers ?? plan?.maxUsers) === -1 ? 'Ilimitado' : contract?.contractLimits?.maxUsers ?? plan?.maxUsers ?? '—'}
               </p>
               <p>usuários</p>
             </div>
             <div>
               <p className="font-medium text-[var(--color-text)]">
-                {plan?.maxProducts === -1 ? 'Ilimitado' : plan?.maxProducts?.toLocaleString('pt-BR') ?? '—'}
+                {(contract?.contractLimits?.maxProducts ?? plan?.maxProducts) === -1 ? 'Ilimitado' : (contract?.contractLimits?.maxProducts ?? plan?.maxProducts)?.toLocaleString('pt-BR') ?? '—'}
               </p>
               <p>produtos</p>
             </div>
           </div>
+
+          {contract?.hasSpecial && (
+            <div className="mt-3 pt-3 border-t border-indigo-500/15 space-y-1">
+              {contract.accessLevel === 'COURTESY' && <p className="text-xs text-blue-400">· Acesso cortesia — sem cobrança</p>}
+              {contract.accessLevel === 'FULL' && <p className="text-xs text-emerald-400">· Acesso completo liberado</p>}
+              {contract.contractPrice != null && plan?.priceMonthly && contract.contractPrice < plan.priceMonthly && (
+                <p className="text-xs text-emerald-400">· {((1 - contract.contractPrice / plan.priceMonthly) * 100).toFixed(0)}% de desconto aplicado</p>
+              )}
+              {contract.contractLimits?.maxUsers != null && <p className="text-xs text-indigo-300">· Usuários: {contract.contractLimits.maxUsers}</p>}
+              {contract.contractLimits?.maxProducts != null && <p className="text-xs text-indigo-300">· Produtos: {contract.contractLimits.maxProducts.toLocaleString('pt-BR')}</p>}
+              {contract.accessNote && <p className="text-xs text-[var(--color-text-muted)] italic">· {contract.accessNote}</p>}
+            </div>
+          )}
         </Card>
 
         {/* Próxima cobrança */}
@@ -555,6 +582,16 @@ function Modal({ children, title, onClose }) {
         </div>
         <div className="px-5 py-5">{children}</div>
       </div>
+    </div>
+  )
+}
+
+/* ── Card wrapper ─────────────────────────────────────────── */
+
+function Card({ children, className = '' }) {
+  return (
+    <div className={`rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] ${className}`}>
+      {children}
     </div>
   )
 }
