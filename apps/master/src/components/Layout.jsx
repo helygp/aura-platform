@@ -6,12 +6,13 @@ import React, { useState } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard, Users, CreditCard, Settings,
-  Menu, X, ChevronRight, LogOut, Zap,
+  Menu, X, ChevronRight, LogOut, Zap, Database,
 } from 'lucide-react'
 
 const NAV = [
   { to: '/',        icon: LayoutDashboard, label: 'Dashboard'  },
   { to: '/tenants', icon: Users,           label: 'Tenants'    },
+  { to: '/backups', icon: Database,        label: 'Backups'    },
   { to: '/billing', icon: CreditCard,      label: 'Billing'    },
 ]
 

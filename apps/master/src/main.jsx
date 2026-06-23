@@ -1,6 +1,7 @@
 /**
  * apps/master/src/main.jsx
  * Entry-point do painel master Aura Platform — Sprint 4 Tarefa 2
+ * Fase 1 adicionou /backups
  */
 import React from 'react'
 import ReactDOM from 'react-dom/client'
@@ -15,6 +16,7 @@ import { TenantsPage }      from './pages/TenantsPage.jsx'
 import { TenantDetailPage } from './pages/TenantDetailPage.jsx'
 import { CreateTenantPage } from './pages/CreateTenantPage.jsx'
 import { BillingPage }      from './pages/BillingPage.jsx'
+import { BackupsPage }      from './pages/BackupsPage.jsx'
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
@@ -27,6 +29,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
           <Route path="/tenants/new" element={<CreateTenantPage />} />
           <Route path="/tenants/:slug" element={<TenantDetailPage />} />
           <Route path="/billing"     element={<BillingPage />} />
+          <Route path="/backups"     element={<BackupsPage />} />
           <Route path="*"            element={<Navigate to="/dashboard" replace />} />
         </Route>
       </Routes>
