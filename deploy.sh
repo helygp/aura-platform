@@ -79,13 +79,12 @@ if [ "$BRANCH" = "staging" ]; then
 
 # ── 5. Deploy produção ───────────────────────────────────────────
 elif [ "$BRANCH" = "main" ]; then
-  for SLUG in acme fastmalhas forroplastic; do
+  for SLUG in acme fastmalhas; do
     case $SLUG in
       acme)         DB_PASS="AuraAcme72aa2d14d2a454f5"  ; WAHA_URL="http://waha_7b61c0d3-104d-4f6d-b276-34e50d5b115e:3000" ; WAHA_KEY="eecfa4cf-8003-4c77-9f4f-a6e2de81a575" ;;
       fastmalhas)   DB_PASS="AuraFast29166"              ; WAHA_URL="" ; WAHA_KEY="" ;;
-      forroplastic) DB_PASS="AuraForro9751847"           ; WAHA_URL="" ; WAHA_KEY="" ;;
     esac
-    docker stop api-$SLUG && docker rm api-$SLUG
+    docker stop api-$SLUG 2>/dev/null; docker rm api-$SLUG 2>/dev/null || true
     docker run -d --name api-$SLUG --restart unless-stopped \
     -v /var/run/docker.sock:/var/run/docker.sock \
     -v /usr/bin/docker:/usr/bin/docker:ro \
