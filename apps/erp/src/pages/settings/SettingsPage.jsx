@@ -15,7 +15,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react'
 import {
   Upload, X, RefreshCw, Save, Check, Palette, Type, Circle,
   RotateCcw, BarChart2, Tag, Store, MessageCircle, Wifi, WifiOff,
-  Link, Key, Hash, QrCode, Phone, AlertCircle,
+  Link, Key, Hash, QrCode, Phone, AlertCircle, ShoppingBag, LayoutList, LayoutGrid,
 } from 'lucide-react'
 import { useTheme }        from '@aura/theme'
 import { useTenantTheme }  from '../../hooks/useTenantTheme.js'
@@ -86,6 +86,69 @@ function PreviewCard({ theme, logoUrl, displayName }) {
           ))}
         </div>
       </div>
+      {/* ══════════════════════════════════════════════
+          ABA PEDIDOS
+      ══════════════════════════════════════════════ */}
+      {activeTab === 'pedidos' && (
+        <div className="max-w-xl space-y-5">
+          <Section icon={ShoppingBag} title="Novo pedido — exibição de SKUs">
+            <div className="space-y-4">
+              <p className="text-sm text-[var(--color-text-muted)]">
+                Escolha como os SKUs com variações (Cor × Tamanho) aparecem ao criar um pedido.
+                Produtos sem grade mantêm sempre a lista.
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                {[
+                  {
+                    value: 'list',
+                    icon: LayoutList,
+                    label: 'Lista',
+                    desc: 'Uma linha por SKU com estoque e stepper',
+                  },
+                  {
+                    value: 'matrix',
+                    icon: LayoutGrid,
+                    label: 'Grade',
+                    desc: 'Tabela Cor × Tamanho, compacta para muitos SKUs',
+                  },
+                ].map(opt => {
+                  const Icon   = opt.icon
+                  const active = (() => { try { return (localStorage.getItem('aura_order_view') ?? 'list') === opt.value } catch { return opt.value === 'list' } })()
+                  return (
+                    <button
+                      key={opt.value}
+                      onClick={() => {
+                        try { localStorage.setItem('aura_order_view', opt.value) } catch {}
+                        // força re-render do botão
+                        setSaved(s => { setTimeout(() => setSaved(s), 0); return s })
+                      }}
+                      className={`flex flex-col items-center gap-3 p-4 rounded-xl border-2 text-center transition-all duration-150 ${
+                        active
+                          ? 'border-[var(--color-primary)] bg-blue-50 dark:bg-blue-950'
+                          : 'border-[var(--color-border)] hover:border-[var(--color-border-strong)]'
+                      }`}
+                    >
+                      <Icon size={22} className={active ? 'text-[var(--color-primary)]' : 'text-[var(--color-text-muted)]'} />
+                      <div>
+                        <p className={`text-xs font-semibold ${active ? 'text-[var(--color-primary)]' : 'text-[var(--color-text)]'}`}>
+                          {opt.label}
+                        </p>
+                        <p className="text-[10px] text-[var(--color-text-muted)] mt-0.5 leading-tight">
+                          {opt.desc}
+                        </p>
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+              <p className="text-xs text-[var(--color-text-muted)]">
+                Preferência salva neste navegador. O ícone ⊞ no modal de pedido também permite trocar na hora.
+              </p>
+            </div>
+          </Section>
+        </div>
+      )}
+
     </div>
   )
 }
@@ -303,6 +366,7 @@ export function SettingsPage() {
     { id: 'experiencia', label: 'Experiência' },
     { id: 'loja',        label: 'Loja'        },
     { id: 'whatsapp',    label: 'WhatsApp'    },
+    { id: 'pedidos',     label: 'Pedidos'     },
   ]
 
   return (
@@ -692,6 +756,69 @@ export function SettingsPage() {
             </div>
           </Section>
 
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════
+          ABA PEDIDOS
+      ══════════════════════════════════════════════ */}
+      {activeTab === 'pedidos' && (
+        <div className="max-w-xl space-y-5">
+          <Section icon={ShoppingBag} title="Novo pedido — exibição de SKUs">
+            <div className="space-y-4">
+              <p className="text-sm text-[var(--color-text-muted)]">
+                Escolha como os SKUs com variações (Cor × Tamanho) aparecem ao criar um pedido.
+                Produtos sem grade mantêm sempre a lista.
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                {[
+                  {
+                    value: 'list',
+                    icon: LayoutList,
+                    label: 'Lista',
+                    desc: 'Uma linha por SKU com estoque e stepper',
+                  },
+                  {
+                    value: 'matrix',
+                    icon: LayoutGrid,
+                    label: 'Grade',
+                    desc: 'Tabela Cor × Tamanho, compacta para muitos SKUs',
+                  },
+                ].map(opt => {
+                  const Icon   = opt.icon
+                  const active = (() => { try { return (localStorage.getItem('aura_order_view') ?? 'list') === opt.value } catch { return opt.value === 'list' } })()
+                  return (
+                    <button
+                      key={opt.value}
+                      onClick={() => {
+                        try { localStorage.setItem('aura_order_view', opt.value) } catch {}
+                        // força re-render do botão
+                        setSaved(s => { setTimeout(() => setSaved(s), 0); return s })
+                      }}
+                      className={`flex flex-col items-center gap-3 p-4 rounded-xl border-2 text-center transition-all duration-150 ${
+                        active
+                          ? 'border-[var(--color-primary)] bg-blue-50 dark:bg-blue-950'
+                          : 'border-[var(--color-border)] hover:border-[var(--color-border-strong)]'
+                      }`}
+                    >
+                      <Icon size={22} className={active ? 'text-[var(--color-primary)]' : 'text-[var(--color-text-muted)]'} />
+                      <div>
+                        <p className={`text-xs font-semibold ${active ? 'text-[var(--color-primary)]' : 'text-[var(--color-text)]'}`}>
+                          {opt.label}
+                        </p>
+                        <p className="text-[10px] text-[var(--color-text-muted)] mt-0.5 leading-tight">
+                          {opt.desc}
+                        </p>
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+              <p className="text-xs text-[var(--color-text-muted)]">
+                Preferência salva neste navegador. O ícone ⊞ no modal de pedido também permite trocar na hora.
+              </p>
+            </div>
+          </Section>
         </div>
       )}
 

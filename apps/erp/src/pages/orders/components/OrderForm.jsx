@@ -2,11 +2,8 @@
  * pages/orders/components/OrderForm.jsx
  *
  * Ticket #49: autosave de rascunho em banco (server-first + localStorage fallback).
- *
- * Novo conceito (T5.1): dois painéis lado a lado.
- *   Esquerda: catálogo de produtos com busca — cards expansíveis por produto
- *             mostrando SKUs inline com estoque + stepper de quantidade.
- *   Direita:  carrinho + cliente + canal + obs + submit.
+ * fix #81:    sort canônico Cor → Tamanho nos SKUs do catálogo.
+ * feat:       viewMode lista | grade (toggle em Configurações → Pedidos).
  *
  * Props:
  *   open     : boolean
@@ -20,9 +17,10 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useAuth } from '../../../auth/AuthContext.jsx'
 import { useOrderDraft } from '../useOrderDraft.js'
-import { Search, Trash2, RefreshCw, ChevronDown, ChevronUp, ShoppingCart, Package, X, Save, Cloud, CloudOff, AlertTriangle } from 'lucide-react'
+import { Search, Trash2, RefreshCw, ChevronDown, ChevronUp, ShoppingCart, Package, X, Save, Cloud, CloudOff, AlertTriangle, LayoutList, LayoutGrid } from 'lucide-react'
 import { Modal, Button } from '@aura/ui'
 import { ORDER_CHANNEL, fmtBRL, calcOrderTotals } from '../ordersTypes.js'
+import { OrderGradeMatrix, hasProductGrid } from './OrderGradeMatrix.jsx'
 
 /* ─── Utilitários de ordenação canônica (fix #81) ─── */
 /* Ordem: Cor (alfabética) → Tamanho canônico dentro de cada cor */
@@ -61,6 +59,14 @@ function sortedAttrStr(attributes) {
     .join(' / ')
 }
 
+/* ─── Lê/salva preferência de viewMode no localStorage ─── */
+function readViewMode() {
+  try { return localStorage.getItem('aura_order_view') ?? 'list' } catch { return 'list' }
+}
+function saveViewMode(mode) {
+  try { localStorage.setItem('aura_order_view', mode) } catch {}
+}
+
 /* ─── Stock badge ─── */
 function StockBadge({ stock, stockMin = 0 }) {
   if (stock <= 0)
@@ -70,7 +76,7 @@ function StockBadge({ stock, stockMin = 0 }) {
   return <span className="text-[10px] font-semibold text-green-600 bg-green-50 dark:bg-green-950/30 px-1.5 py-0.5 rounded-full">{stock} un</span>
 }
 
-/* ─── Linha de SKU no catálogo ─── */
+/* ─── Linha de SKU no catálogo (modo lista) ─── */
 function SkuRow({ sku, qty, onQtyChange }) {
   const attrStr = sortedAttrStr(sku.attributes)
   const noStock = (sku.stock ?? 0) <= 0
@@ -87,7 +93,6 @@ function SkuRow({ sku, qty, onQtyChange }) {
           <span className="text-[10px] text-[var(--color-text-muted)]">{fmtBRL(sku.priceWholesale ?? sku.price_wholesale ?? 0)}/un</span>
         </div>
       </div>
-      {/* Qty stepper */}
       <div className="flex items-center gap-1 shrink-0">
         <button type="button" disabled={noStock || qty <= 0}
           onClick={() => onQtyChange(Math.max(0, qty - 1))}
@@ -110,11 +115,14 @@ function SkuRow({ sku, qty, onQtyChange }) {
 }
 
 /* ─── Card de produto no catálogo ─── */
-function ProductCard({ product, quantities, onQtyChange }) {
+function ProductCard({ product, quantities, onQtyChange, viewMode }) {
   const [open, setOpen] = useState(false)
-  const skus = product.skus ?? []
+  const skus       = product.skus ?? []
   const totalStock = skus.reduce((a, s) => a + (s.stock ?? 0), 0)
   const qtyInCart  = skus.reduce((a, s) => a + (quantities[s.id] ?? 0), 0)
+
+  /* Em modo grade: usa matriz se o produto tiver Cor×Tamanho; senão, lista flat */
+  const useMatrix = viewMode === 'matrix' && hasProductGrid(product)
 
   return (
     <div className={`rounded-xl border transition-colors ${qtyInCart > 0 ? 'border-blue-300 dark:border-blue-700' : 'border-[var(--color-border)]'} bg-[var(--color-bg)]`}>
@@ -141,12 +149,20 @@ function ProductCard({ product, quantities, onQtyChange }) {
       </button>
 
       {open && skus.length > 0 && (
-        <div className="px-1 pb-2 border-t border-[var(--color-border)] space-y-0.5 pt-1.5">
-          {sortSkus(skus).map(sku => (
-            <SkuRow key={sku.id} sku={sku}
-              qty={quantities[sku.id] ?? 0}
-              onQtyChange={qty => onQtyChange(sku, qty, product)} />
-          ))}
+        <div className={`border-t border-[var(--color-border)] ${useMatrix ? 'p-2' : 'px-1 pb-2 space-y-0.5 pt-1.5'}`}>
+          {useMatrix ? (
+            <OrderGradeMatrix
+              product={product}
+              quantities={quantities}
+              onQtyChange={onQtyChange}
+            />
+          ) : (
+            sortSkus(skus).map(sku => (
+              <SkuRow key={sku.id} sku={sku}
+                qty={quantities[sku.id] ?? 0}
+                onQtyChange={qty => onQtyChange(sku, qty, product)} />
+            ))
+          )}
         </div>
       )}
     </div>
@@ -224,16 +240,26 @@ export function OrderForm({ open, onClose, onSave, customers = [], skus = [], pr
   const { user } = useAuth()
   const { draft: serverDraft, status: draftStatus, lastSavedAt, load: loadDraft, save: saveDraft, discard: discardDraft, clearLocal } = useOrderDraft()
 
-  const [form,        setForm]        = useState(EMPTY_FORM)
-  const [items,       setItems]       = useState([])         // carrinho
-  const [qtys,        setQtys]        = useState({})          // skuId → qty no catálogo
-  const [search,      setSearch]      = useState('')
-  const [saving,      setSaving]      = useState(false)
-  const [errors,      setErrors]      = useState({})
-  const [showBanner,  setShowBanner]  = useState(false)      // banner "Retomar?"
-  const [pendingDraft, setPendingDraft] = useState(null)      // draft pendente de decisão
+  const [form,         setForm]        = useState(EMPTY_FORM)
+  const [items,        setItems]       = useState([])
+  const [qtys,         setQtys]        = useState({})
+  const [search,       setSearch]      = useState('')
+  const [saving,       setSaving]      = useState(false)
+  const [errors,       setErrors]      = useState({})
+  const [showBanner,   setShowBanner]  = useState(false)
+  const [pendingDraft, setPendingDraft] = useState(null)
 
-  // Flag: já tem conteúdo no form (pra saber quando autosave faz sentido)
+  /* Preferência de viewMode persistida em localStorage */
+  const [viewMode, setViewMode] = useState(readViewMode)
+
+  const toggleViewMode = useCallback(() => {
+    setViewMode(prev => {
+      const next = prev === 'list' ? 'matrix' : 'list'
+      saveViewMode(next)
+      return next
+    })
+  }, [])
+
   const hasContent = items.length > 0 || form.customerId
 
   /* ── Ao abrir o modal: carrega draft do servidor ── */
@@ -242,7 +268,6 @@ export function OrderForm({ open, onClose, onSave, customers = [], skus = [], pr
     let cancelled = false
 
     async function init() {
-      // Reset estado visual
       setForm(EMPTY_FORM)
       setItems([])
       setQtys({})
@@ -251,14 +276,12 @@ export function OrderForm({ open, onClose, onSave, customers = [], skus = [], pr
       setShowBanner(false)
       setPendingDraft(null)
 
-      // Tenta preselect do cliente se user vinculado a 1 só
       const linkedIds = user?.customerIds ?? []
       if (linkedIds.length === 1) {
         const cust = customers.find(c => c.id === linkedIds[0])
         if (cust) setForm({ ...EMPTY_FORM, customerId: cust.id, customerName: cust.name, customerWhatsapp: cust.whatsapp ?? '' })
       }
 
-      // Carrega draft
       const draft = await loadDraft()
       if (cancelled) return
       if (draft && (draft.items?.length > 0 || draft.customerId)) {
@@ -270,19 +293,17 @@ export function OrderForm({ open, onClose, onSave, customers = [], skus = [], pr
     return () => { cancelled = true }
   }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  /* ── Retomar draft ── */
   const handleResume = useCallback(() => {
     if (!pendingDraft) return
     const d = pendingDraft
     setForm({
-      customerId:        d.customerId ?? '',
-      customerName:      d.customerName ?? '',
-      customerWhatsapp:  d.customerWhatsapp ?? '',
-      channel:           d.channel ?? ORDER_CHANNEL.MANUAL,
-      notes:             d.notes ?? '',
+      customerId:       d.customerId ?? '',
+      customerName:     d.customerName ?? '',
+      customerWhatsapp: d.customerWhatsapp ?? '',
+      channel:          d.channel ?? ORDER_CHANNEL.MANUAL,
+      notes:            d.notes ?? '',
     })
     setItems(d.items ?? [])
-    // Reconstrói qtys a partir dos items do draft
     const q = {}
     for (const item of (d.items ?? [])) { q[item.skuId] = item.qty }
     setQtys(q)
@@ -290,14 +311,12 @@ export function OrderForm({ open, onClose, onSave, customers = [], skus = [], pr
     setPendingDraft(null)
   }, [pendingDraft])
 
-  /* ── Descartar draft ── */
   const handleDiscardDraft = useCallback(() => {
     setShowBanner(false)
     setPendingDraft(null)
     discardDraft()
   }, [discardDraft])
 
-  // Normaliza produtos — garante que products[] tem a estrutura certa
   const catalog = useMemo(() => {
     if (products.length) return products
     const map = {}
@@ -324,7 +343,6 @@ export function OrderForm({ open, onClose, onSave, customers = [], skus = [], pr
     setForm(prev => ({ ...prev, customerId: cust?.id ?? '', customerName: cust?.name ?? '', customerWhatsapp: cust?.whatsapp ?? '' }))
   }
 
-  // Atualiza qty no catálogo e sincroniza com o carrinho
   const handleQtyChange = useCallback((sku, newQty, product) => {
     setQtys(prev => ({ ...prev, [sku.id]: newQty }))
     setItems(prev => {
@@ -354,17 +372,14 @@ export function OrderForm({ open, onClose, onSave, customers = [], skus = [], pr
     setQtys(prev => ({ ...prev, [skuId]: qty }))
   }
 
-  /* ── Autosave: salva rascunho no servidor a cada mudança ── */
   const prevPayloadRef = useRef('')
   useEffect(() => {
-    if (!open || showBanner) return   // não salva enquanto banner está ativo
-    if (!hasContent) return            // nada pra salvar
-
-    const payload = { ...form, items }
+    if (!open || showBanner) return
+    if (!hasContent) return
+    const payload    = { ...form, items }
     const serialized = JSON.stringify(payload)
-    if (serialized === prevPayloadRef.current) return  // sem mudança real
+    if (serialized === prevPayloadRef.current) return
     prevPayloadRef.current = serialized
-
     saveDraft(payload)
   }, [form, items, open, showBanner, hasContent, saveDraft])
 
@@ -378,7 +393,7 @@ export function OrderForm({ open, onClose, onSave, customers = [], skus = [], pr
     setSaving(true)
     try {
       await onSave({ ...form, items })
-      clearLocal()   // backend já apagou o draft; limpa espelho local
+      clearLocal()
       onClose()
     } catch (e) {
       setErrors(prev => ({ ...prev, submit: e.message || 'Erro ao criar pedido.' }))
@@ -390,12 +405,11 @@ export function OrderForm({ open, onClose, onSave, customers = [], skus = [], pr
       <Modal.Content title="Novo pedido" size="xl">
         <div className="flex flex-col gap-4 py-1">
 
-          {/* ── Banner de rascunho ── */}
           {showBanner && pendingDraft && (
             <DraftBanner draft={pendingDraft} onResume={handleResume} onDiscard={handleDiscardDraft} />
           )}
 
-          {/* ── Linha superior: cliente + canal ── */}
+          {/* Cliente + Canal */}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wide mb-1">Cliente *</label>
@@ -422,7 +436,7 @@ export function OrderForm({ open, onClose, onSave, customers = [], skus = [], pr
             </div>
           </div>
 
-          {/* ── Dois painéis ── */}
+          {/* Dois painéis */}
           <div className="grid grid-cols-[1fr_300px] gap-4 min-h-[400px] max-h-[480px]">
 
             {/* Painel esquerdo: catálogo */}
@@ -434,6 +448,19 @@ export function OrderForm({ open, onClose, onSave, customers = [], skus = [], pr
                   <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Buscar produto ou SKU…"
                     className="w-full h-7 pl-7 pr-3 rounded-lg text-xs bg-[var(--color-bg-subtle)] border border-[var(--color-border)] text-[var(--color-text)] placeholder:text-[var(--color-text-disabled)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]" />
                 </div>
+                {/* Toggle lista / grade */}
+                <button
+                  type="button"
+                  onClick={toggleViewMode}
+                  title={viewMode === 'list' ? 'Mudar para grade' : 'Mudar para lista'}
+                  className={`shrink-0 h-7 w-7 flex items-center justify-center rounded-lg border transition-colors ${
+                    viewMode === 'matrix'
+                      ? 'border-[var(--color-primary)] bg-blue-50 dark:bg-blue-950/30 text-[var(--color-primary)]'
+                      : 'border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)]'
+                  }`}
+                >
+                  {viewMode === 'matrix' ? <LayoutGrid size={13} /> : <LayoutList size={13} />}
+                </button>
               </div>
               <div className="flex-1 overflow-y-auto space-y-2 pr-1">
                 {filteredCatalog.length === 0 ? (
@@ -443,7 +470,8 @@ export function OrderForm({ open, onClose, onSave, customers = [], skus = [], pr
                   </div>
                 ) : filteredCatalog.map(product => (
                   <ProductCard key={product.id} product={product}
-                    quantities={qtys} onQtyChange={handleQtyChange} />
+                    quantities={qtys} onQtyChange={handleQtyChange}
+                    viewMode={viewMode} />
                 ))}
               </div>
             </div>
@@ -464,7 +492,9 @@ export function OrderForm({ open, onClose, onSave, customers = [], skus = [], pr
               {items.length === 0 ? (
                 <div className="flex flex-col items-center justify-center flex-1 text-center gap-2 rounded-xl border-2 border-dashed border-[var(--color-border)]">
                   <ShoppingCart size={20} className="text-[var(--color-text-muted)] opacity-30" />
-                  <p className="text-[11px] text-[var(--color-text-muted)]">Ajuste as quantidades ao lado para adicionar itens</p>
+                  <p className="text-[11px] text-[var(--color-text-muted)]">
+                    {viewMode === 'matrix' ? 'Preencha a grade ao lado' : 'Ajuste as quantidades ao lado para adicionar itens'}
+                  </p>
                 </div>
               ) : (
                 <div className="flex-1 overflow-y-auto">
@@ -476,7 +506,6 @@ export function OrderForm({ open, onClose, onSave, customers = [], skus = [], pr
                 </div>
               )}
 
-              {/* Total + obs */}
               <div className="pt-3 border-t border-[var(--color-border)] mt-2 space-y-2">
                 <div className="flex justify-between text-sm font-bold text-[var(--color-text)]">
                   <span>Total</span><span>{fmtBRL(subtotal)}</span>
@@ -492,19 +521,14 @@ export function OrderForm({ open, onClose, onSave, customers = [], skus = [], pr
 
         <Modal.Footer>
           <div className="flex items-center gap-3 w-full">
-            {/* Status do rascunho */}
             <DraftStatus status={draftStatus} lastSavedAt={lastSavedAt} />
-
-            {/* Descartar rascunho */}
             {hasContent && !showBanner && (
               <button type="button" onClick={handleDiscardDraft}
                 className="text-[10px] text-[var(--color-text-muted)] hover:text-red-500 transition-colors underline underline-offset-2">
                 Descartar rascunho
               </button>
             )}
-
             <div className="flex-1" />
-
             {errors.submit && <p className="text-xs text-red-500 text-right">{errors.submit}</p>}
             <Button variant="secondary" onClick={onClose} disabled={saving}>Cancelar</Button>
             <Button onClick={handleSubmit} disabled={saving}>
