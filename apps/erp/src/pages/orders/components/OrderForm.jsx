@@ -24,6 +24,39 @@ import { Search, Trash2, RefreshCw, ChevronDown, ChevronUp, ShoppingCart, Packag
 import { Modal, Button } from '@aura/ui'
 import { ORDER_CHANNEL, fmtBRL, calcOrderTotals } from '../ordersTypes.js'
 
+/* ─── Utilitários de ordenação canônica de tamanho (fix #81) ─── */
+const _SZ_CANONICAL = ['PP','P','M','G','GG','XG']
+const _SZ_ROWS      = ['Tamanho','tamanho','Size','size','Tam','tam']
+
+function _szKey(v) {
+  const s = String(v ?? '').trim()
+  if (/^[0-9]+(\.[0-9]+)?$/.test(s)) return 'A' + String(parseFloat(s) + 1e5).padStart(12,'0')
+  const i = _SZ_CANONICAL.indexOf(s.toUpperCase())
+  return 'B' + (i === -1 ? s.toUpperCase() : String(i).padStart(4,'0'))
+}
+
+function sortSkus(skus) {
+  return [...skus].sort((a, b) => {
+    const aAttr = a.attributes ?? {}
+    const bAttr = b.attributes ?? {}
+    const szA   = Object.keys(aAttr).find(k => _SZ_ROWS.includes(k))
+    const szB   = Object.keys(bAttr).find(k => _SZ_ROWS.includes(k))
+    const ka    = szA ? _szKey(aAttr[szA]) : ''
+    const kb    = szB ? _szKey(bAttr[szB]) : ''
+    if (ka !== kb) return ka < kb ? -1 : 1
+    const cA = Object.entries(aAttr).find(([k]) => !_SZ_ROWS.includes(k))?.[1] ?? ''
+    const cB = Object.entries(bAttr).find(([k]) => !_SZ_ROWS.includes(k))?.[1] ?? ''
+    return String(cA).localeCompare(String(cB), 'pt-BR')
+  })
+}
+
+function sortedAttrStr(attributes) {
+  return Object.entries(attributes ?? {})
+    .sort(([a], [b]) => (_SZ_ROWS.includes(a) ? 0 : 1) - (_SZ_ROWS.includes(b) ? 0 : 1))
+    .map(([, v]) => `${v}`)
+    .join(' / ')
+}
+
 /* ─── Stock badge ─── */
 function StockBadge({ stock, stockMin = 0 }) {
   if (stock <= 0)
@@ -35,9 +68,7 @@ function StockBadge({ stock, stockMin = 0 }) {
 
 /* ─── Linha de SKU no catálogo ─── */
 function SkuRow({ sku, qty, onQtyChange }) {
-  const attrStr = Object.entries(sku.attributes ?? {})
-    .map(([k, v]) => `${v}`)
-    .join(' / ')
+  const attrStr = sortedAttrStr(sku.attributes)
   const noStock = (sku.stock ?? 0) <= 0
 
   return (
@@ -107,7 +138,7 @@ function ProductCard({ product, quantities, onQtyChange }) {
 
       {open && skus.length > 0 && (
         <div className="px-1 pb-2 border-t border-[var(--color-border)] space-y-0.5 pt-1.5">
-          {skus.map(sku => (
+          {sortSkus(skus).map(sku => (
             <SkuRow key={sku.id} sku={sku}
               qty={quantities[sku.id] ?? 0}
               onQtyChange={qty => onQtyChange(sku, qty, product)} />
@@ -120,7 +151,7 @@ function ProductCard({ product, quantities, onQtyChange }) {
 
 /* ─── Item no carrinho ─── */
 function CartItem({ item, onRemove, onQtyChange }) {
-  const attrStr = Object.values(item.attributes ?? {}).join(' / ')
+  const attrStr = sortedAttrStr(item.attributes)
   return (
     <div className="flex items-center gap-2 py-2 border-b border-[var(--color-border)] last:border-0">
       <div className="flex-1 min-w-0">
