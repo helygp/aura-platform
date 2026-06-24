@@ -112,11 +112,10 @@ const ModalContent = React.forwardRef(function ModalContent(
                   {title}
                 </Dialog.Title>
               )}
-              {description && (
-                <Dialog.Description className="text-sm text-[var(--color-text-muted)]">
-                  {description}
-                </Dialog.Description>
-              )}
+              {/* Sempre presente para a11y (Radix exige); oculto visualmente quando sem prop */}
+              <Dialog.Description className={cn("text-sm text-[var(--color-text-muted)]", !description && "sr-only")}>
+                {description ?? ' '}
+              </Dialog.Description>
             </div>
 
             {!hideClose && (
