@@ -1,0 +1,262 @@
+name: Guardrails
+
+# Checks rápidos pre-deploy que bloqueiam erros silenciosos como os do PR #37:
+#   - Arquivos com size=0 que NÃO deveriam estar vazios (.gitkeep está OK)
+#   - JSON inválido em arquivos de configuração (package.json, tsconfig.json)
+#   - Sintaxe bash inválida em scripts críticos (deploy.sh)
+#   - Imports JS/JSX que referenciam exports que não existem
+#
+# Roda em PR e push para staging/main. Se falhar, alerta no log e impede
+# que o Deploy seja considerado "verde" (configurar branch protection
+# no GitHub para exigir este check como required).
+
+on:
+  push:
+    branches:
+      - staging
+      - main
+  pull_request:
+    branches:
+      - staging
+      - main
+  workflow_dispatch:
+
+# Múltiplos pushes em sequência: só o último check importa.
+concurrency:
+  group: guardrails-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  no-empty-files:
+    name: Detect empty files
+    runs-on: [self-hosted, aura-vps]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Verificar arquivos com size=0
+        run: |
+          set -e
+          # Whitelist: arquivos que podem legitimamente ser vazios.
+          # Adicione novos padrões aqui se aparecerem.
+          WHITELIST_RE='(\.gitkeep|\.gitignore|\.dockerignore|\.npmrc|LICENSE|/__init__\.py)$'
+
+          EMPTY=$(find . -type f -size 0 \
+            -not -path './.git/*' \
+            -not -path './node_modules/*' \
+            -not -path './*/node_modules/*' \
+            -not -path './dist/*' \
+            -not -path './build/*' \
+            | grep -vE "$WHITELIST_RE" || true)
+
+          if [ -n "$EMPTY" ]; then
+            echo "::error::Arquivos vazios detectados (não permitido):"
+            echo "$EMPTY" | sed 's/^/  /'
+            echo ""
+            echo "Cada um destes arquivos tem size=0. Se algum DEVE ser vazio"
+            echo "(ex: marker file), adicione ao WHITELIST_RE neste workflow."
+            echo "Senão, restaure o conteúdo correto antes de mergear."
+            exit 1
+          fi
+          echo "✓ Nenhum arquivo vazio anômalo."
+
+  valid-json:
+    name: Validate JSON files
+    runs-on: [self-hosted, aura-vps]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Parsear todos os JSON
+        run: |
+          set -e
+          export PATH="/usr/local/bin:/usr/bin:/bin:$PATH"
+
+          # Lista de JSONs críticos: se algum não parsear, falha.
+          JSONS=$(find . -name '*.json' \
+            -not -path './.git/*' \
+            -not -path './node_modules/*' \
+            -not -path './*/node_modules/*' \
+            -not -path './dist/*' \
+            -not -path './build/*')
+
+          BAD=""
+          for f in $JSONS; do
+            if ! node -e "JSON.parse(require('fs').readFileSync('$f','utf8'))" 2>/dev/null; then
+              BAD="$BAD\n  $f"
+            fi
+          done
+
+          if [ -n "$BAD" ]; then
+            echo "::error::JSON inválido detectado:"
+            printf "$BAD\n"
+            exit 1
+          fi
+          echo "✓ Todos os JSONs parseiam."
+
+  valid-bash:
+    name: Validate bash scripts
+    runs-on: [self-hosted, aura-vps]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: bash -n em scripts críticos
+        run: |
+          set -e
+          # Scripts cuja sintaxe quebrada teria impacto operacional
+          SCRIPTS="deploy.sh"
+
+          for s in $SCRIPTS; do
+            if [ -f "$s" ]; then
+              if ! bash -n "$s"; then
+                echo "::error::Sintaxe bash inválida em: $s"
+                exit 1
+              fi
+              echo "✓ $s"
+            fi
+          done
+
+  imports-resolve:
+    name: Check JS imports resolve
+    runs-on: [self-hosted, aura-vps]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validar imports relativos
+        run: |
+          set -e
+          export PATH="/usr/local/bin:/usr/bin:/bin:$PATH"
+
+          # Script Node que faz parsing estático leve.
+          # Verifica: para cada `import { X, Y } from './path.js'`,
+          # confirma que ./path.js existe E exporta os nomes X, Y.
+          # Foca em imports relativos (./ ou ../) — não checa node_modules.
+
+          cat > /tmp/check-imports.mjs <<'NODE_EOF'
+          import { readFileSync, statSync } from 'node:fs';
+          import { join, dirname, resolve as pathResolve } from 'node:path';
+          import { execSync } from 'node:child_process';
+
+          const ROOTS = ['services/api/src', 'apps/erp/src', 'apps/master/src', 'apps/store/src'];
+          const errors = [];
+
+          function listJsFiles(root) {
+            try {
+              const out = execSync(`find ${root} -type f \\( -name '*.js' -o -name '*.jsx' -o -name '*.mjs' \\)`, { encoding: 'utf8' });
+              return out.split('\n').filter(Boolean);
+            } catch { return []; }
+          }
+
+          // Regex enxutos para capturar imports relativos.
+          // Match groups: 1=nomes, 2=caminho. Ignora `import 'x'` (side-effect).
+          const RE_NAMED = /import\s*\{([^}]+)\}\s*from\s*['"](\.[^'"]+)['"]/g;
+          const RE_DEFAULT = /import\s+(\w+)\s+from\s*['"](\.[^'"]+)['"]/g;
+          // Reexport: `export { X } from './Y'`
+          const RE_REEXPORT = /export\s*\{([^}]+)\}\s*from\s*['"](\.[^'"]+)['"]/g;
+
+          function resolveImport(fromFile, importPath) {
+            const dir = dirname(fromFile);
+            const base = pathResolve(dir, importPath);
+            // Tentar variações comuns
+            for (const ext of ['', '.js', '.jsx', '.mjs', '/index.js', '/index.jsx']) {
+              const candidate = base + ext;
+              try {
+                if (statSync(candidate).isFile()) return candidate;
+              } catch {}
+            }
+            return null;
+          }
+
+          function fileExportsName(file, name) {
+            // Heurística rápida: procura padrões de export.
+            const c = readFileSync(file, 'utf8');
+            const patterns = [
+              new RegExp(`export\\s+(const|let|var|function|class|async\\s+function)\\s+${name}\\b`),
+              new RegExp(`export\\s*\\{[^}]*\\b${name}\\b[^}]*\\}`),
+              new RegExp(`export\\s+default\\s+`), // default export
+            ];
+            return patterns.some(p => p.test(c));
+          }
+
+          for (const root of ROOTS) {
+            const files = listJsFiles(root);
+            for (const f of files) {
+              const src = readFileSync(f, 'utf8');
+              // Named imports
+              for (const m of src.matchAll(RE_NAMED)) {
+                const names = m[1].split(',').map(s => s.trim().split(/\s+as\s+/)[0].trim()).filter(Boolean);
+                const target = resolveImport(f, m[2]);
+                if (!target) {
+                  errors.push(`${f}: import '${m[2]}' não resolve`);
+                  continue;
+                }
+                for (const n of names) {
+                  if (!fileExportsName(target, n)) {
+                    errors.push(`${f}: '${n}' não é exportado por ${target.replace(process.cwd()+'/','')}`);
+                  }
+                }
+              }
+              // Reexports (export { X } from './Y')
+              for (const m of src.matchAll(RE_REEXPORT)) {
+                const names = m[1].split(',').map(s => s.trim().split(/\s+as\s+/)[0].trim()).filter(Boolean);
+                const target = resolveImport(f, m[2]);
+                if (!target) {
+                  errors.push(`${f}: reexport '${m[2]}' não resolve`);
+                  continue;
+                }
+                for (const n of names) {
+                  if (!fileExportsName(target, n)) {
+                    errors.push(`${f}: '${n}' não é exportado por ${target.replace(process.cwd()+'/','')} (reexport)`);
+                  }
+                }
+              }
+              // Default imports apenas validam que o caminho resolve
+              for (const m of src.matchAll(RE_DEFAULT)) {
+                const target = resolveImport(f, m[2]);
+                if (!target) {
+                  errors.push(`${f}: import default '${m[2]}' não resolve`);
+                }
+              }
+            }
+          }
+
+          if (errors.length) {
+            console.log('::error::Imports quebrados detectados:');
+            errors.forEach(e => console.log('  ' + e));
+            process.exit(1);
+          }
+          console.log('✓ Todos os imports relativos validados.');
+          NODE_EOF
+
+          node /tmp/check-imports.mjs
+
+  status:
+    name: Guardrails Summary
+    if: always()
+    needs: [no-empty-files, valid-json, valid-bash, imports-resolve]
+    runs-on: [self-hosted, aura-vps]
+    steps:
+      - name: Resultado
+        run: |
+          E="${{ needs.no-empty-files.result }}"
+          J="${{ needs.valid-json.result }}"
+          B="${{ needs.valid-bash.result }}"
+          I="${{ needs.imports-resolve.result }}"
+          echo "no-empty-files:   $E"
+          echo "valid-json:       $J"
+          echo "valid-bash:       $B"
+          echo "imports-resolve:  $I"
+          if [ "$E" = "success" ] && [ "$J" = "success" ] && [ "$B" = "success" ] && [ "$I" = "success" ]; then
+            echo "✅ Todos os guardrails passaram"
+            exit 0
+          else
+            echo "❌ Pelo menos um guardrail falhou"
+            exit 1
+          fi
