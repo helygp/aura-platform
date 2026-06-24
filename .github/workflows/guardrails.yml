@@ -134,10 +134,17 @@ jobs:
       - name: Validar imports relativos via Docker (Node 22)
         run: |
           set -e
-          # Roda em container node:22 pra ter ES modules e API moderna.
-          # O aura-runner tem node antigo no PATH; via Docker garantimos versão.
+          # ABORDAGEM: passar o script via STDIN do container.
+          # Não usar mount de arquivo pra evitar problema de Docker-in-Docker
+          # (o aura-runner roda em container, /tmp dele != /tmp do host,
+          # então mount -v /tmp/X:/X falha pq o host não tem /tmp/X).
+          # Stdin é independente de path no host.
 
-          cat > /tmp/check-imports.mjs <<'NODE_EOF'
+          docker run --rm -i \
+            -v "$GITHUB_WORKSPACE":/workspace \
+            -w /workspace \
+            node:22-bookworm-slim \
+            node --input-type=module <<'NODE_EOF'
           import { readFileSync, statSync } from 'node:fs';
           import { dirname, resolve as pathResolve } from 'node:path';
           import { execSync } from 'node:child_process';
@@ -153,10 +160,8 @@ jobs:
           }
 
           // Regex pra capturar imports relativos.
-          // Match groups: 1=nomes, 2=caminho. Ignora `import 'x'` (side-effect).
           const RE_NAMED = /import\s*\{([^}]+)\}\s*from\s*['"](\.[^'"]+)['"]/g;
           const RE_DEFAULT = /import\s+(\w+)\s+from\s*['"](\.[^'"]+)['"]/g;
-          // Reexport: `export { X } from './Y'`
           const RE_REEXPORT = /export\s*\{([^}]+)\}\s*from\s*['"](\.[^'"]+)['"]/g;
 
           function resolveImport(fromFile, importPath) {
@@ -227,13 +232,6 @@ jobs:
           }
           console.log('OK: Todos os imports relativos validados.');
           NODE_EOF
-
-          docker run --rm \
-            -v "$GITHUB_WORKSPACE":/workspace \
-            -v /tmp/check-imports.mjs:/check-imports.mjs:ro \
-            -w /workspace \
-            node:22-bookworm-slim \
-            node /check-imports.mjs
 
   status:
     name: Guardrails Summary
