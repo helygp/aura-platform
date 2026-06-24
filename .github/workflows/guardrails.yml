@@ -5,10 +5,7 @@ name: Guardrails
 #   - JSON inválido em arquivos de configuração (package.json, tsconfig.json)
 #   - Sintaxe bash inválida em scripts críticos (deploy.sh)
 #   - Imports JS/JSX que referenciam exports que não existem
-#
-# Roda em PR e push para staging/main. Se falhar, alerta no log e impede
-# que o Deploy seja considerado "verde" (configurar branch protection
-# no GitHub para exigir este check como required).
+#   - Classifica o tipo de mudança (slug/master/mixed) e alerta se necessário
 
 on:
   push:
@@ -21,7 +18,6 @@ on:
       - main
   workflow_dispatch:
 
-# Múltiplos pushes em sequência: só o último check importa.
 concurrency:
   group: guardrails-${{ github.ref }}
   cancel-in-progress: true
@@ -42,8 +38,6 @@ jobs:
       - name: Verificar arquivos com size=0
         run: |
           set -e
-          # Whitelist: arquivos que podem legitimamente ser vazios.
-          # Adicione novos padrões aqui se aparecerem.
           WHITELIST_RE='(\.gitkeep|\.gitignore|\.dockerignore|\.npmrc|LICENSE|/__init__\.py)$'
 
           EMPTY=$(find . -type f -size 0 \
@@ -111,8 +105,14 @@ jobs:
       - name: bash -n em scripts críticos
         run: |
           set -e
-          # Scripts cuja sintaxe quebrada teria impacto operacional
           SCRIPTS="deploy.sh"
+
+          # Adiciona qualquer script em .github/scripts/
+          if [ -d .github/scripts ]; then
+            for s in .github/scripts/*.sh; do
+              [ -f "$s" ] && SCRIPTS="$SCRIPTS $s"
+            done
+          fi
 
           for s in $SCRIPTS; do
             if [ -f "$s" ]; then
@@ -134,12 +134,6 @@ jobs:
       - name: Validar imports relativos via Docker (Node 22)
         run: |
           set -e
-          # ABORDAGEM: passar o script via STDIN do container.
-          # Não usar mount de arquivo pra evitar problema de Docker-in-Docker
-          # (o aura-runner roda em container, /tmp dele != /tmp do host,
-          # então mount -v /tmp/X:/X falha pq o host não tem /tmp/X).
-          # Stdin é independente de path no host.
-
           docker run --rm -i \
             -v "$GITHUB_WORKSPACE":/workspace \
             -w /workspace \
@@ -159,7 +153,6 @@ jobs:
             } catch { return []; }
           }
 
-          // Regex pra capturar imports relativos.
           const RE_NAMED = /import\s*\{([^}]+)\}\s*from\s*['"](\.[^'"]+)['"]/g;
           const RE_DEFAULT = /import\s+(\w+)\s+from\s*['"](\.[^'"]+)['"]/g;
           const RE_REEXPORT = /export\s*\{([^}]+)\}\s*from\s*['"](\.[^'"]+)['"]/g;
@@ -193,34 +186,22 @@ jobs:
               for (const m of src.matchAll(RE_NAMED)) {
                 const names = m[1].split(',').map(s => s.trim().split(/\s+as\s+/)[0].trim()).filter(Boolean);
                 const target = resolveImport(f, m[2]);
-                if (!target) {
-                  errors.push(`${f}: import '${m[2]}' nao resolve`);
-                  continue;
-                }
+                if (!target) { errors.push(`${f}: import '${m[2]}' nao resolve`); continue; }
                 for (const n of names) {
-                  if (!fileExportsName(target, n)) {
-                    errors.push(`${f}: '${n}' nao e exportado por ${target}`);
-                  }
+                  if (!fileExportsName(target, n)) errors.push(`${f}: '${n}' nao e exportado por ${target}`);
                 }
               }
               for (const m of src.matchAll(RE_REEXPORT)) {
                 const names = m[1].split(',').map(s => s.trim().split(/\s+as\s+/)[0].trim()).filter(Boolean);
                 const target = resolveImport(f, m[2]);
-                if (!target) {
-                  errors.push(`${f}: reexport '${m[2]}' nao resolve`);
-                  continue;
-                }
+                if (!target) { errors.push(`${f}: reexport '${m[2]}' nao resolve`); continue; }
                 for (const n of names) {
-                  if (!fileExportsName(target, n)) {
-                    errors.push(`${f}: '${n}' nao e exportado por ${target} (reexport)`);
-                  }
+                  if (!fileExportsName(target, n)) errors.push(`${f}: '${n}' nao e exportado por ${target} (reexport)`);
                 }
               }
               for (const m of src.matchAll(RE_DEFAULT)) {
                 const target = resolveImport(f, m[2]);
-                if (!target) {
-                  errors.push(`${f}: import default '${m[2]}' nao resolve`);
-                }
+                if (!target) errors.push(`${f}: import default '${m[2]}' nao resolve`);
               }
             }
           }
@@ -233,10 +214,76 @@ jobs:
           console.log('OK: Todos os imports relativos validados.');
           NODE_EOF
 
+  classify-changes:
+    name: Classify changes (slug/master/infra)
+    runs-on: [self-hosted, aura-vps]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 50
+
+      - name: Classificar mudanças
+        id: classify
+        run: |
+          set -e
+          chmod +x .github/scripts/classify-changes.sh
+          BASE="${{ github.base_ref || github.event.repository.default_branch }}"
+          OUT=$(bash .github/scripts/classify-changes.sh "$BASE")
+          echo "$OUT"
+          echo "$OUT" >> "$GITHUB_OUTPUT"
+          TYPE=$(echo "$OUT" | grep '^change_type=' | cut -d= -f2)
+          COUNT=$(echo "$OUT" | grep '^change_files_count=' | cut -d= -f2)
+
+          echo ""
+          echo "════════════════════════════════════════════════════════"
+          case "$TYPE" in
+            slug-only)
+              echo "🏷️  TIPO: SLUG-ONLY ($COUNT arquivos)"
+              echo ""
+              echo "Mudança em ERP / loja / rotas tenant — TEM staging pra testar."
+              echo "Fluxo: staging → testar em https://staging.aurabr.app → merge main"
+              ;;
+            master-only)
+              echo "::warning::🔴 TIPO: MASTER-ONLY ($COUNT arquivos) — sem staging, atenção redobrada"
+              echo "🏷️  TIPO: MASTER-ONLY ($COUNT arquivos)"
+              echo ""
+              echo "⚠️  ATENÇÃO: este commit toca SÓ no painel master."
+              echo "    Não existe staging de master — merge em main vai DIRETO pra produção."
+              echo ""
+              echo "    Checklist antes de mergear:"
+              echo "    [ ] Testei local (cd apps/master && npm run dev)?"
+              echo "    [ ] Conferi que o backup do aura_master roda antes do deploy?"
+              echo "    [ ] Sei como rollback se quebrar? (ver RUNBOOK.md)"
+              ;;
+            mixed)
+              echo "::warning::🟠 TIPO: MIXED ($COUNT arquivos) — toca slug E master, considere dividir em 2 PRs"
+              echo "🏷️  TIPO: MIXED ($COUNT arquivos)"
+              echo ""
+              echo "⚠️  ATENÇÃO MÁXIMA: este commit toca SLUG E MASTER ao mesmo tempo."
+              echo "    A parte slug TEM staging pra testar; a parte master NÃO TEM."
+              echo ""
+              echo "    Recomendação: dividir em 2 PRs separados (1 só slug, 1 só master)"
+              echo "    pra que cada parte siga o fluxo certo."
+              ;;
+            infra-only)
+              echo "🏷️  TIPO: INFRA-ONLY ($COUNT arquivos)"
+              echo ""
+              echo "Mudança em CI/CD / Dockerfile / migrations / pacotes shared."
+              echo "Testar primeiro em staging antes de mergear em main."
+              ;;
+            unclassified)
+              echo "🏷️  TIPO: UNCLASSIFIED ($COUNT arquivos)"
+              echo ""
+              echo "Mudanças em arquivos auxiliares (docs, configs, etc.) — risco mínimo."
+              ;;
+          esac
+          echo "════════════════════════════════════════════════════════"
+
   status:
     name: Guardrails Summary
     if: always()
-    needs: [no-empty-files, valid-json, valid-bash, imports-resolve]
+    needs: [no-empty-files, valid-json, valid-bash, imports-resolve, classify-changes]
     runs-on: [self-hosted, aura-vps]
     steps:
       - name: Resultado
@@ -245,11 +292,14 @@ jobs:
           J="${{ needs.valid-json.result }}"
           B="${{ needs.valid-bash.result }}"
           I="${{ needs.imports-resolve.result }}"
-          echo "no-empty-files:   $E"
-          echo "valid-json:       $J"
-          echo "valid-bash:       $B"
-          echo "imports-resolve:  $I"
-          if [ "$E" = "success" ] && [ "$J" = "success" ] && [ "$B" = "success" ] && [ "$I" = "success" ]; then
+          C="${{ needs.classify-changes.result }}"
+          TYPE="${{ needs.classify-changes.outputs.change_type }}"
+          echo "no-empty-files:    $E"
+          echo "valid-json:        $J"
+          echo "valid-bash:        $B"
+          echo "imports-resolve:   $I"
+          echo "classify-changes:  $C  (tipo: ${TYPE:-?})"
+          if [ "$E" = "success" ] && [ "$J" = "success" ] && [ "$B" = "success" ] && [ "$I" = "success" ] && [ "$C" = "success" ]; then
             echo "OK: Todos os guardrails passaram"
             exit 0
           else
