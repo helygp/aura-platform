@@ -21,31 +21,53 @@
 # Output (stdout, formato GitHub Actions outputs):
 #   change_type=<categoria>
 #   change_files_count=<N>
+#   change_files_list=<csv> (até 20 arquivos, pra debug)
 #
-# Uso:
+# Comportamento por evento:
+#   - pull_request: compara HEAD com origin/<base_ref> (cumulativo do PR)
+#   - push:         compara HEAD com HEAD~1 (apenas este commit)
+#   - outros:       compara HEAD com HEAD~1 como fallback
+#
+# Uso manual (fora do CI):
 #   bash .github/scripts/classify-changes.sh [base-ref]
-#   bash .github/scripts/classify-changes.sh main
 # ─────────────────────────────────────────────────────────────────────
 set -e
 
-BASE_REF="${1:-${GITHUB_BASE_REF:-main}}"
+EVENT="${GITHUB_EVENT_NAME:-push}"
+BASE_REF="${1:-$GITHUB_BASE_REF}"
 
-# Fetch raso do base ref pra ter algo pra comparar
-git fetch origin "$BASE_REF" --depth=50 2>/dev/null || true
-
-# Lista arquivos alterados. Estratégia em ordem de preferência:
-#   1. diff vs origin/<base-ref>
-#   2. diff vs HEAD~1 (fallback se origin/<base-ref> indisponível)
-#   3. ls-files (commit inicial)
-if git rev-parse "origin/$BASE_REF" >/dev/null 2>&1; then
-  FILES=$(git diff --name-only "origin/$BASE_REF...HEAD" 2>/dev/null || true)
-fi
-if [ -z "$FILES" ]; then
+# Estratégia de diff baseada no evento
+if [ "$EVENT" = "pull_request" ] && [ -n "$BASE_REF" ]; then
+  # PR: cumulativo desde a base do PR
+  git fetch origin "$BASE_REF" --depth=100 2>/dev/null || true
+  if git rev-parse "origin/$BASE_REF" >/dev/null 2>&1; then
+    FILES=$(git diff --name-only "origin/$BASE_REF...HEAD" 2>/dev/null || true)
+    DIFF_MODE="pr-cumulative (vs origin/$BASE_REF)"
+  else
+    FILES=$(git diff --name-only "HEAD~1...HEAD" 2>/dev/null || true)
+    DIFF_MODE="fallback-single (origin/$BASE_REF indisponível)"
+  fi
+else
+  # Push ou outros: apenas o commit atual
   FILES=$(git diff --name-only "HEAD~1...HEAD" 2>/dev/null || true)
+  DIFF_MODE="single-commit (HEAD~1...HEAD)"
 fi
+
+# Fallback final: se vazio, usar tudo (commit inicial?)
 if [ -z "$FILES" ]; then
   FILES=$(git ls-files)
+  DIFF_MODE="$DIFF_MODE → fallback ls-files (commit inicial)"
 fi
+
+# Log de debug — útil pra entender classificações inesperadas
+echo "─── classify-changes debug ───" >&2
+echo "EVENT: $EVENT" >&2
+echo "BASE_REF: ${BASE_REF:-<none>}" >&2
+echo "DIFF_MODE: $DIFF_MODE" >&2
+echo "FILES ($(echo "$FILES" | grep -c '.')):" >&2
+echo "$FILES" | head -30 | sed 's/^/  /' >&2
+[ "$(echo "$FILES" | grep -c '.')" -gt 30 ] && echo "  ... (truncado)" >&2
+echo "──────────────────────────────" >&2
 
 # Patterns das categorias
 PATTERN_MASTER='^(apps/master/|services/api/src/routes/master/)'
@@ -72,6 +94,9 @@ else
 fi
 
 COUNT=$(echo "$FILES" | grep -c '.' || echo 0)
+# Lista compacta dos primeiros 20 arquivos (CSV, sem newlines)
+LIST=$(echo "$FILES" | head -20 | tr '\n' ',' | sed 's/,$//')
 
 echo "change_type=$TYPE"
 echo "change_files_count=$COUNT"
+echo "change_files_list=$LIST"
