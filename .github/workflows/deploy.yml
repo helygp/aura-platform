@@ -23,7 +23,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 50
+
+      - name: Classificar tipo de mudança
+        id: classify
+        run: |
+          set -e
+          chmod +x .github/scripts/classify-changes.sh
+          OUT=$(bash .github/scripts/classify-changes.sh "${{ github.ref_name }}")
+          echo "$OUT"
+          echo "$OUT" >> "$GITHUB_OUTPUT"
 
       - name: Release (versionamento automatico)
         continue-on-error: true
@@ -59,14 +68,29 @@ jobs:
           REF: ${{ github.ref_name }}
           COMMIT_MSG: ${{ github.event.head_commit.message }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          CHANGE_TYPE: ${{ steps.classify.outputs.change_type }}
         run: |
           CFG=/home/helygp/projetos/.deploy-notify.env
           [ -f "$CFG" ] || { echo "sem config de notify; pulando"; exit 0; }
           . "$CFG"
           if [ "$DEPLOY_STATUS" = "success" ]; then ICON="✅"; PAL="OK"; else ICON="❌"; PAL="FALHOU"; fi
           if [ "$REF" = "main" ]; then AMB="PRODUÇÃO"; else AMB="staging"; fi
+
+          # Linha extra de atenção quando: produção + master-only/mixed (sem staging)
+          ATTENTION=""
+          if [ "$REF" = "main" ] && { [ "$CHANGE_TYPE" = "master-only" ] || [ "$CHANGE_TYPE" = "mixed" ]; }; then
+            ATTENTION="⚠️ Tipo: $CHANGE_TYPE (sem staging — revisar logs)"
+          elif [ -n "$CHANGE_TYPE" ]; then
+            ATTENTION="Tipo: $CHANGE_TYPE"
+          fi
+
           LINE1=$(printf '%s' "$COMMIT_MSG" | head -1)
-          TXT=$(printf '%s\n%s\n%s\n%s' "$ICON Deploy $AMB $PAL" "Branch: $REF" "$LINE1" "$RUN_URL")
+
+          if [ -n "$ATTENTION" ]; then
+            TXT=$(printf '%s\n%s\n%s\n%s\n%s' "$ICON Deploy $AMB $PAL" "Branch: $REF" "$ATTENTION" "$LINE1" "$RUN_URL")
+          else
+            TXT=$(printf '%s\n%s\n%s\n%s' "$ICON Deploy $AMB $PAL" "Branch: $REF" "$LINE1" "$RUN_URL")
+          fi
           TXT_ESC=$(printf '%s' "$TXT" | sed 's/\\/\\\\/g; s/\"/\\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
           curl -s -m 20 -X POST "$WAHA_URL/api/sendText" -H "X-Api-Key: $WAHA_API_KEY" -H "Content-Type: application/json" -d "{\"session\":\"$WAHA_SESSION\",\"chatId\":\"$NOTIFY_CHAT_ID\",\"text\":\"$TXT_ESC\"}" >/dev/null && echo "notify enviado" || echo "notify falhou (ignorado)"
 

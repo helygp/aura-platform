@@ -1,5 +1,6 @@
 #!/bin/bash
 set -e
+set -o pipefail
 
 # PATH explícito para SSH não herdar variáveis de ambiente incompletas
 export PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
@@ -79,13 +80,31 @@ if [ "$BRANCH" = "staging" ]; then
 
 # ── 5. Deploy produção ───────────────────────────────────────────
 elif [ "$BRANCH" = "main" ]; then
-  for SLUG in acme fastmalhas forroplastic; do
+  # ── 5.0. Backup automático do aura_master ANTES do deploy ──────
+  # Como o painel master não tem ambiente de staging, todo deploy em main
+  # que possa afetar o aura_master precisa de um backup prévio pra rollback.
+  # Custo: ~5MB por backup. Mantém 30 dias. Vale a pena.
+  echo "[$(date)] 💾 Backup do aura_master antes do deploy em produção..." | tee -a $LOG
+  BACKUP_DIR="${MASTER_BACKUP_DIR:-/var/backups/aura_master}"
+  mkdir -p "$BACKUP_DIR" 2>/dev/null || true
+  BACKUP_FILE="$BACKUP_DIR/$(date +%Y%m%d_%H%M%S).sql"
+  if docker exec supabase-db pg_dump -U postgres aura_master > "$BACKUP_FILE" 2>>$LOG; then
+    SIZE=$(du -h "$BACKUP_FILE" 2>/dev/null | cut -f1 || echo "?")
+    echo "[$(date)] ✅ Backup OK: $BACKUP_FILE ($SIZE)" | tee -a $LOG
+  else
+    echo "[$(date)] ⚠️  Backup do aura_master FALHOU — ABORTANDO deploy em produção!" | tee -a $LOG
+    echo "[$(date)] (sem backup não dá rollback se algo do master quebrar)" | tee -a $LOG
+    exit 1
+  fi
+  # Limpeza: mantém só os últimos 30 dias
+  find "$BACKUP_DIR" -type f -name "*.sql" -mtime +30 -delete 2>/dev/null || true
+
+  for SLUG in acme fastmalhas; do
     case $SLUG in
       acme)         DB_PASS="AuraAcme72aa2d14d2a454f5"  ; WAHA_URL="http://waha_7b61c0d3-104d-4f6d-b276-34e50d5b115e:3000" ; WAHA_KEY="eecfa4cf-8003-4c77-9f4f-a6e2de81a575" ;;
       fastmalhas)   DB_PASS="AuraFast29166"              ; WAHA_URL="" ; WAHA_KEY="" ;;
-      forroplastic) DB_PASS="AuraForro9751847"           ; WAHA_URL="" ; WAHA_KEY="" ;;
     esac
-    docker stop api-$SLUG && docker rm api-$SLUG
+    docker stop api-$SLUG 2>/dev/null; docker rm api-$SLUG 2>/dev/null || true
     docker run -d --name api-$SLUG --restart unless-stopped \
     -v /var/run/docker.sock:/var/run/docker.sock \
     -v /usr/bin/docker:/usr/bin/docker:ro \

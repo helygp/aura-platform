@@ -1,0 +1,308 @@
+name: Guardrails
+
+# Checks rápidos pre-deploy que bloqueiam erros silenciosos como os do PR #37:
+#   - Arquivos com size=0 que NÃO deveriam estar vazios (.gitkeep está OK)
+#   - JSON inválido em arquivos de configuração (package.json, tsconfig.json)
+#   - Sintaxe bash inválida em scripts críticos (deploy.sh)
+#   - Imports JS/JSX que referenciam exports que não existem
+#   - Classifica o tipo de mudança (slug/master/mixed) e alerta se necessário
+
+on:
+  push:
+    branches:
+      - staging
+      - main
+  pull_request:
+    branches:
+      - staging
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: guardrails-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  no-empty-files:
+    name: Detect empty files
+    runs-on: [self-hosted, aura-vps]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Verificar arquivos com size=0
+        run: |
+          set -e
+          WHITELIST_RE='(\.gitkeep|\.gitignore|\.dockerignore|\.npmrc|LICENSE|/__init__\.py)$'
+
+          EMPTY=$(find . -type f -size 0 \
+            -not -path './.git/*' \
+            -not -path './node_modules/*' \
+            -not -path './*/node_modules/*' \
+            -not -path './dist/*' \
+            -not -path './build/*' \
+            | grep -vE "$WHITELIST_RE" || true)
+
+          if [ -n "$EMPTY" ]; then
+            echo "::error::Arquivos vazios detectados (não permitido):"
+            echo "$EMPTY" | sed 's/^/  /'
+            echo ""
+            echo "Cada um destes arquivos tem size=0. Se algum DEVE ser vazio"
+            echo "(ex: marker file), adicione ao WHITELIST_RE neste workflow."
+            echo "Senão, restaure o conteúdo correto antes de mergear."
+            exit 1
+          fi
+          echo "✓ Nenhum arquivo vazio anômalo."
+
+  valid-json:
+    name: Validate JSON files
+    runs-on: [self-hosted, aura-vps]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Parsear todos os JSON via Docker
+        run: |
+          set -e
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE":/workspace \
+            -w /workspace \
+            node:22-bookworm-slim \
+            bash -c '
+              set -e
+              JSONS=$(find . -name "*.json" \
+                -not -path "./.git/*" \
+                -not -path "./node_modules/*" \
+                -not -path "./*/node_modules/*" \
+                -not -path "./dist/*" \
+                -not -path "./build/*")
+              BAD=""
+              for f in $JSONS; do
+                if ! node -e "JSON.parse(require(\"fs\").readFileSync(\"$f\",\"utf8\"))" 2>/dev/null; then
+                  BAD="$BAD\n  $f"
+                fi
+              done
+              if [ -n "$BAD" ]; then
+                echo "::error::JSON invalido detectado:"
+                printf "$BAD\n"
+                exit 1
+              fi
+              echo "OK: Todos os JSONs parseiam."
+            '
+
+  valid-bash:
+    name: Validate bash scripts
+    runs-on: [self-hosted, aura-vps]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: bash -n em scripts críticos
+        run: |
+          set -e
+          SCRIPTS="deploy.sh"
+
+          # Adiciona qualquer script em .github/scripts/
+          if [ -d .github/scripts ]; then
+            for s in .github/scripts/*.sh; do
+              [ -f "$s" ] && SCRIPTS="$SCRIPTS $s"
+            done
+          fi
+
+          for s in $SCRIPTS; do
+            if [ -f "$s" ]; then
+              if ! bash -n "$s"; then
+                echo "::error::Sintaxe bash inválida em: $s"
+                exit 1
+              fi
+              echo "✓ $s"
+            fi
+          done
+
+  imports-resolve:
+    name: Check JS imports resolve
+    runs-on: [self-hosted, aura-vps]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validar imports relativos via Docker (Node 22)
+        run: |
+          set -e
+          docker run --rm -i \
+            -v "$GITHUB_WORKSPACE":/workspace \
+            -w /workspace \
+            node:22-bookworm-slim \
+            node --input-type=module <<'NODE_EOF'
+          import { readFileSync, statSync } from 'node:fs';
+          import { dirname, resolve as pathResolve } from 'node:path';
+          import { execSync } from 'node:child_process';
+
+          const ROOTS = ['services/api/src', 'apps/erp/src', 'apps/master/src', 'apps/store/src'];
+          const errors = [];
+
+          function listJsFiles(root) {
+            try {
+              const out = execSync(`find ${root} -type f \\( -name '*.js' -o -name '*.jsx' -o -name '*.mjs' \\)`, { encoding: 'utf8' });
+              return out.split('\n').filter(Boolean);
+            } catch { return []; }
+          }
+
+          const RE_NAMED = /import\s*\{([^}]+)\}\s*from\s*['"](\.[^'"]+)['"]/g;
+          const RE_DEFAULT = /import\s+(\w+)\s+from\s*['"](\.[^'"]+)['"]/g;
+          const RE_REEXPORT = /export\s*\{([^}]+)\}\s*from\s*['"](\.[^'"]+)['"]/g;
+
+          function resolveImport(fromFile, importPath) {
+            const dir = dirname(fromFile);
+            const base = pathResolve(dir, importPath);
+            for (const ext of ['', '.js', '.jsx', '.mjs', '/index.js', '/index.jsx']) {
+              const candidate = base + ext;
+              try {
+                if (statSync(candidate).isFile()) return candidate;
+              } catch {}
+            }
+            return null;
+          }
+
+          function fileExportsName(file, name) {
+            const c = readFileSync(file, 'utf8');
+            const patterns = [
+              new RegExp(`export\\s+(const|let|var|function|class|async\\s+function)\\s+${name}\\b`),
+              new RegExp(`export\\s*\\{[^}]*\\b${name}\\b[^}]*\\}`),
+              new RegExp(`export\\s+default\\s+`),
+            ];
+            return patterns.some(p => p.test(c));
+          }
+
+          for (const root of ROOTS) {
+            const files = listJsFiles(root);
+            for (const f of files) {
+              const src = readFileSync(f, 'utf8');
+              for (const m of src.matchAll(RE_NAMED)) {
+                const names = m[1].split(',').map(s => s.trim().split(/\s+as\s+/)[0].trim()).filter(Boolean);
+                const target = resolveImport(f, m[2]);
+                if (!target) { errors.push(`${f}: import '${m[2]}' nao resolve`); continue; }
+                for (const n of names) {
+                  if (!fileExportsName(target, n)) errors.push(`${f}: '${n}' nao e exportado por ${target}`);
+                }
+              }
+              for (const m of src.matchAll(RE_REEXPORT)) {
+                const names = m[1].split(',').map(s => s.trim().split(/\s+as\s+/)[0].trim()).filter(Boolean);
+                const target = resolveImport(f, m[2]);
+                if (!target) { errors.push(`${f}: reexport '${m[2]}' nao resolve`); continue; }
+                for (const n of names) {
+                  if (!fileExportsName(target, n)) errors.push(`${f}: '${n}' nao e exportado por ${target} (reexport)`);
+                }
+              }
+              for (const m of src.matchAll(RE_DEFAULT)) {
+                const target = resolveImport(f, m[2]);
+                if (!target) errors.push(`${f}: import default '${m[2]}' nao resolve`);
+              }
+            }
+          }
+
+          if (errors.length) {
+            console.log('::error::Imports quebrados detectados:');
+            errors.forEach(e => console.log('  ' + e));
+            process.exit(1);
+          }
+          console.log('OK: Todos os imports relativos validados.');
+          NODE_EOF
+
+  classify-changes:
+    name: Classify changes (slug/master/infra)
+    runs-on: [self-hosted, aura-vps]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 50
+
+      - name: Classificar mudanças
+        id: classify
+        run: |
+          set -e
+          chmod +x .github/scripts/classify-changes.sh
+          BASE="${{ github.base_ref || github.event.repository.default_branch }}"
+          OUT=$(bash .github/scripts/classify-changes.sh "$BASE")
+          echo "$OUT"
+          echo "$OUT" >> "$GITHUB_OUTPUT"
+          TYPE=$(echo "$OUT" | grep '^change_type=' | cut -d= -f2)
+          COUNT=$(echo "$OUT" | grep '^change_files_count=' | cut -d= -f2)
+
+          echo ""
+          echo "════════════════════════════════════════════════════════"
+          case "$TYPE" in
+            slug-only)
+              echo "🏷️  TIPO: SLUG-ONLY ($COUNT arquivos)"
+              echo ""
+              echo "Mudança em ERP / loja / rotas tenant — TEM staging pra testar."
+              echo "Fluxo: staging → testar em https://staging.aurabr.app → merge main"
+              ;;
+            master-only)
+              echo "::warning::🔴 TIPO: MASTER-ONLY ($COUNT arquivos) — sem staging, atenção redobrada"
+              echo "🏷️  TIPO: MASTER-ONLY ($COUNT arquivos)"
+              echo ""
+              echo "⚠️  ATENÇÃO: este commit toca SÓ no painel master."
+              echo "    Não existe staging de master — merge em main vai DIRETO pra produção."
+              echo ""
+              echo "    Checklist antes de mergear:"
+              echo "    [ ] Testei local (cd apps/master && npm run dev)?"
+              echo "    [ ] Conferi que o backup do aura_master roda antes do deploy?"
+              echo "    [ ] Sei como rollback se quebrar? (ver RUNBOOK.md)"
+              ;;
+            mixed)
+              echo "::warning::🟠 TIPO: MIXED ($COUNT arquivos) — toca slug E master, considere dividir em 2 PRs"
+              echo "🏷️  TIPO: MIXED ($COUNT arquivos)"
+              echo ""
+              echo "⚠️  ATENÇÃO MÁXIMA: este commit toca SLUG E MASTER ao mesmo tempo."
+              echo "    A parte slug TEM staging pra testar; a parte master NÃO TEM."
+              echo ""
+              echo "    Recomendação: dividir em 2 PRs separados (1 só slug, 1 só master)"
+              echo "    pra que cada parte siga o fluxo certo."
+              ;;
+            infra-only)
+              echo "🏷️  TIPO: INFRA-ONLY ($COUNT arquivos)"
+              echo ""
+              echo "Mudança em CI/CD / Dockerfile / migrations / pacotes shared."
+              echo "Testar primeiro em staging antes de mergear em main."
+              ;;
+            unclassified)
+              echo "🏷️  TIPO: UNCLASSIFIED ($COUNT arquivos)"
+              echo ""
+              echo "Mudanças em arquivos auxiliares (docs, configs, etc.) — risco mínimo."
+              ;;
+          esac
+          echo "════════════════════════════════════════════════════════"
+
+  status:
+    name: Guardrails Summary
+    if: always()
+    needs: [no-empty-files, valid-json, valid-bash, imports-resolve, classify-changes]
+    runs-on: [self-hosted, aura-vps]
+    steps:
+      - name: Resultado
+        run: |
+          E="${{ needs.no-empty-files.result }}"
+          J="${{ needs.valid-json.result }}"
+          B="${{ needs.valid-bash.result }}"
+          I="${{ needs.imports-resolve.result }}"
+          C="${{ needs.classify-changes.result }}"
+          TYPE="${{ needs.classify-changes.outputs.change_type }}"
+          echo "no-empty-files:    $E"
+          echo "valid-json:        $J"
+          echo "valid-bash:        $B"
+          echo "imports-resolve:   $I"
+          echo "classify-changes:  $C  (tipo: ${TYPE:-?})"
+          if [ "$E" = "success" ] && [ "$J" = "success" ] && [ "$B" = "success" ] && [ "$I" = "success" ] && [ "$C" = "success" ]; then
+            echo "OK: Todos os guardrails passaram"
+            exit 0
+          else
+            echo "FAIL: Pelo menos um guardrail falhou"
+            exit 1
+          fi
