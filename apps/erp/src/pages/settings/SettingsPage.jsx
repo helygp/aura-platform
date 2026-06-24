@@ -86,69 +86,6 @@ function PreviewCard({ theme, logoUrl, displayName }) {
           ))}
         </div>
       </div>
-      {/* ══════════════════════════════════════════════
-          ABA PEDIDOS
-      ══════════════════════════════════════════════ */}
-      {activeTab === 'pedidos' && (
-        <div className="max-w-xl space-y-5">
-          <Section icon={ShoppingBag} title="Novo pedido — exibição de SKUs">
-            <div className="space-y-4">
-              <p className="text-sm text-[var(--color-text-muted)]">
-                Escolha como os SKUs com variações (Cor × Tamanho) aparecem ao criar um pedido.
-                Produtos sem grade mantêm sempre a lista.
-              </p>
-              <div className="grid grid-cols-2 gap-3">
-                {[
-                  {
-                    value: 'list',
-                    icon: LayoutList,
-                    label: 'Lista',
-                    desc: 'Uma linha por SKU com estoque e stepper',
-                  },
-                  {
-                    value: 'matrix',
-                    icon: LayoutGrid,
-                    label: 'Grade',
-                    desc: 'Tabela Cor × Tamanho, compacta para muitos SKUs',
-                  },
-                ].map(opt => {
-                  const Icon   = opt.icon
-                  const active = (() => { try { return (localStorage.getItem('aura_order_view') ?? 'list') === opt.value } catch { return opt.value === 'list' } })()
-                  return (
-                    <button
-                      key={opt.value}
-                      onClick={() => {
-                        try { localStorage.setItem('aura_order_view', opt.value) } catch {}
-                        // força re-render do botão
-                        setSaved(s => { setTimeout(() => setSaved(s), 0); return s })
-                      }}
-                      className={`flex flex-col items-center gap-3 p-4 rounded-xl border-2 text-center transition-all duration-150 ${
-                        active
-                          ? 'border-[var(--color-primary)] bg-blue-50 dark:bg-blue-950'
-                          : 'border-[var(--color-border)] hover:border-[var(--color-border-strong)]'
-                      }`}
-                    >
-                      <Icon size={22} className={active ? 'text-[var(--color-primary)]' : 'text-[var(--color-text-muted)]'} />
-                      <div>
-                        <p className={`text-xs font-semibold ${active ? 'text-[var(--color-primary)]' : 'text-[var(--color-text)]'}`}>
-                          {opt.label}
-                        </p>
-                        <p className="text-[10px] text-[var(--color-text-muted)] mt-0.5 leading-tight">
-                          {opt.desc}
-                        </p>
-                      </div>
-                    </button>
-                  )
-                })}
-              </div>
-              <p className="text-xs text-[var(--color-text-muted)]">
-                Preferência salva neste navegador. O ícone ⊞ no modal de pedido também permite trocar na hora.
-              </p>
-            </div>
-          </Section>
-        </div>
-      )}
-
     </div>
   )
 }
@@ -185,6 +122,43 @@ function WppStatusBadge({ status }) {
 }
 
 /* ─── Página principal ─── */
+
+/* ─── Toggle de viewMode para o novo pedido (salvo em localStorage) ─── */
+function OrderViewToggle() {
+  const [mode, setMode] = React.useState(() => {
+    try { return localStorage.getItem('aura_order_view') ?? 'list' } catch { return 'list' }
+  })
+  const pick = (v) => {
+    try { localStorage.setItem('aura_order_view', v) } catch {}
+    setMode(v)
+  }
+  const OPTIONS = [
+    { value: 'list',   icon: LayoutList, label: 'Lista',  desc: 'Uma linha por SKU com estoque e stepper' },
+    { value: 'matrix', icon: LayoutGrid, label: 'Grade',  desc: 'Tabela Cor x Tamanho, compacta para muitos SKUs' },
+  ]
+  return (
+    <div className="grid grid-cols-2 gap-3">
+      {OPTIONS.map(opt => {
+        const Icon   = opt.icon
+        const active = mode === opt.value
+        return (
+          <button key={opt.value} onClick={() => pick(opt.value)}
+            className={`flex flex-col items-center gap-3 p-4 rounded-xl border-2 text-center transition-all duration-150 ${
+              active ? 'border-[var(--color-primary)] bg-blue-50 dark:bg-blue-950' : 'border-[var(--color-border)] hover:border-[var(--color-border-strong)]'
+            }`}
+          >
+            <Icon size={22} className={active ? 'text-[var(--color-primary)]' : 'text-[var(--color-text-muted)]'} />
+            <div>
+              <p className={"text-xs font-semibold " + (active ? 'text-[var(--color-primary)]' : 'text-[var(--color-text)]')}>{opt.label}</p>
+              <p className="text-[10px] text-[var(--color-text-muted)] mt-0.5 leading-tight">{opt.desc}</p>
+            </div>
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 export function SettingsPage() {
   const [activeTab, setActiveTab] = useState('experiencia')
 
