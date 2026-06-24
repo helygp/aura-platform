@@ -72,32 +72,34 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Parsear todos os JSON
+      - name: Parsear todos os JSON via Docker
         run: |
           set -e
-          export PATH="/usr/local/bin:/usr/bin:/bin:$PATH"
-
-          # Lista de JSONs críticos: se algum não parsear, falha.
-          JSONS=$(find . -name '*.json' \
-            -not -path './.git/*' \
-            -not -path './node_modules/*' \
-            -not -path './*/node_modules/*' \
-            -not -path './dist/*' \
-            -not -path './build/*')
-
-          BAD=""
-          for f in $JSONS; do
-            if ! node -e "JSON.parse(require('fs').readFileSync('$f','utf8'))" 2>/dev/null; then
-              BAD="$BAD\n  $f"
-            fi
-          done
-
-          if [ -n "$BAD" ]; then
-            echo "::error::JSON inválido detectado:"
-            printf "$BAD\n"
-            exit 1
-          fi
-          echo "✓ Todos os JSONs parseiam."
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE":/workspace \
+            -w /workspace \
+            node:22-bookworm-slim \
+            bash -c '
+              set -e
+              JSONS=$(find . -name "*.json" \
+                -not -path "./.git/*" \
+                -not -path "./node_modules/*" \
+                -not -path "./*/node_modules/*" \
+                -not -path "./dist/*" \
+                -not -path "./build/*")
+              BAD=""
+              for f in $JSONS; do
+                if ! node -e "JSON.parse(require(\"fs\").readFileSync(\"$f\",\"utf8\"))" 2>/dev/null; then
+                  BAD="$BAD\n  $f"
+                fi
+              done
+              if [ -n "$BAD" ]; then
+                echo "::error::JSON invalido detectado:"
+                printf "$BAD\n"
+                exit 1
+              fi
+              echo "OK: Todos os JSONs parseiam."
+            '
 
   valid-bash:
     name: Validate bash scripts
@@ -129,19 +131,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Validar imports relativos
+      - name: Validar imports relativos via Docker (Node 22)
         run: |
           set -e
-          export PATH="/usr/local/bin:/usr/bin:/bin:$PATH"
-
-          # Script Node que faz parsing estático leve.
-          # Verifica: para cada `import { X, Y } from './path.js'`,
-          # confirma que ./path.js existe E exporta os nomes X, Y.
-          # Foca em imports relativos (./ ou ../) — não checa node_modules.
+          # Roda em container node:22 pra ter ES modules e API moderna.
+          # O aura-runner tem node antigo no PATH; via Docker garantimos versão.
 
           cat > /tmp/check-imports.mjs <<'NODE_EOF'
           import { readFileSync, statSync } from 'node:fs';
-          import { join, dirname, resolve as pathResolve } from 'node:path';
+          import { dirname, resolve as pathResolve } from 'node:path';
           import { execSync } from 'node:child_process';
 
           const ROOTS = ['services/api/src', 'apps/erp/src', 'apps/master/src', 'apps/store/src'];
@@ -154,7 +152,7 @@ jobs:
             } catch { return []; }
           }
 
-          // Regex enxutos para capturar imports relativos.
+          // Regex pra capturar imports relativos.
           // Match groups: 1=nomes, 2=caminho. Ignora `import 'x'` (side-effect).
           const RE_NAMED = /import\s*\{([^}]+)\}\s*from\s*['"](\.[^'"]+)['"]/g;
           const RE_DEFAULT = /import\s+(\w+)\s+from\s*['"](\.[^'"]+)['"]/g;
@@ -164,7 +162,6 @@ jobs:
           function resolveImport(fromFile, importPath) {
             const dir = dirname(fromFile);
             const base = pathResolve(dir, importPath);
-            // Tentar variações comuns
             for (const ext of ['', '.js', '.jsx', '.mjs', '/index.js', '/index.jsx']) {
               const candidate = base + ext;
               try {
@@ -175,12 +172,11 @@ jobs:
           }
 
           function fileExportsName(file, name) {
-            // Heurística rápida: procura padrões de export.
             const c = readFileSync(file, 'utf8');
             const patterns = [
               new RegExp(`export\\s+(const|let|var|function|class|async\\s+function)\\s+${name}\\b`),
               new RegExp(`export\\s*\\{[^}]*\\b${name}\\b[^}]*\\}`),
-              new RegExp(`export\\s+default\\s+`), // default export
+              new RegExp(`export\\s+default\\s+`),
             ];
             return patterns.some(p => p.test(c));
           }
@@ -189,39 +185,36 @@ jobs:
             const files = listJsFiles(root);
             for (const f of files) {
               const src = readFileSync(f, 'utf8');
-              // Named imports
               for (const m of src.matchAll(RE_NAMED)) {
                 const names = m[1].split(',').map(s => s.trim().split(/\s+as\s+/)[0].trim()).filter(Boolean);
                 const target = resolveImport(f, m[2]);
                 if (!target) {
-                  errors.push(`${f}: import '${m[2]}' não resolve`);
+                  errors.push(`${f}: import '${m[2]}' nao resolve`);
                   continue;
                 }
                 for (const n of names) {
                   if (!fileExportsName(target, n)) {
-                    errors.push(`${f}: '${n}' não é exportado por ${target.replace(process.cwd()+'/','')}`);
+                    errors.push(`${f}: '${n}' nao e exportado por ${target}`);
                   }
                 }
               }
-              // Reexports (export { X } from './Y')
               for (const m of src.matchAll(RE_REEXPORT)) {
                 const names = m[1].split(',').map(s => s.trim().split(/\s+as\s+/)[0].trim()).filter(Boolean);
                 const target = resolveImport(f, m[2]);
                 if (!target) {
-                  errors.push(`${f}: reexport '${m[2]}' não resolve`);
+                  errors.push(`${f}: reexport '${m[2]}' nao resolve`);
                   continue;
                 }
                 for (const n of names) {
                   if (!fileExportsName(target, n)) {
-                    errors.push(`${f}: '${n}' não é exportado por ${target.replace(process.cwd()+'/','')} (reexport)`);
+                    errors.push(`${f}: '${n}' nao e exportado por ${target} (reexport)`);
                   }
                 }
               }
-              // Default imports apenas validam que o caminho resolve
               for (const m of src.matchAll(RE_DEFAULT)) {
                 const target = resolveImport(f, m[2]);
                 if (!target) {
-                  errors.push(`${f}: import default '${m[2]}' não resolve`);
+                  errors.push(`${f}: import default '${m[2]}' nao resolve`);
                 }
               }
             }
@@ -232,10 +225,15 @@ jobs:
             errors.forEach(e => console.log('  ' + e));
             process.exit(1);
           }
-          console.log('✓ Todos os imports relativos validados.');
+          console.log('OK: Todos os imports relativos validados.');
           NODE_EOF
 
-          node /tmp/check-imports.mjs
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE":/workspace \
+            -v /tmp/check-imports.mjs:/check-imports.mjs:ro \
+            -w /workspace \
+            node:22-bookworm-slim \
+            node /check-imports.mjs
 
   status:
     name: Guardrails Summary
@@ -254,9 +252,9 @@ jobs:
           echo "valid-bash:       $B"
           echo "imports-resolve:  $I"
           if [ "$E" = "success" ] && [ "$J" = "success" ] && [ "$B" = "success" ] && [ "$I" = "success" ]; then
-            echo "✅ Todos os guardrails passaram"
+            echo "OK: Todos os guardrails passaram"
             exit 0
           else
-            echo "❌ Pelo menos um guardrail falhou"
+            echo "FAIL: Pelo menos um guardrail falhou"
             exit 1
           fi
