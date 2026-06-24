@@ -4,6 +4,7 @@
  *
  * T2.1 — filtro por data com recomposição de saldo de abertura
  * T2.2 — forma de pagamento + upload de comprovante
+ * fix #82 — saldo devedor reflete período filtrado + reload ao toggle do filtro
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react'
@@ -116,6 +117,11 @@ export function ReceivablesPage() {
   function applyFilter() {
     if (selected) fetchDetail(selected, { from: dateFrom, to: dateTo, filtered: useFilter })
   }
+
+  // fix #82 — recarrega extrato ao ativar/desativar filtro
+  useEffect(() => {
+    if (selected) fetchDetail(selected, { from: dateFrom, to: dateTo, filtered: useFilter })
+  }, [useFilter]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Upload comprovante → base64
   async function handleFileChange(e) {
@@ -286,21 +292,28 @@ export function ReceivablesPage() {
             )}
           </div>
 
-          {/* Saldos */}
-          {detail && (
-            <div className="grid grid-cols-3 gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3">
-              {[
-                { label:'Limite',     value: detail.buyer.creditLimit,    cls:'' },
-                { label:'Saldo devedor', value: detail.buyer.creditBalance, cls: detail.buyer.creditBalance > 0 ? 'text-red-600' : '' },
-                { label:'Disponível', value: detail.buyer.creditAvailable, cls: detail.buyer.creditAvailable > 0 ? 'text-green-600' : 'text-[var(--color-text-secondary)]' },
-              ].map(({label, value, cls}) => (
-                <div key={label} className="text-center">
-                  <p className="text-[10px] uppercase tracking-wider text-[var(--color-text-secondary)]">{label}</p>
-                  <p className={`text-sm font-bold text-[var(--color-text-primary)] ${cls}`}>{fmt(value)}</p>
-                </div>
-              ))}
-            </div>
-          )}
+          {/* Saldos — fix #82: "Saldo devedor" reflete o período quando filtrado */}
+          {detail && (() => {
+            const periodBalance = detail.filtered
+              ? detail.openingBalance + detail.transactions.reduce(
+                  (sum, t) => sum + (t.type === 'debit' ? t.amount : -t.amount), 0
+                )
+              : detail.buyer.creditBalance
+            return (
+              <div className="grid grid-cols-3 gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3">
+                {[
+                  { label:'Limite',     value: detail.buyer.creditLimit,    cls:'' },
+                  { label: detail.filtered ? 'Saldo no período' : 'Saldo devedor', value: periodBalance, cls: periodBalance > 0 ? 'text-red-600' : '' },
+                  { label:'Disponível', value: detail.buyer.creditAvailable, cls: detail.buyer.creditAvailable > 0 ? 'text-green-600' : 'text-[var(--color-text-secondary)]' },
+                ].map(({label, value, cls}) => (
+                  <div key={label} className="text-center">
+                    <p className="text-[10px] uppercase tracking-wider text-[var(--color-text-secondary)]">{label}</p>
+                    <p className={`text-sm font-bold text-[var(--color-text-primary)] ${cls}`}>{fmt(value)}</p>
+                  </div>
+                ))}
+              </div>
+            )
+          })()}
 
           {detailLoading ? (
             <div className="flex flex-1 items-center justify-center text-sm text-[var(--color-text-secondary)]">Carregando…</div>
