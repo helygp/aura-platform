@@ -24,7 +24,8 @@ import { Search, Trash2, RefreshCw, ChevronDown, ChevronUp, ShoppingCart, Packag
 import { Modal, Button } from '@aura/ui'
 import { ORDER_CHANNEL, fmtBRL, calcOrderTotals } from '../ordersTypes.js'
 
-/* ─── Utilitários de ordenação canônica de tamanho (fix #81) ─── */
+/* ─── Utilitários de ordenação canônica (fix #81) ─── */
+/* Ordem: Cor (alfabética) → Tamanho canônico dentro de cada cor */
 const _SZ_CANONICAL = ['PP','P','M','G','GG','XG']
 const _SZ_ROWS      = ['Tamanho','tamanho','Size','size','Tam','tam']
 
@@ -39,20 +40,23 @@ function sortSkus(skus) {
   return [...skus].sort((a, b) => {
     const aAttr = a.attributes ?? {}
     const bAttr = b.attributes ?? {}
-    const szA   = Object.keys(aAttr).find(k => _SZ_ROWS.includes(k))
-    const szB   = Object.keys(bAttr).find(k => _SZ_ROWS.includes(k))
-    const ka    = szA ? _szKey(aAttr[szA]) : ''
-    const kb    = szB ? _szKey(bAttr[szB]) : ''
-    if (ka !== kb) return ka < kb ? -1 : 1
+    // Primário: Cor (alfabética)
     const cA = Object.entries(aAttr).find(([k]) => !_SZ_ROWS.includes(k))?.[1] ?? ''
     const cB = Object.entries(bAttr).find(([k]) => !_SZ_ROWS.includes(k))?.[1] ?? ''
-    return String(cA).localeCompare(String(cB), 'pt-BR')
+    const colorCmp = String(cA).localeCompare(String(cB), 'pt-BR')
+    if (colorCmp !== 0) return colorCmp
+    // Secundário: Tamanho canônico
+    const szA = Object.keys(aAttr).find(k => _SZ_ROWS.includes(k))
+    const szB = Object.keys(bAttr).find(k => _SZ_ROWS.includes(k))
+    const ka  = szA ? _szKey(aAttr[szA]) : ''
+    const kb  = szB ? _szKey(bAttr[szB]) : ''
+    return ka < kb ? -1 : ka > kb ? 1 : 0
   })
 }
 
 function sortedAttrStr(attributes) {
   return Object.entries(attributes ?? {})
-    .sort(([a], [b]) => (_SZ_ROWS.includes(a) ? 0 : 1) - (_SZ_ROWS.includes(b) ? 0 : 1))
+    .sort(([a], [b]) => (_SZ_ROWS.includes(a) ? 1 : 0) - (_SZ_ROWS.includes(b) ? 1 : 0))
     .map(([, v]) => `${v}`)
     .join(' / ')
 }
