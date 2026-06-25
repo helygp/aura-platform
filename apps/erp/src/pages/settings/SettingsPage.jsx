@@ -263,21 +263,16 @@ export function SettingsPage() {
   }
 
   /* ─── WhatsApp ─── */
-  const [wppConfig,    setWppConfig]    = useState({ url: '', apiKey: '', session: 'default' })
   const [wppStatus,    setWppStatus]    = useState(null)
-  const [wppSaving,    setWppSaving]    = useState(false)
-  const [wppSaved,     setWppSaved]     = useState(false)
   const [wppLoading,   setWppLoading]   = useState(false)
   const [wppActing,    setWppActing]    = useState(false)
   const [wppQr,        setWppQr]        = useState(null)
-  const [wppDirty,     setWppDirty]     = useState(false)
 
-  const loadWppConfig = useCallback(async () => {
-    try {
-      const res = await fetch('/api/tenant/whatsapp-config', { credentials: 'include' })
-      if (res.ok) setWppConfig(await res.json())
-    } catch {}
-  }, [])
+  // Aprovador
+  const [approverPhone, setApproverPhone] = useState('')
+  const [approverDirty, setApproverDirty] = useState(false)
+  const [approverSaving, setApproverSaving] = useState(false)
+  const [approverSaved, setApproverSaved] = useState(false)
 
   const loadWppStatus = useCallback(async () => {
     setWppLoading(true)
@@ -288,32 +283,62 @@ export function SettingsPage() {
     setWppLoading(false)
   }, [])
 
-  useEffect(() => {
-    if (activeTab === 'whatsapp') { loadWppConfig(); loadWppStatus() }
-  }, [activeTab, loadWppConfig, loadWppStatus])
-
-  const handleSaveWpp = async () => {
-    setWppSaving(true)
+  const loadApprover = useCallback(async () => {
     try {
-      await fetch('/api/tenant/whatsapp-config', {
+      const res = await fetch('/api/tenant/whatsapp/approver', { credentials: 'include' })
+      if (res.ok) {
+        const { approver_phone } = await res.json()
+        setApproverPhone(approver_phone ?? '')
+        setApproverDirty(false)
+      }
+    } catch {}
+  }, [])
+
+  useEffect(() => {
+    if (activeTab === 'whatsapp') { loadWppStatus(); loadApprover() }
+  }, [activeTab, loadWppStatus, loadApprover])
+
+  const handleSaveApprover = async () => {
+    setApproverSaving(true)
+    try {
+      const res = await fetch('/api/tenant/whatsapp/approver', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify(wppConfig),
+        body: JSON.stringify({ approver_phone: approverPhone || null }),
       })
-      setWppSaved(true)
-      setWppDirty(false)
-      setTimeout(() => setWppSaved(false), 3000)
-      await loadWppStatus()
-    } catch {}
-    setWppSaving(false)
+      if (res.ok) {
+        setApproverSaved(true)
+        setApproverDirty(false)
+        setTimeout(() => setApproverSaved(false), 3000)
+      } else {
+        const err = await res.json().catch(() => ({}))
+        alert('Erro ao salvar: ' + (err.error ?? res.statusText))
+      }
+    } catch (e) {
+      alert('Erro: ' + e.message)
+    }
+    setApproverSaving(false)
   }
+
+  const [wppError, setWppError] = useState(null)
 
   const handleConnectWpp = async () => {
     setWppActing(true)
     setWppQr(null)
+    setWppError(null)
     try {
-      await fetch('/api/whatsapp/session/start', { method: 'POST', credentials: 'include' })
+      const r = await fetch('/api/whatsapp/session/start', { method: 'POST', credentials: 'include' })
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}))
+        if (r.status === 503 || /não configurad/i.test(err?.error ?? '')) {
+          setWppError('WhatsApp ainda não foi configurado pela Aura para este ambiente. Entre em contato com o suporte.')
+        } else {
+          setWppError(err?.error ?? `Erro ao conectar (HTTP ${r.status})`)
+        }
+        setWppActing(false)
+        return
+      }
       await new Promise(r => setTimeout(r, 2500))
       await loadWppStatus()
       const s = await fetch('/api/whatsapp/session', { credentials: 'include' }).then(r => r.json()).catch(() => null)
@@ -321,7 +346,9 @@ export function SettingsPage() {
         const qrRes = await fetch('/api/whatsapp/qr', { credentials: 'include' })
         if (qrRes.ok) { const { qr } = await qrRes.json(); setWppQr(qr) }
       }
-    } catch {}
+    } catch (e) {
+      setWppError('Falha na conexão: ' + e.message)
+    }
     setWppActing(false)
   }
 
@@ -627,46 +654,20 @@ export function SettingsPage() {
       {activeTab === 'whatsapp' && (
         <div className="max-w-xl space-y-5">
 
-          {/* Credenciais WAHA */}
-          <Section icon={Key} title="Configuração da conexão">
-            <div className="space-y-4">
-              <div>
-                <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5 flex items-center gap-1.5">
-                  <Link size={11} /> URL do servidor WAHA
-                </label>
-                <input type="text" placeholder="https://waha.exemplo.com" value={wppConfig.url}
-                  onChange={e => { setWppConfig(p => ({ ...p, url: e.target.value })); setWppDirty(true) }}
-                  className="w-full h-9 px-3 rounded-lg text-sm font-mono bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]" />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5 flex items-center gap-1.5">
-                  <Key size={11} /> API Key
-                </label>
-                <input type="password" placeholder="••••••••••••" value={wppConfig.apiKey}
-                  onChange={e => { setWppConfig(p => ({ ...p, apiKey: e.target.value })); setWppDirty(true) }}
-                  className="w-full h-9 px-3 rounded-lg text-sm font-mono bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]" />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5 flex items-center gap-1.5">
-                  <Hash size={11} /> Nome da sessão
-                </label>
-                <input type="text" placeholder="default" value={wppConfig.session}
-                  onChange={e => { setWppConfig(p => ({ ...p, session: e.target.value })); setWppDirty(true) }}
-                  className="w-full h-9 px-3 rounded-lg text-sm font-mono bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]" />
-                <p className="text-xs text-[var(--color-text-muted)] mt-1">Identificador da sessão no WAHA. Padrão: <code className="font-mono text-xs bg-[var(--color-bg-subtle)] px-1 rounded">default</code></p>
-              </div>
-              <div className="flex justify-end">
-                <Button onClick={handleSaveWpp} disabled={wppSaving || !wppDirty}>
-                  {wppSaved   ? <><Check size={14} /> Salvo!</>
-                   : wppSaving ? <><RefreshCw size={14} className="animate-spin" /> Salvando…</>
-                   :             <><Save size={14} /> Salvar configuração</>}
-                </Button>
-              </div>
+          {/* Info: config geral fica no master */}
+          <div className="rounded-xl border border-blue-500/30 bg-blue-500/10 p-4 flex items-start gap-3 text-sm">
+            <AlertCircle size={16} className="text-blue-500 shrink-0 mt-0.5" />
+            <div className="text-[var(--color-text)]">
+              <p className="font-medium mb-1">Configuração técnica gerenciada pela Aura</p>
+              <p className="text-xs text-[var(--color-text-muted)]">
+                A instância de WhatsApp deste tenant é provisionada e mantida pela equipe Aura.
+                Aqui você gerencia apenas a conexão (escanear QR Code, reconectar) e o aprovador de pedidos.
+              </p>
             </div>
-          </Section>
+          </div>
 
-          {/* Status da sessão */}
-          <Section icon={MessageCircle} title="Status da conexão">
+          {/* Status da conexão */}
+          <Section icon={MessageCircle} title="Conexão WhatsApp">
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
@@ -698,10 +699,18 @@ export function SettingsPage() {
                 </div>
               )}
 
+              {/* Erro */}
+              {wppError && (
+                <div className="rounded-lg border border-red-300 bg-red-50 dark:bg-red-500/10 dark:border-red-500/30 p-3 flex items-start gap-2 text-sm">
+                  <AlertCircle size={14} className="text-red-500 shrink-0 mt-0.5" />
+                  <span className="text-red-700 dark:text-red-400">{wppError}</span>
+                </div>
+              )}
+
               {/* Ações */}
               <div className="flex gap-2 flex-wrap">
                 {(!wppStatus || wppStatus.status === 'STOPPED' || wppStatus.status === 'FAILED') && (
-                  <button onClick={handleConnectWpp} disabled={wppActing || !wppConfig.url}
+                  <button onClick={handleConnectWpp} disabled={wppActing}
                     className="flex items-center gap-2 h-9 px-4 rounded-lg text-sm font-medium bg-[var(--color-primary)] text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-50 transition-colors">
                     {wppActing ? <><RefreshCw size={13} className="animate-spin" /> Conectando…</> : <><Wifi size={13} /> Conectar</>}
                   </button>
@@ -721,12 +730,58 @@ export function SettingsPage() {
                   </button>
                 )}
               </div>
+            </div>
+          </Section>
 
-              {!wppConfig.url && (
-                <p className="text-xs text-[var(--color-text-muted)] flex items-center gap-1.5">
-                  <AlertCircle size={12} /> Configure a URL do servidor WAHA acima antes de conectar.
+          {/* Aprovador de pedidos */}
+          <Section icon={Phone} title="Aprovador de pedidos WhatsApp">
+            <div className="space-y-3">
+              <p className="text-xs text-[var(--color-text-muted)]">
+                Telefone que recebe notificação de cada novo pedido criado pelo agente IA e pode aprovar diretamente pelo WhatsApp.
+              </p>
+              <div>
+                <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">WhatsApp do aprovador</label>
+                <input
+                  type="text"
+                  placeholder="5511999999999 (com DDI, apenas dígitos)"
+                  value={approverPhone}
+                  onChange={e => { setApproverPhone(e.target.value); setApproverDirty(true); setApproverSaved(false) }}
+                  className="w-full h-9 px-3 rounded-lg text-sm font-mono bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
+                />
+                <p className="text-xs text-[var(--color-text-muted)] mt-1">
+                  Mínimo 10 dígitos. Deixe vazio para desabilitar aprovação por WhatsApp.
                 </p>
-              )}
+              </div>
+              <div className="flex justify-end">
+                <button
+                  onClick={handleSaveApprover}
+                  disabled={approverSaving || (!approverDirty && !approverSaved)}
+                  className="flex items-center gap-1.5 h-9 px-4 rounded-lg text-sm font-medium bg-[var(--color-primary)] text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-50 transition-colors"
+                >
+                  {approverSaved   ? <><Check size={13} /> Salvo!</>
+                   : approverSaving ? <><RefreshCw size={13} className="animate-spin" /> Salvando…</>
+                   :                  'Salvar'}
+                </button>
+              </div>
+            </div>
+          </Section>
+
+          {/* Como funciona */}
+          <Section icon={MessageCircle} title="Como funciona">
+            <div className="space-y-2 text-sm text-[var(--color-text-muted)]">
+              <p>
+                Quando um cliente envia mensagem para o seu WhatsApp, um agente IA atende automaticamente,
+                consulta o catálogo e cria pedidos pendentes de aprovação.
+              </p>
+              <p>
+                O usuário <strong>aprovador</strong> (configurado pela Aura) recebe notificação de cada pedido
+                e pode aprovar respondendo <code className="text-xs bg-[var(--color-bg-subtle)] px-1 rounded">APROVAR &lt;numero&gt;</code>
+                ou pela tela <strong>WhatsApp</strong> do ERP.
+              </p>
+              <p>
+                Após aprovação, o cliente é notificado automaticamente em cada mudança de status do pedido
+                (em produção, separação, enviado, entregue).
+              </p>
             </div>
           </Section>
 
