@@ -27,6 +27,8 @@ import { ordersRouter }    from './routes/orders.js'
 import { customersRouter } from './routes/customers.js'
 import { usersRouter }     from './routes/users.js'
 import { whatsappRouter }  from './routes/whatsapp.js'
+import { agentRouter }     from './routes/agent.js'
+import { whatsappWebhookRouter } from './routes/whatsappWebhook.js'
 import { reportsRouter }    from './routes/reports.js'
 import { walletRouter }     from './routes/wallet.js'
 
@@ -42,6 +44,7 @@ import { masterRouter, billingWebhookRouter } from './routes/master/index.js'
 import { onboardingRouter } from './routes/onboarding.js'
 import { ensureWebhookSchema } from './lib/webhookDispatcher.js'
 import { startBillingJobs } from './lib/billingJobs.js'
+import { startNotifyWorker } from './lib/notifyWorker.js'
 
 const app = express()
 
@@ -190,7 +193,10 @@ app.use('/api/inventory', inventoryRouter)
 app.use('/api/orders',    ordersRouter)
 app.use('/api/customers', customersRouter)
 app.use('/api/users',     usersRouter)
+// Webhook publico (sem auth) — DEVE vir ANTES do whatsappRouter autenticado
+app.use('/api/whatsapp/webhook', whatsappWebhookRouter)
 app.use('/api/whatsapp',  whatsappRouter)
+app.use('/api/agent',     agentRouter)
 app.use('/api/reports',   reportsRouter)
 app.use('/api/wallet',    walletRouter)
 app.use('/master',         masterRouter)
@@ -232,6 +238,7 @@ app.use((err, req, res, _next) => {
 /* Inicia jobs recorrentes de billing (trial_ending check 1x/dia) */
 
 startBillingJobs()
+startNotifyWorker()
 ensureWebhookSchema().catch(e => console.warn('[webhooks] schema warn:', e.message))
 
 app.listen(ENV.PORT, () => {
