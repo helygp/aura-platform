@@ -21,6 +21,7 @@ import {
   cancelSubscription,
 } from '../../lib/pagarme.js'
 import { sendWelcomeEmail } from '../../lib/mailer.js'
+import { randomBytes } from 'crypto'
 
 const execFileAsync = promisify(execFile)
 
@@ -116,6 +117,7 @@ masterTenantsRouter.get('/:slug', async (req, res) => {
       themeConfig:            tenant.themeConfig,
       users:                  tenant._count.users,
       billings:               tenant.billings,
+      whatsappConfig:         await getSafeWhatsappConfig(req.params.slug),
       createdAt:              tenant.createdAt,
       updatedAt:              tenant.updatedAt,
     })
@@ -305,6 +307,199 @@ async function setupPagarme({ tenant, plan, adminName, adminEmail, document, pho
  * Body: { status: 'ACTIVE'|'SUSPENDED'|'CANCELLED'|'TRIAL', reason?: string }
  * ───────────────────────────────────────────────────────────────────────────── */
 const VALID_STATUSES = ['ACTIVE', 'SUSPENDED', 'CANCELLED', 'TRIAL']
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Helpers de WhatsApp
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+/* Lê whatsapp_config do tenant — retorna objeto vazio se não configurado */
+async function getRawWhatsappConfig(slug) {
+  const rows = await prisma.$queryRaw`
+    SELECT whatsapp_config FROM tenants WHERE slug = ${slug} LIMIT 1
+  `
+  return rows[0]?.whatsapp_config ?? {}
+}
+
+/* Sanitiza para enviar ao frontend — não expõe valores completos de secrets */
+async function getSafeWhatsappConfig(slug) {
+  const c = await getRawWhatsappConfig(slug)
+  const mask = (v) => {
+    if (!v || typeof v !== 'string') return null
+    if (v.length <= 8) return { set: true, preview: '••••' }
+    return { set: true, preview: v.slice(0, 4) + '…' + v.slice(-4) }
+  }
+  return {
+    instance_id:      c.instance_id      ?? null,
+    base_url:         c.base_url         ?? null,
+    session:          c.session          ?? 'default',
+    processor:        c.processor        ?? 'none',
+    approver_phone:   c.approver_phone   ?? null,
+    dify_api_url:     c.dify_api_url     ?? null,
+    dify_app_id:      c.dify_app_id      ?? null,
+    n8n_webhook_url:  c.n8n_webhook_url  ?? null,
+    custom_url:       c.custom_url       ?? null,
+    // Sensitive — apenas indicadores
+    api_key:          mask(c.api_key),
+    dify_api_key:     mask(c.dify_api_key),
+    internal_api_key: mask(c.internal_api_key),
+    webhook_secret:   mask(c.webhook_secret),
+  }
+}
+
+/* Aplica merge parcial no whatsapp_config */
+async function updateWhatsappConfig(slug, patch) {
+  await prisma.$executeRaw`
+    UPDATE tenants
+    SET whatsapp_config = whatsapp_config || ${JSON.stringify(patch)}::jsonb,
+        updated_at = now()
+    WHERE slug = ${slug}
+  `
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * GET /master/tenants/:slug/whatsapp
+ * Retorna a configuração sanitizada.
+ * ───────────────────────────────────────────────────────────────────────────── */
+masterTenantsRouter.get('/:slug/whatsapp', async (req, res) => {
+  try {
+    const tenant = await prisma.tenant.findUnique({ where: { slug: req.params.slug }, select: { id: true } })
+    if (!tenant) return res.status(404).json({ error: 'Tenant não encontrado.' })
+    res.json(await getSafeWhatsappConfig(req.params.slug))
+  } catch (err) {
+    console.error('[master/tenants/:slug/whatsapp GET]', err.message)
+    res.status(500).json({ error: 'Erro interno.' })
+  }
+})
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * PUT /master/tenants/:slug/whatsapp
+ * Atualiza campos do whatsapp_config. Aceita merge parcial.
+ * Campos sensíveis (api_key, dify_api_key) só são atualizados se enviados.
+ * ───────────────────────────────────────────────────────────────────────────── */
+const whatsappPatchSchema = z.object({
+  instance_id:      z.string().nullable().optional(),
+  base_url:         z.string().url().nullable().optional(),
+  api_key:          z.string().nullable().optional(),
+  session:          z.string().nullable().optional(),
+  processor:        z.enum(['dify', 'n8n', 'custom', 'none']).optional(),
+  approver_phone:   z.string().nullable().optional(),
+  dify_api_url:     z.string().url().nullable().optional(),
+  dify_api_key:     z.string().nullable().optional(),
+  dify_app_id:      z.string().nullable().optional(),
+  n8n_webhook_url:  z.string().url().nullable().optional(),
+  custom_url:       z.string().url().nullable().optional(),
+})
+
+masterTenantsRouter.put('/:slug/whatsapp', async (req, res) => {
+  try {
+    const tenant = await prisma.tenant.findUnique({ where: { slug: req.params.slug }, select: { id: true } })
+    if (!tenant) return res.status(404).json({ error: 'Tenant não encontrado.' })
+
+    const parsed = whatsappPatchSchema.safeParse(req.body)
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'Dados inválidos.', fields: parsed.error.format() })
+    }
+
+    // Normalize: phone só dígitos
+    const patch = { ...parsed.data }
+    if (patch.approver_phone) patch.approver_phone = String(patch.approver_phone).replace(/\D/g, '')
+
+    await updateWhatsappConfig(req.params.slug, patch)
+    res.json(await getSafeWhatsappConfig(req.params.slug))
+  } catch (err) {
+    console.error('[master/tenants/:slug/whatsapp PUT]', err.message)
+    res.status(500).json({ error: 'Erro interno.' })
+  }
+})
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * POST /master/tenants/:slug/whatsapp/rotate-keys
+ * Gera novos internal_api_key e webhook_secret. Útil em caso de comprometimento.
+ * ───────────────────────────────────────────────────────────────────────────── */
+masterTenantsRouter.post('/:slug/whatsapp/rotate-keys', async (req, res) => {
+  try {
+    const tenant = await prisma.tenant.findUnique({ where: { slug: req.params.slug }, select: { id: true } })
+    if (!tenant) return res.status(404).json({ error: 'Tenant não encontrado.' })
+
+    const internal_api_key = randomBytes(32).toString('base64url')
+    const webhook_secret   = randomBytes(24).toString('base64url')
+
+    await updateWhatsappConfig(req.params.slug, { internal_api_key, webhook_secret })
+
+    // Retorna os valores completos UMA ÚNICA VEZ para o admin copiar
+    res.json({
+      ok: true,
+      internal_api_key,
+      webhook_secret,
+      message: 'Chaves geradas. Guarde-as agora — não serão exibidas novamente.',
+    })
+  } catch (err) {
+    console.error('[master/tenants/:slug/whatsapp/rotate-keys]', err.message)
+    res.status(500).json({ error: 'Erro interno.' })
+  }
+})
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * POST /master/tenants/:slug/whatsapp/provision
+ * Provisiona instância WAHA via Aurazap orchestrator.
+ * body: { instance_id?, webhook_url? }  — defaults gerados a partir do slug
+ * ───────────────────────────────────────────────────────────────────────────── */
+masterTenantsRouter.post('/:slug/whatsapp/provision', async (req, res) => {
+  try {
+    const tenant = await prisma.tenant.findUnique({ where: { slug: req.params.slug }, select: { slug: true } })
+    if (!tenant) return res.status(404).json({ error: 'Tenant não encontrado.' })
+
+    const orchUrl = process.env.WAHA_ORCHESTRATOR_URL ?? 'http://waha-orchestrator:4000'
+    const orchKey = process.env.WAHA_ORCHESTRATOR_KEY ?? ''
+    if (!orchKey) return res.status(503).json({ error: 'Aurazap orchestrator não configurado (WAHA_ORCHESTRATOR_KEY ausente).' })
+
+    const instance_id = req.body?.instance_id?.trim() || tenant.slug
+    const webhook_url = req.body?.webhook_url?.trim()
+                       || `https://api.${tenant.slug}.aurabr.app/api/whatsapp/webhook`
+
+    // Chama o orchestrator
+    const resp = await fetch(`${orchUrl}/provision`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Api-Key': orchKey },
+      body: JSON.stringify({ instance_id, webhook_url }),
+    })
+    if (!resp.ok) {
+      const txt = await resp.text().catch(() => '')
+      return res.status(502).json({ error: `Aurazap respondeu ${resp.status}: ${txt.slice(0, 200)}` })
+    }
+    const data = await resp.json()
+    // data esperado: { instance_id, base_url, api_key, session, webhook_url, ... }
+
+    // Garante secrets gerados se ainda não existem
+    const current = await getRawWhatsappConfig(req.params.slug)
+    const newSecrets = {}
+    if (!current.internal_api_key) newSecrets.internal_api_key = randomBytes(32).toString('base64url')
+    if (!current.webhook_secret)   newSecrets.webhook_secret   = randomBytes(24).toString('base64url')
+
+    await updateWhatsappConfig(req.params.slug, {
+      instance_id: data.instance_id ?? instance_id,
+      base_url:    data.base_url ?? null,
+      api_key:     data.api_key ?? null,
+      session:     data.session ?? 'default',
+      ...newSecrets,
+    })
+
+    res.status(201).json({
+      ok: true,
+      provisioned: {
+        instance_id: data.instance_id,
+        base_url:    data.base_url,
+        session:     data.session,
+        webhook_url,
+      },
+      // Mostra secrets uma vez se foram gerados agora
+      ...(Object.keys(newSecrets).length ? { secrets_generated: newSecrets } : {}),
+    })
+  } catch (err) {
+    console.error('[master/tenants/:slug/whatsapp/provision]', err.message)
+    res.status(500).json({ error: 'Erro ao provisionar: ' + err.message })
+  }
+})
 
 masterTenantsRouter.patch('/:slug/status', async (req, res) => {
   const { status, reason } = req.body
