@@ -13,13 +13,14 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import {
-  Upload, X, RefreshCw, Save, Check, Palette, Type, Circle,
+  Upload, X, RefreshCw, Save, Check, Palette, Type, Circle, Send,
   RotateCcw, BarChart2, Tag, Store, MessageCircle, Wifi, WifiOff,
   Link, Key, Hash, QrCode, Phone, AlertCircle, ShoppingBag, LayoutList, LayoutGrid,
 } from 'lucide-react'
 import { useTheme }        from '@aura/theme'
 import { useTenantTheme }  from '../../hooks/useTenantTheme.js'
 import { Card, Button }    from '@aura/ui'
+import { PhoneInput }     from '../whatsapp/components/PhoneInput.jsx'
 import { FONT_PAIRS, RADIUS_TOKENS, MOOD_PALETTES } from '@aura/theme'
 
 /* ─── Paleta de sugestões de cor primária ─── */
@@ -267,6 +268,8 @@ export function SettingsPage() {
   const [wppLoading,   setWppLoading]   = useState(false)
   const [wppActing,    setWppActing]    = useState(false)
   const [wppQr,        setWppQr]        = useState(null)
+  const [wppConnected, setWppConnected] = useState(false)  // feedback "Conectado!"
+  const qrPollRef = useRef(null)
 
   // Aprovador
   const [approverPhone, setApproverPhone] = useState('')
@@ -274,13 +277,23 @@ export function SettingsPage() {
   const [approverSaving, setApproverSaving] = useState(false)
   const [approverSaved, setApproverSaved] = useState(false)
 
-  const loadWppStatus = useCallback(async () => {
-    setWppLoading(true)
+  const loadWppStatus = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) setWppLoading(true)
     try {
       const res = await fetch('/api/whatsapp/session', { credentials: 'include' })
-      if (res.ok) setWppStatus(await res.json())
+      if (res.ok) {
+        const data = await res.json()
+        setWppStatus(data)
+        if (data.status === 'WORKING') {
+          setWppQr(null)
+          setWppConnected(true)
+          setTimeout(() => setWppConnected(false), 4000)
+          // Invalida cache do menu WhatsApp para aparecer imediatamente
+          try { sessionStorage.removeItem('aura_wpp_menu_status') } catch {}
+        }
+      }
     } catch {}
-    setWppLoading(false)
+    if (!silent) setWppLoading(false)
   }, [])
 
   const loadApprover = useCallback(async () => {
@@ -297,6 +310,16 @@ export function SettingsPage() {
   useEffect(() => {
     if (activeTab === 'whatsapp') { loadWppStatus(); loadApprover() }
   }, [activeTab, loadWppStatus, loadApprover])
+
+  // Polling automático enquanto QR estiver visível — verifica a cada 3s
+  useEffect(() => {
+    if (wppQr) {
+      qrPollRef.current = setInterval(() => loadWppStatus({ silent: true }), 3000)
+    } else {
+      clearInterval(qrPollRef.current)
+    }
+    return () => clearInterval(qrPollRef.current)
+  }, [wppQr, loadWppStatus])
 
   const handleSaveApprover = async () => {
     setApproverSaving(true)
@@ -322,6 +345,31 @@ export function SettingsPage() {
   }
 
   const [wppError, setWppError] = useState(null)
+
+  /* Envio avulso */
+  const [sendTo,      setSendTo]      = useState('')
+  const [sendMsg,     setSendMsg]     = useState('')
+  const [sendStatus,  setSendStatus]  = useState(null)
+  const [sendSending, setSendSending] = useState(false)
+
+  const handleManualSend = async () => {
+    if (!sendTo || !sendMsg.trim()) return
+    setSendSending(true); setSendStatus(null)
+    try {
+      const e164 = sendTo.startsWith('55') ? sendTo : '55' + sendTo.replace(/\D/g, '')
+      const res = await fetch('/api/whatsapp/send', {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to: e164, message: sendMsg.trim() }),
+      })
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? res.statusText)
+      setSendStatus('ok'); setSendMsg('')
+      setTimeout(() => setSendStatus(null), 4000)
+    } catch (err) {
+      setSendStatus('error:' + err.message)
+    }
+    setSendSending(false)
+  }
 
   const handleConnectWpp = async () => {
     setWppActing(true)
@@ -688,14 +736,21 @@ export function SettingsPage() {
                 </button>
               </div>
 
+              {/* Feedback de conexão bem-sucedida */}
+              {wppConnected && (
+                <div className="rounded-xl border border-green-300 bg-green-50 dark:bg-green-950/30 dark:border-green-700 p-3 flex items-center gap-2 text-sm text-green-700 dark:text-green-400">
+                  <Check size={15} className="shrink-0" /> WhatsApp conectado com sucesso!
+                </div>
+              )}
+
               {/* QR Code */}
               {wppQr && (
                 <div className="flex flex-col items-center gap-3 p-4 rounded-xl bg-white border border-[var(--color-border)]">
                   <p className="text-xs text-gray-500">Escaneie com o WhatsApp no celular</p>
                   <img src={wppQr} alt="QR Code WhatsApp" className="w-48 h-48 object-contain" />
-                  <button onClick={loadWppStatus} className="text-xs text-[var(--color-primary)] hover:underline flex items-center gap-1">
-                    <RefreshCw size={11} /> Atualizar status
-                  </button>
+                  <p className="text-xs text-gray-400 flex items-center gap-1.5 animate-pulse">
+                    <RefreshCw size={11} className="animate-spin" /> Aguardando leitura…
+                  </p>
                 </div>
               )}
 
@@ -761,6 +816,50 @@ export function SettingsPage() {
                   {approverSaved   ? <><Check size={13} /> Salvo!</>
                    : approverSaving ? <><RefreshCw size={13} className="animate-spin" /> Salvando…</>
                    :                  'Salvar'}
+                </button>
+              </div>
+            </div>
+          </Section>
+
+          {/* Envio avulso */}
+          <Section icon={Send} title="Envio avulso">
+            <div className="space-y-3">
+              <p className="text-xs text-[var(--color-text-muted)]">
+                Envie uma mensagem manual para qualquer número, fora do fluxo do agente IA.
+              </p>
+              <div>
+                <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Destinatário</label>
+                <PhoneInput value={sendTo} onChange={setSendTo} />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Mensagem</label>
+                <textarea
+                  rows={3}
+                  placeholder="Digite a mensagem…"
+                  value={sendMsg}
+                  onChange={e => setSendMsg(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg text-sm bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text)] resize-none focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
+                />
+              </div>
+              {sendStatus === 'ok' && (
+                <p className="text-xs text-green-600 flex items-center gap-1">
+                  <Check size={12} /> Mensagem enviada com sucesso!
+                </p>
+              )}
+              {sendStatus?.startsWith('error') && (
+                <p className="text-xs text-red-500 flex items-center gap-1">
+                  <AlertCircle size={12} /> {sendStatus.replace('error:', '')}
+                </p>
+              )}
+              <div className="flex justify-end">
+                <button
+                  onClick={handleManualSend}
+                  disabled={sendSending || !sendTo || !sendMsg.trim()}
+                  className="flex items-center gap-1.5 h-9 px-4 rounded-lg text-sm font-medium bg-[var(--color-primary)] text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-50 transition-colors"
+                >
+                  {sendSending
+                    ? <><RefreshCw size={13} className="animate-spin" /> Enviando…</>
+                    : <><Send size={13} /> Enviar</>}
                 </button>
               </div>
             </div>

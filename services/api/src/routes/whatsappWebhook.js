@@ -27,8 +27,41 @@
 
 import { Router } from 'express'
 import { query }  from '../lib/tenantDb.js'
+import {
+  getOrCreateInteraction,
+  saveMessage as saveMsg,
+  setDifyConversationId,
+} from '../lib/interactionManager.js'
 import { getWahaConfig, fromChatId, sendText } from '../lib/wahaClient.js'
 import { convertBotOrderToOrder } from '../lib/botOrderConvert.js'
+
+// Cache do número do próprio bot (evita processar mensagens enviadas pelo bot com fromMe=false)
+let _botPhone = null
+async function getBotPhone() {
+  if (_botPhone) return _botPhone
+  try {
+    const { getWahaConfig, wahaJson } = await import('./lib/wahaClient.js')
+    const cfg = await getWahaConfig()
+    const me = await wahaJson(`sessions/${cfg.session}`)
+    if (me?.me?.id) {
+      _botPhone = me.me.id.split('@')[0].replace(/\D/g, '')
+    }
+  } catch {}
+  return _botPhone
+}
+
+// Cache in-memory para deduplicação de mensagens (message + message.any da mesma msg)
+const _msgSeen = new Map()
+function isDuplicate(id) {
+  if (!id) return false
+  if (_msgSeen.has(id)) return true
+  _msgSeen.set(id, Date.now())
+  if (_msgSeen.size > 500) {
+    const cutoff = Date.now() - 60000
+    for (const [k, t] of _msgSeen) { if (t < cutoff) _msgSeen.delete(k) }
+  }
+  return false
+}
 
 export const whatsappWebhookRouter = Router()
 
@@ -60,6 +93,7 @@ whatsappWebhookRouter.post('/', async (req, res) => {
 
     const body  = req.body ?? {}
     const event = body.event ?? body.type ?? ''
+    console.log('[wpp/webhook] recv event='+event+' keys='+Object.keys(body.payload ?? body.data ?? body).join(',').slice(0,80))
     const data  = body.payload ?? body.data ?? body
 
     // Ignora eventos que não são mensagem nova
@@ -68,7 +102,15 @@ whatsappWebhookRouter.post('/', async (req, res) => {
     }
 
     // Extrai dados da mensagem (formato WAHA padrão)
-    const chatId    = data.from ?? data.chatId ?? data.chat_id
+    // No NOWEB engine, "from" pode vir como @lid (Linked Identity) — não é o número real.
+    // O número real está em _data.key.remoteJidAlt como @s.whatsapp.net
+    const rawFrom    = data.from ?? data.chatId ?? data.chat_id ?? ''
+    const altJid     = data._data?.key?.remoteJidAlt ?? ''
+    // Prefere altJid se for @s.whatsapp.net (formato de número real)
+    const realJid    = altJid.endsWith('@s.whatsapp.net') ? altJid : rawFrom
+    const chatId     = realJid
+    const senderName = data._data?.pushName ?? data.pushName ?? null
+
     const text      = (data.body ?? data.text ?? data.message ?? '').toString().trim()
     const fromMe    = Boolean(data.fromMe ?? data.from_me)
     const isGroup   = chatId?.includes('@g.us')
@@ -81,6 +123,11 @@ whatsappWebhookRouter.post('/', async (req, res) => {
 
     const senderPhone = fromChatId(chatId)
     if (!senderPhone) return ackOk(res, { ignored: 'no-phone' })
+    if (isDuplicate(messageId)) return ackOk(res, { ignored: 'duplicate' })
+    // Ignora mensagens do próprio bot (NOWEB bug: fromMe=false em msgs enviadas pelo bot)
+    const botPhone = await getBotPhone()
+    if (botPhone && senderPhone === botPhone) return ackOk(res, { ignored: 'self' })
+    console.log(`[wpp/webhook] from=${senderPhone} name=${senderName ?? '-'} text="${text.slice(0,60)}"`)
 
     /* ── 1. Atalho de aprovação por WhatsApp ─────────────────────────
        Detecta APROVAR / REJEITAR ANTES de chamar o dispatcher.
@@ -99,9 +146,38 @@ whatsappWebhookRouter.post('/', async (req, res) => {
     }
 
     /* ── 2. Dispatcher conforme processor configurado ───────────────── */
-    const reply = await dispatch(cfg, { chatId, text, senderPhone, messageId, raw: data })
-      .catch(err => {
+    // Cria ou reutiliza interação para este phone
+    console.log("[wpp/webhook] criando interacao para", senderPhone)
+    const interaction = await getOrCreateInteraction(senderPhone).catch((e) => { console.error("[wpp/webhook] interaction error:", e.message); return null; })
+    console.log("[wpp/webhook] interaction:", interaction?.id ?? "null")
+
+    // Persiste mensagem inbound
+    if (interaction) {
+      await saveMsg(interaction.id, {
+        direction: 'inbound',
+        sender: 'customer',
+        content: text,
+        wahaMessageId: messageId ?? null,
+      }).catch(() => {})
+    }
+
+    const reply = await dispatch(cfg, {
+      chatId, text, senderPhone, senderName, messageId,
+      interactionId: interaction?.id ?? null,
+      difyConversationId: interaction?.dify_conversation_id ?? null,
+      raw: data,
+    })
+      .catch(async err => {
         console.error('[wpp/webhook dispatch]', err.message)
+        try {
+          const { sendText } = await import('../lib/wahaClient.js')
+          const opts = [
+            'Oi! 😊 Estou com uma instabilidade agora, mas já estou sendo notificado. Pode tentar novamente em instantes?',
+            'Opa, tive um probleminha técnico aqui! 🙈 Já estou trabalhando nisso — tenta de novo em alguns minutinhos?',
+            'Ei! Deu uma falha aqui da minha parte. 😅 Pode me mandar mensagem novamente em breve?',
+          ]
+          await sendText(chatId, opts[Math.floor(Math.random() * opts.length)])
+        } catch (_) {}
         return null
       })
 
@@ -109,6 +185,13 @@ whatsappWebhookRouter.post('/', async (req, res) => {
     if (reply && typeof reply === 'string' && reply.trim()) {
       try {
         await sendText(chatId, reply.trim())
+        if (interaction) {
+          await saveMsg(interaction.id, {
+            direction: 'outbound',
+            sender: 'bot',
+            content: reply.trim(),
+          }).catch(() => {})
+        }
       } catch (err) {
         console.error('[wpp/webhook sendText]', err.message)
       }
@@ -230,42 +313,76 @@ async function dispatchDify(cfg, ctx) {
     return null
   }
 
-  // Recupera conversation_id existente para o phone (se houver)
-  let difyConversationId = null
-  try {
-    const { rows } = await query(`
-      SELECT dify_conversation_id FROM bot_orders
-      WHERE customer_phone = $1 AND dify_conversation_id IS NOT NULL
-      ORDER BY received_at DESC LIMIT 1
-    `, [ctx.senderPhone])
-    difyConversationId = rows[0]?.dify_conversation_id ?? null
-  } catch {}
+  // Recupera conversation_id existente para o phone (usa tabela dedicada
+  // para manter contexto mesmo quando ainda não há bot_order)
+  let difyConversationId = ctx.difyConversationId ?? null
 
   const url = `${cfg.dify_api_url.replace(/\/$/, '')}/v1/chat-messages`
+  // Injeta phone do contato como prefixo invisível na query — o system prompt
+  // do agente deve sempre usar este valor ao chamar tools como get_customer e create_bot_order.
+  const queryWithContext = `[CONTATO_PHONE: ${ctx.senderPhone}] ${ctx.text}`
   const body = {
-    inputs: {},
-    query: ctx.text,
-    response_mode: 'blocking',
+    inputs: { phone: ctx.senderPhone, contact_name: ctx.senderName ?? '' },
+    query: queryWithContext,
+    response_mode: 'streaming',
     conversation_id: difyConversationId ?? '',
-    user: ctx.senderPhone, // Dify identifica end_user por isso
+    user: ctx.senderPhone,
   }
 
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${cfg.dify_api_key}`,
-    },
-    body: JSON.stringify(body),
-  })
+  // Tenta Dify normalmente
+  let res = null, lastErr = null
+  try {
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${cfg.dify_api_key}` },
+      body: JSON.stringify(body),
+    })
+    if (r.ok) { res = r }
+    else {
+      const errText = await r.text().catch(() => '')
+      lastErr = new Error(`Dify ${r.status}: ${errText.slice(0, 200)}`)
+      if (r.status < 500) throw lastErr
+    }
+  } catch (e) { lastErr = e }
 
-  if (!res.ok) {
-    const errText = await res.text().catch(() => '')
-    throw new Error(`Dify ${res.status}: ${errText.slice(0, 200)}`)
+  if (!res) throw lastErr
+
+  // Stream SSE parsing
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder('utf-8')
+  let buffer = ''
+  let answer = ''
+  let newConversationId = null
+  while (true) {
+    const { value, done } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const lines = buffer.split('\n')
+    buffer = lines.pop() ?? ''
+    for (const line of lines) {
+      if (!line.startsWith('data:')) continue
+      let streamErr = null
+      try {
+        const ev = JSON.parse(line.slice(5).trim())
+        if (ev.event === 'message' || ev.event === 'agent_message') {
+          answer += (ev.answer || '')
+        } else if (ev.event === 'message_end') {
+          newConversationId = ev.conversation_id ?? null
+        } else if (ev.event === 'error') {
+          console.warn('[dispatch.dify] stream error:', ev.message)
+          streamErr = new Error('[stream] ' + (ev.message ?? 'dify stream error'))
+        }
+      } catch {}
+      if (streamErr) throw streamErr
+    }
   }
 
-  const result = await res.json()
-  return result.answer ?? null
+  if (newConversationId && ctx.interactionId) {
+    setDifyConversationId(ctx.interactionId, newConversationId).catch(() => {})
+    ctx._difyConversationId = newConversationId
+  }
+
+  return answer.trim() || null
 }
 
 /* ── n8n dispatcher (forward simples) ── */

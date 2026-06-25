@@ -5,7 +5,7 @@
  *
  * Fluxo:
  *  1. Find-or-create customer (matching por sufixo do whatsapp)
- *  2. Cria orders com channel='whatsapp', status='confirmado'
+ *  2. Cria orders com channel='whatsapp', status='pendente'
  *  3. Cria order_items a partir de bot_orders.items
  *  4. Vincula bot_orders.order_id
  *
@@ -67,8 +67,8 @@ export async function convertBotOrderToOrder(botOrder, approverPhone = null) {
   const { rows: [order] } = await query(`
     INSERT INTO orders (
       customer_id, customer_name, customer_whatsapp,
-      channel, status, total, notes, ref
-    ) VALUES ($1, $2, $3, 'whatsapp', 'confirmado', $4, $5, $6)
+      channel, status, total, notes, ref, payment_method
+    ) VALUES ($1, $2, $3, 'whatsapp', 'pendente', $4, $5, $6, 'credito')
     RETURNING id, ref, number, status, total
   `, [
     customer.id,
@@ -79,14 +79,31 @@ export async function convertBotOrderToOrder(botOrder, approverPhone = null) {
     ref,
   ])
 
-  // 3. Cria order_items
+  // 3. Cria order_items — enriquece com nome/preço/attributes do SKU se faltar
   for (const item of items) {
-    const qty       = parseInt(item.quantity ?? item.qty ?? 1, 10)
-    const priceUnit = Number(item.price ?? item.price_unit ?? 0)
-    const skuId     = item.sku_id   ?? item.skuId   ?? null
-    const skuCode   = item.sku_code ?? item.skuCode ?? item.code ?? skuId ?? 'BOT-ITEM'
-    const prodName  = item.name     ?? item.product_name ?? 'Item do agente'
-    const attrs     = item.attributes ?? item.attrs ?? {}
+    const qty      = parseInt(item.quantity ?? item.qty ?? 1, 10)
+    const skuId    = item.sku_id   ?? item.skuId   ?? null
+    const skuCode  = (item.sku_code ?? item.skuCode ?? item.code ?? skuId ?? '').toString().trim()
+    let prodName   = item.name      ?? item.product_name ?? null
+    let priceUnit  = Number(item.price ?? item.price_unit ?? 0)
+    let attrs      = item.attributes ?? item.attrs ?? {}
+
+    if (skuCode && (!prodName || !priceUnit || !Object.keys(attrs).length)) {
+      try {
+        const { rows } = await query(`
+          SELECT s.id, s.price_wholesale, s.attributes, p.name AS product_name
+          FROM skus s JOIN products p ON p.id = s.product_id
+          WHERE s.code = $1 LIMIT 1
+        `, [skuCode])
+        if (rows[0]) {
+          if (!prodName) prodName = rows[0].product_name
+          if (!priceUnit) priceUnit = Number(rows[0].price_wholesale)
+          if (!Object.keys(attrs).length && rows[0].attributes) attrs = rows[0].attributes
+        }
+      } catch (err) {
+        console.warn('[botOrderConvert enrich]', skuCode, err.message)
+      }
+    }
 
     await query(`
       INSERT INTO order_items (
@@ -95,8 +112,8 @@ export async function convertBotOrderToOrder(botOrder, approverPhone = null) {
     `, [
       order.id,
       skuId,
-      String(skuCode).slice(0, 100),
-      String(prodName).slice(0, 200),
+      String(skuCode || 'BOT-ITEM').slice(0, 100),
+      String(prodName || 'Item do agente').slice(0, 200),
       JSON.stringify(attrs),
       qty,
       priceUnit,
