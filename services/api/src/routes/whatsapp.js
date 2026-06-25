@@ -22,72 +22,20 @@ import { Router } from 'express'
 import { authenticate } from '../middleware/authenticate.js'
 import { authorize }    from '../middleware/authorize.js'
 import { query }        from '../lib/tenantDb.js'
+import {
+  getWahaConfig,
+  invalidateWahaCache as _invalidateCache,
+  waha,
+  wahaJson,
+  toChatId,
+} from '../lib/wahaClient.js'
 
 export const whatsappRouter = Router()
 whatsappRouter.use(authenticate)
 whatsappRouter.use(authorize('admin', 'operador'))
 
-/* ── Config dinâmica com cache 60s ── */
-let _cfgCache    = null
-let _cfgCachedAt = 0
-const CFG_TTL    = 60_000
-
-async function getWahaConfig() {
-  const now = Date.now()
-  if (_cfgCache && (now - _cfgCachedAt) < CFG_TTL) return _cfgCache
-  try {
-    const { rows } = await query("SELECT value FROM settings WHERE key='whatsapp_config'")
-    const db = rows[0]?.value ?? {}
-    _cfgCache = {
-      url:     db.url     || process.env.WAHA_URL     || '',
-      apiKey:  db.apiKey  || process.env.WAHA_API_KEY || '',
-      session: db.session || process.env.WAHA_SESSION || 'default',
-    }
-  } catch {
-    _cfgCache = {
-      url:     process.env.WAHA_URL     || '',
-      apiKey:  process.env.WAHA_API_KEY || '',
-      session: process.env.WAHA_SESSION || 'default',
-    }
-  }
-  _cfgCachedAt = now
-  return _cfgCache
-}
-
-/* Invalida o cache (chamado após salvar nova config via UI) */
-export function invalidateWahaCache() { _cfgCache = null; _cfgCachedAt = 0 }
-
-/* ── Helper HTTP para o WAHA ── */
-async function waha(path, opts = {}) {
-  const cfg = await getWahaConfig()
-  if (!cfg.url) throw new Error('WhatsApp não configurado para este tenant')
-  const res = await fetch(`${cfg.url}/api/${path}`, {
-    ...opts,
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Api-Key': cfg.apiKey,
-      ...(opts.headers ?? {}),
-    },
-  })
-  if (!res.ok) {
-    const body = await res.text().catch(() => '')
-    throw new Error(`WAHA ${res.status}: ${body.slice(0, 200)}`)
-  }
-  return res
-}
-
-async function wahaJson(path, opts = {}) {
-  const res = await waha(path, opts)
-  return res.json()
-}
-
-/* Normaliza número → chatId WAHA */
-function toChatId(to) {
-  if (to.includes('@')) return to
-  const digits = to.replace(/\D/g, '')
-  if (!digits) throw new Error('Número inválido')
-  return `${digits}@c.us`
-}
+// Re-exporta para compatibilidade com chamadas externas
+export const invalidateWahaCache = _invalidateCache
 
 /* ── GET /api/whatsapp/session ── */
 whatsappRouter.get('/session', async (req, res) => {
