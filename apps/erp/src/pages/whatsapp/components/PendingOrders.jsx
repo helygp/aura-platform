@@ -14,7 +14,8 @@
 
 import React, { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Check, X, Clock, ShoppingCart, Package } from 'lucide-react'
+import { Check, X, Clock, ShoppingCart, Package, MessageSquare } from 'lucide-react'
+import { ConversationModal } from './ConversationModal.jsx'
 import { Skeleton } from '@aura/ui'
 import { BOT_ORDER_STATUS, fmtBRL, fmtDateTime } from '../whatsappTypes.js'
 
@@ -31,6 +32,8 @@ function timeAgo(iso) {
 
 function OrderCard({ order, onReview }) {
   const [acting, setActing] = useState(null) // 'approve' | 'reject'
+  const [showConv, setShowConv] = useState(false)
+  const hasConv = Array.isArray(order.conversation) && order.conversation.length > 0
 
   const isPending  = order.status === BOT_ORDER_STATUS.PENDING_APPROVAL
   const isApproved = order.status === BOT_ORDER_STATUS.APPROVED
@@ -106,6 +109,18 @@ function OrderCard({ order, onReview }) {
           )
         })}
       </div>
+
+      {/* Botão Ver conversa */}
+      {hasConv && (
+        <button
+          onClick={() => setShowConv(true)}
+          className="flex items-center gap-1.5 text-xs text-[var(--color-primary)] hover:underline"
+        >
+          <MessageSquare size={11} /> Ver conversa ({order.conversation.length} mensagens)
+        </button>
+      )}
+
+      <ConversationModal order={order} open={showConv} onClose={() => setShowConv(false)} />
 
       {/* ── Ações ── */}
       {isPending ? (
