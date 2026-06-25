@@ -62,7 +62,8 @@ whatsappRouter.post('/session/start', async (req, res) => {
     )
     res.json({ ok: true, status: data.status ?? 'STARTING' })
   } catch (e) {
-    res.status(500).json({ error: e.message })
+    const code = /n[ãa]o configurad/i.test(e.message) ? 503 : 500
+    res.status(code).json({ error: e.message })
   }
 })
 

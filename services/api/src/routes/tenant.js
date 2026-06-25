@@ -12,7 +12,6 @@ import { Router }                 from 'express'
 import { authenticate } from '../middleware/authenticate.js'
 import { authorize }    from '../middleware/authorize.js'
 import { prismaMaster as prisma }                 from '../lib/prisma-master.js'
-import { prismaMaster }           from '../lib/prisma-master.js'
 import { query }                  from '../lib/tenantDb.js'
 import {
   updateSubscriptionPlan,
@@ -291,14 +290,49 @@ tenantRouter.post('/cancel', async (req, res) => {
 })
 
 /* ── GET /api/tenant/whatsapp-config ── */
+/* ─── WhatsApp (config geral vive em aura_master) ─── */
+
+const TENANT_SLUG_ENV = process.env.TENANT_SLUG
+
+/* Helper: lê whatsapp_config do master via SQL bruto */
+async function _getMasterWppConfig() {
+  if (!TENANT_SLUG_ENV) return {}
+  try {
+    const rows = await prisma.$queryRaw`
+      SELECT whatsapp_config FROM tenants WHERE slug = ${TENANT_SLUG_ENV} LIMIT 1
+    `
+    return rows[0]?.whatsapp_config ?? {}
+  } catch (err) {
+    console.error('[tenant._getMasterWppConfig]', err.message)
+    return {}
+  }
+}
+
+/* Helper: merge parcial no whatsapp_config do master */
+async function _updateMasterWppConfig(patch) {
+  if (!TENANT_SLUG_ENV) throw new Error('TENANT_SLUG nao definido')
+  await prisma.$executeRaw`
+    UPDATE tenants
+    SET whatsapp_config = whatsapp_config || ${JSON.stringify(patch)}::jsonb,
+        updated_at = now()
+    WHERE slug = ${TENANT_SLUG_ENV}
+  `
+  // Invalida cache do wahaClient
+  try {
+    const { invalidateWahaCache } = await import('../lib/wahaClient.js')
+    invalidateWahaCache()
+  } catch {}
+}
+
+/* GET /api/tenant/whatsapp-config — retrocompat, agora sem expor secrets */
 tenantRouter.get('/whatsapp-config', authorize('admin'), async (req, res) => {
   try {
-    const { rows } = await query("SELECT value FROM settings WHERE key='whatsapp_config'")
-    const cfg = rows[0]?.value ?? {}
+    const cfg = await _getMasterWppConfig()
     res.json({
-      url:     cfg.url     ?? '',
-      apiKey:  cfg.apiKey  ?? '',
-      session: cfg.session ?? '',
+      configured: Boolean(cfg.base_url),
+      url:        '',  // não exposto
+      apiKey:     '',
+      session:    cfg.session ?? '',
     })
   } catch (err) {
     console.error('[tenant/whatsapp-config GET]', err.message)
@@ -306,25 +340,40 @@ tenantRouter.get('/whatsapp-config', authorize('admin'), async (req, res) => {
   }
 })
 
-/* ── PUT /api/tenant/whatsapp-config ── */
+/* PUT /api/tenant/whatsapp-config — descontinuado, retorna 410 com instruções */
 tenantRouter.put('/whatsapp-config', authorize('admin'), async (req, res) => {
+  res.status(410).json({
+    error: 'Configuração de WhatsApp foi movida para o painel master.',
+    detail: 'A URL, chave e sessão do WAHA agora são gerenciadas centralmente pela Aura. Entre em contato com o suporte se precisar reconfigurar.',
+  })
+})
+
+/* GET /api/tenant/whatsapp/approver — retorna telefone do aprovador */
+tenantRouter.get('/whatsapp/approver', authorize('admin'), async (req, res) => {
   try {
-    const { url, apiKey, session } = req.body ?? {}
-    const payload = {}
-    if (url     !== undefined) payload.url     = String(url).trim()
-    if (apiKey  !== undefined) payload.apiKey  = String(apiKey).trim()
-    if (session !== undefined) payload.session = String(session).trim() || 'default'
-    if (!Object.keys(payload).length) return res.status(400).json({ error: 'Nenhum campo enviado.' })
-
-    await query(`
-      INSERT INTO settings (key, value) VALUES ('whatsapp_config', $1::jsonb)
-      ON CONFLICT (key) DO UPDATE SET value = settings.value || $1::jsonb, updated_at = now()
-    `, [JSON.stringify(payload)])
-
-    res.json({ ok: true })
+    const cfg = await _getMasterWppConfig()
+    res.json({ approver_phone: cfg.approver_phone ?? '' })
   } catch (err) {
-    console.error('[tenant/whatsapp-config PUT]', err.message)
+    console.error('[tenant/whatsapp/approver GET]', err.message)
     res.status(500).json({ error: 'Erro interno.' })
+  }
+})
+
+/* PUT /api/tenant/whatsapp/approver — atualiza telefone do aprovador */
+tenantRouter.put('/whatsapp/approver', authorize('admin'), async (req, res) => {
+  try {
+    const raw = req.body?.approver_phone
+    if (raw !== null && raw !== undefined && typeof raw !== 'string') {
+      return res.status(400).json({ error: 'approver_phone deve ser string ou null' })
+    }
+    const phone = raw ? String(raw).replace(/\D/g, '') : null
+    if (phone && phone.length < 10) return res.status(400).json({ error: 'Telefone inválido (mínimo 10 dígitos)' })
+
+    await _updateMasterWppConfig({ approver_phone: phone })
+    res.json({ ok: true, approver_phone: phone })
+  } catch (err) {
+    console.error('[tenant/whatsapp/approver PUT]', err.message)
+    res.status(500).json({ error: 'Erro interno: ' + err.message })
   }
 })
 
