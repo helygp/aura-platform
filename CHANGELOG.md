@@ -21,6 +21,14 @@ e o projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ---
 
+## [1.8.0] — 2026-06-26
+
+### Adicionado
+- Cancelamento de pedido agora estorna automaticamente em Contas a Receber
+- Devolução parcial ou total de pedidos entregues, com motivo cadastrável
+- Edição de pedidos em aberto: adicionar item, ajustar quantidade e cancelar item
+- Cadastro de motivos de cancelamento e devolução em Configurações → Pedidos
+
 ## [1.7.0] — 2026-06-26
 
 ### Adicionado
