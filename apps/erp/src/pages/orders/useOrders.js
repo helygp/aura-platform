@@ -142,14 +142,15 @@ export function useOrders() {
     await fetchAll()
   }, [fetchAll])
 
-  /* ─── Atualizar status (#83: aceita reason p/ cancelamento) ─── */
-  const updateStatus = useCallback(async (orderId, newStatus, note = '', reason = '') => {
+  /* ─── Atualizar status (#83: aceita reasonId+note p/ cancelamento) ─── */
+  const updateStatus = useCallback(async (orderId, newStatus, opts = {}) => {
+    const { reasonId, note } = (opts && typeof opts === 'object') ? opts : { note: opts }
     const res = await authFetch(`/api/orders/${orderId}/status`, {
       method: 'PUT',
       body:   JSON.stringify({
         status: newStatus,
-        note:   note || NOTE_TEMPLATES[newStatus] || '',
-        reason: reason || undefined,
+        note:     note || NOTE_TEMPLATES[newStatus] || '',
+        reasonId: reasonId || undefined,
       }),
     })
     if (!res.ok) {
@@ -161,18 +162,44 @@ export function useOrders() {
 
   /* ─── Devolução (#117): parcial ou total ───
    * items: [{itemId, qty}] (vazio/omitido => devolução total)
-   * reason: obrigatório */
-  const returnOrderItems = useCallback(async (orderId, items, reason) => {
+   * opts: { reasonId (obrigatório), note? } */
+  const returnOrderItems = useCallback(async (orderId, items, opts) => {
+    const { reasonId, note } = opts || {}
     const res = await authFetch(`/api/orders/${orderId}/return`, {
       method: 'POST',
-      body:   JSON.stringify({ items, reason }),
+      body:   JSON.stringify({ items, reasonId, note }),
     })
     if (!res.ok) {
       const d = await res.json().catch(() => ({}))
       throw new Error(d.error || 'Erro ao processar devolução')
     }
     await fetchAll()
-    return res.json().catch(() => ({}))
+  }, [fetchAll])
+
+  /* ─── Edição: adicionar item ao pedido (#117) ─── */
+  const addItemToOrder = useCallback(async (orderId, skuId, qty) => {
+    const res = await authFetch(`/api/orders/${orderId}/items`, {
+      method: 'POST',
+      body:   JSON.stringify({ skuId, qty }),
+    })
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}))
+      throw new Error(d.error || 'Erro ao adicionar item')
+    }
+    await fetchAll()
+  }, [fetchAll])
+
+  /* ─── Edição: atualizar quantidade de item (#117) ─── */
+  const updateItemQty = useCallback(async (orderId, itemId, qty) => {
+    const res = await authFetch(`/api/orders/${orderId}/items/${itemId}`, {
+      method: 'PUT',
+      body:   JSON.stringify({ qty }),
+    })
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}))
+      throw new Error(d.error || 'Erro ao atualizar item')
+    }
+    await fetchAll()
   }, [fetchAll])
 
   const getOrder = useCallback((orderId) =>
@@ -207,6 +234,8 @@ export function useOrders() {
     updateStatus,
     cancelItem,
     returnOrderItems,
+    addItemToOrder,
+    updateItemQty,
     getOrder,
     stats,
     PAGE_SIZE,

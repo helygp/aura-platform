@@ -80,6 +80,21 @@ async function applyOrderWalletDelta(client, { order, deltaDecimal, description,
   }
 }
 
+/**
+ * Resolve um reasonId em label, validando o kind esperado ('cancellation' | 'return').
+ * Retorna { id, label, kind } ou null se não encontrado/kind divergente.
+ */
+async function resolveReason(client, reasonId, expectedKind) {
+  if (!reasonId) return null
+  const { rows: [r] } = await client.query(
+    `SELECT id, kind::text AS kind, label FROM order_reasons WHERE id = $1 AND active = true`,
+    [reasonId]
+  )
+  if (!r) return null
+  if (expectedKind && r.kind !== expectedKind) return null
+  return r
+}
+
 /** Carrega pedido em modo gravação (FOR UPDATE). Retorna `null` se não existir. */
 async function loadOrderForUpdate(client, orderId) {
   const { rows: [order] } = await client.query(
@@ -388,7 +403,7 @@ ordersRouter.put('/:id/status', async (req, res) => {
   const client = await getClient()
   try {
     await client.query('BEGIN')
-    const { status, note='', reason='' } = req.body
+    const { status, note = '', reasonId } = req.body
     const userName = req.user?.name ?? req.user?.email ?? 'sistema'
 
     const order = await loadOrderForUpdate(client, req.params.id)
@@ -396,8 +411,22 @@ ordersRouter.put('/:id/status', async (req, res) => {
 
     const isCancelling = status === 'cancelado' && order.status !== 'cancelado'
 
+    let reasonText = ''
     if (isCancelling) {
-      await cancelOrderFully(client, order, { reason: reason || note, userName })
+      if (!reasonId) {
+        await client.query('ROLLBACK')
+        return res.status(400).json({ error: 'Motivo do cancelamento é obrigatório (reasonId).' })
+      }
+      const r = await resolveReason(client, reasonId, 'cancellation')
+      if (!r) {
+        await client.query('ROLLBACK')
+        return res.status(400).json({ error: 'Motivo de cancelamento inválido ou inativo.' })
+      }
+      reasonText = note?.trim() ? `${r.label} — ${note.trim()}` : r.label
+    }
+
+    if (isCancelling) {
+      await cancelOrderFully(client, order, { reason: reasonText, userName })
     } else {
       await client.query(
         'UPDATE orders SET status=$1, updated_at=now() WHERE id=$2',
@@ -411,7 +440,7 @@ ordersRouter.put('/:id/status', async (req, res) => {
     await client.query('COMMIT')
     res.json({ ok: true, cancelled: isCancelling })
     dispatch(req.tenantSlug ?? process.env.TENANT_SLUG, 'order.status_changed', {
-      id: req.params.id, new_status: status, note, reason: reason || undefined,
+      id: req.params.id, new_status: status, note, reason: reasonText || undefined,
     })
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {})
@@ -761,12 +790,18 @@ ordersRouter.post('/:id/return', authorize('admin','operador'), async (req, res)
 
     const orderId  = req.params.id
     const userName = req.user?.name ?? req.user?.email ?? 'operador'
-    const { items: reqItems = [], reason = '' } = req.body || {}
+    const { items: reqItems = [], reasonId, note = '' } = req.body || {}
 
-    if (!reason || !reason.trim()) {
+    if (!reasonId) {
       await client.query('ROLLBACK')
-      return res.status(400).json({ error: 'Motivo da devolução é obrigatório.' })
+      return res.status(400).json({ error: 'Motivo da devolução é obrigatório (reasonId).' })
     }
+    const reasonRow = await resolveReason(client, reasonId, 'return')
+    if (!reasonRow) {
+      await client.query('ROLLBACK')
+      return res.status(400).json({ error: 'Motivo de devolução inválido ou inativo.' })
+    }
+    const reason = note?.trim() ? `${reasonRow.label} — ${note.trim()}` : reasonRow.label
 
     const order = await loadOrderForUpdate(client, orderId)
     if (!order) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Pedido não encontrado.' }) }
@@ -849,6 +884,22 @@ ordersRouter.post('/:id/return', authorize('admin','operador'), async (req, res)
     }
 
     const newTotal = await recalcOrderTotal(client, orderId)
+
+    // Se a devolução parcial deixou TUDO devolvido, escala para cancelamento total
+    // (history = devolucao_total, status do pedido = cancelado).
+    const { rows: [{ remaining }] } = await client.query(`
+      SELECT COALESCE(SUM(qty - qty_returned), 0) AS remaining
+      FROM order_items
+      WHERE order_id = $1 AND COALESCE(status,'ativo') != 'cancelado'
+    `, [orderId])
+
+    if (parseInt(remaining) === 0) {
+      await cancelOrderFully(client, order, {
+        reason, userName, historyStatus: 'devolucao_total',
+      })
+      await client.query('COMMIT')
+      return res.json({ ok: true, type: 'total_via_parcial', refund: +totalRefund.toFixed(2), newOrderTotal: 0 })
+    }
 
     await client.query(`
       INSERT INTO order_history (order_id, status, note, user_name)
