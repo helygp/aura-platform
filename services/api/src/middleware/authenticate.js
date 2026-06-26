@@ -2,13 +2,16 @@
  * middleware/authenticate.js
  *
  * Valida o access token (httpOnly cookie aura_access ou Bearer header).
- * Injeta req.user = { id, tokenId, tenantId, tenantSlug, role, roles, email, name, login }
+ * Injeta req.user = { id, tokenId, tenantId, tenantSlug, role, roles, email, name, login, customerIds }
  *
  * Garante que o token pertence ao tenant deste container (TENANT_SLUG).
  * Impede que tokens de outros tenants sejam usados cruzados.
  *
  * Multi-role: req.user.roles é array. req.user.role mantém o primeiro role
  * por compatibilidade com código legado.
+ *
+ * customerIds: lista de clientes vinculados ao usuário (vazia para admin/sem vínculo).
+ * Frontend usa para filtrar combobox de cliente em Novo Pedido (ticket #115).
  */
 
 import { verifyAccessToken } from '../lib/tokens.js'
@@ -71,6 +74,7 @@ export async function authenticate(req, res, next) {
       select: {
         id:true, tokenId:true, tenantId:true, email:true, name:true,
         role:true, roles:true, login:true, active:true, mustChangePassword:true,
+        customerIds:true,
         tenant: { select: { slug:true } },
       },
     })
@@ -106,6 +110,7 @@ export async function authenticate(req, res, next) {
       name:       user.name,
       sessionId:  payload.sid ?? null,
       mustChangePassword: user.mustChangePassword ?? false,
+      customerIds: Array.isArray(user.customerIds) ? user.customerIds : [],
     }
 
     // Heartbeat fire-and-forget (não bloqueia request)
