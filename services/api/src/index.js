@@ -19,6 +19,7 @@ import { dashboardRouter } from './routes/dashboard.js'
 import { productsRouter }       from './routes/products.js'
 import { productsImportRouter } from './routes/productsImport.js'
 import { productAttributesRouter }  from './routes/productAttributes.js'
+import { orderReasonsRouter }       from './routes/orderReasons.js'
 import { productCategoriesRouter }  from './routes/productCategories.js'
 import { separationSheetRouter }     from './routes/separationSheet.js'
 import { orderDraftsRouter }         from './routes/orderDrafts.js'
@@ -185,6 +186,7 @@ app.use('/api/tenant',    tenantRouter)
 app.use('/api/dashboard', dashboardRouter)
 app.use('/api/products/import', productsImportRouter)
 app.use('/api/product-attributes', productAttributesRouter)
+app.use('/api/order-reasons',        orderReasonsRouter)
 app.use('/api/product-categories', productCategoriesRouter)
 app.use('/api/orders/separation-sheet', separationSheetRouter)
 app.use('/api/orders/drafts',           orderDraftsRouter)
