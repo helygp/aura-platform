@@ -123,6 +123,47 @@ async function applyOrderWalletDelta(client, { order, deltaDecimal, description,
 }
 
 /**
+ * Registra um evento em order_history.
+ *
+ * Quando consolidate=true, verifica se a ÚLTIMA linha do history desse pedido
+ * tem o mesmo status do evento + mesmo user_name + foi criada nos últimos 10 min.
+ * Se sim, atualiza concatenando a nova nota (separada por '\n') e move o
+ * created_at para now(). Se não, insere normal.
+ *
+ * Quebra natural: se entre dois "item_editado" houve transição de status
+ * (confirmado, separando, etc), a última linha já não bate o critério.
+ */
+async function logHistory(client, orderId, status, note, userName, { consolidate = false } = {}) {
+  if (consolidate) {
+    const { rows: [last] } = await client.query(`
+      SELECT id, status::text AS status, note, user_name, created_at
+      FROM order_history
+      WHERE order_id = $1
+      ORDER BY created_at DESC
+      LIMIT 1
+      FOR UPDATE
+    `, [orderId])
+
+    if (last
+        && last.status === status
+        && last.user_name === userName
+        && new Date(last.created_at).getTime() > Date.now() - 10 * 60 * 1000) {
+      const combined = last.note ? `${last.note}\n${note}` : note
+      await client.query(
+        'UPDATE order_history SET note = $1, created_at = NOW() WHERE id = $2',
+        [combined, last.id]
+      )
+      return
+    }
+  }
+
+  await client.query(`
+    INSERT INTO order_history (order_id, status, note, user_name)
+    VALUES ($1, $2, $3, $4)
+  `, [orderId, status, note, userName])
+}
+
+/**
  * Resolve um reasonId em label, validando o kind esperado ('cancellation' | 'return').
  * Retorna { id, label, kind } ou null se não encontrado/kind divergente.
  */
@@ -556,10 +597,8 @@ ordersRouter.post('/:id/items', authorize('admin','operador'), async (req, res) 
       userName, consolidate: true,
     })
 
-    await client.query(`
-      INSERT INTO order_history (order_id, status, note, user_name)
-      VALUES ($1, 'item_adicionado', $2, $3)
-    `, [orderId, `Item adicionado: ${sku.product_name} (${qtyInt}x)`, userName])
+    await logHistory(client, orderId, 'item_adicionado',
+      `${sku.product_name} (+${qtyInt}x)`, userName, { consolidate: true })
 
     await client.query('COMMIT')
     res.status(201).json({ ok: true, itemTotal, newOrderTotal: newTotal })
@@ -643,10 +682,8 @@ ordersRouter.put('/:id/items/:itemId', authorize('admin','operador'), async (req
 
     const newTotal = await recalcOrderTotal(client, orderId)
 
-    await client.query(`
-      INSERT INTO order_history (order_id, status, note, user_name)
-      VALUES ($1, 'item_editado', $2, $3)
-    `, [orderId, `${item.product_name}: ${item.old_qty}x → ${qtyInt}x`, userName])
+    await logHistory(client, orderId, 'item_editado',
+      `${item.product_name}: ${item.old_qty}x → ${qtyInt}x`, userName, { consolidate: true })
 
     await client.query('COMMIT')
     res.json({ ok: true, newOrderTotal: newTotal })
@@ -736,10 +773,8 @@ ordersRouter.patch('/:id/items/:itemId/cancel', authorize('admin','operador'), a
     const newTotal = await recalcOrderTotal(client, orderId)
 
     const noteQty = isPartial ? `${cancelQty} de ${item.qty}` : `${item.qty}`
-    await client.query(`
-      INSERT INTO order_history (order_id, status, note, user_name)
-      VALUES ($1, 'item_cancelado', $2, $3)
-    `, [orderId, `Item cancelado: ${item.product_name} (${noteQty}x) — estoque devolvido`, userName])
+    await logHistory(client, orderId, 'item_cancelado',
+      `${item.product_name} (${noteQty}x cancelado)`, userName, { consolidate: true })
 
     await client.query('COMMIT')
     res.json({ ok: true, cancelQty, isPartial, newOrderTotal: newTotal })
@@ -803,10 +838,8 @@ ordersRouter.delete('/:id/items/:itemId', authorize('admin','operador'), async (
 
     const newTotal = await recalcOrderTotal(client, orderId)
 
-    await client.query(`
-      INSERT INTO order_history (order_id, status, note, user_name)
-      VALUES ($1, 'item_removido', $2, $3)
-    `, [orderId, `Item removido: ${item.product_name} (${item.qty}x)`, userName])
+    await logHistory(client, orderId, 'item_removido',
+      `${item.product_name} (${item.qty}x removido)`, userName, { consolidate: true })
 
     await client.query('COMMIT')
     res.json({ ok: true, newOrderTotal: newTotal })

@@ -131,7 +131,7 @@ function TimelineItem({ entry, isLast }) {
           <span className={`text-xs font-semibold ${meta?.color}`}>{meta?.label ?? entry.status}</span>
           <span className="text-[10px] text-[var(--color-text-disabled)]">{entry.user}</span>
         </div>
-        {entry.note && <p className="text-xs text-[var(--color-text-muted)] mt-0.5">{entry.note}</p>}
+        {entry.note && <p className="text-xs text-[var(--color-text-muted)] mt-0.5 whitespace-pre-line">{entry.note}</p>}
         <p className="text-[10px] text-[var(--color-text-disabled)] mt-0.5">{fmtDate(entry.at)}</p>
       </div>
     </div>
