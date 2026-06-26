@@ -37,11 +37,17 @@ let _intervalId = null
 
 /* ── Templates por status ── */
 const STATUS_TEMPLATES = {
-  confirmado: (o) =>
-    `Olá ${o.customer_name}! 🎉\n` +
-    `Seu pedido foi aprovado e está em produção.\n` +
-    `Ref: ${o.ref ?? '#' + o.number}\n` +
-    `Total: R$ ${Number(o.total).toFixed(2)}`,
+  confirmado: (o) => {
+    const itemsLine = Array.isArray(o.items) && o.items.length
+      ? '\n' + o.items.map(i =>
+          `• ${i.qty}x ${i.product_name}${Object.keys(i.attributes ?? {}).length ? ' (' + Object.values(i.attributes).join('/') + ')' : ''} — R$ ${Number(i.price_unit).toFixed(2)}`
+        ).join('\n') + '\n'
+      : ''
+    return `Olá ${o.customer_name}! 🎉\n` +
+      `Seu pedido foi aprovado e está em produção.\n` +
+      `Ref: ${o.ref ?? '#' + o.number}${itemsLine}\n` +
+      `💰 Total: R$ ${Number(o.total).toFixed(2)}`
+  },
 
   separando: (o) =>
     `Olá ${o.customer_name}!\n` +

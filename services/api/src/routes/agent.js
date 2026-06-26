@@ -20,6 +20,7 @@
 import { Router }         from 'express'
 import { query }          from '../lib/tenantDb.js'
 import { getWahaConfig, invalidateWahaCache } from '../lib/wahaClient.js'
+import { linkBotOrder } from '../lib/interactionManager.js'
 
 export const agentRouter = Router()
 
@@ -35,8 +36,10 @@ async function getInternalKey() {
 
 /* ── Middleware: valida X-Aura-Key ── */
 agentRouter.use(async (req, res, next) => {
-  const provided = req.headers['x-aura-key']
-  if (!provided) return res.status(401).json({ error: 'X-Aura-Key obrigatório' })
+  const provided = req.headers['x-aura-key'] || req.query['X-Aura-Key'] || req.query['x-aura-key']
+  if (!provided) return res.status(401).json({ error: 'X-Aura-Key obrigatório (header ou query)' })
+  // Remove X-Aura-Key dos query params para não vazar para a aplicação
+  delete req.query['X-Aura-Key']; delete req.query['x-aura-key']
 
   const expected = await getInternalKey()
   if (!expected) return res.status(503).json({ error: 'WhatsApp Agent não configurado para este tenant' })
@@ -158,6 +161,7 @@ agentRouter.get('/customer', async (req, res) => {
 /* body: { customer_name, customer_phone, items: [...], total, conversation, dify_conversation_id, agent_metadata } */
 agentRouter.post('/bot-order', async (req, res) => {
   try {
+    console.log('[agent/bot-order] body:', JSON.stringify(req.body))
     const {
       customer_name,
       customer_phone,
@@ -171,9 +175,49 @@ agentRouter.post('/bot-order', async (req, res) => {
     if (!customer_name?.trim())                 return res.status(400).json({ error: 'customer_name obrigatório' })
     if (!customer_phone?.trim())                return res.status(400).json({ error: 'customer_phone obrigatório' })
     if (!Array.isArray(items) || !items.length) return res.status(400).json({ error: 'items obrigatório' })
-    if (typeof total !== 'number')              return res.status(400).json({ error: 'total obrigatório (number)' })
 
     const phoneClean = String(customer_phone).replace(/\D/g, '')
+
+    // Enriquece items: se o agente mandou só { code, qty }, busca nome/preço/produto do banco
+    const enrichedItems = []
+    let computedTotal = 0
+    for (const it of items) {
+      const skuCode = (it.sku_code ?? it.code ?? it.sku ?? '').toString().trim()
+      const qty     = Number(it.qty ?? it.quantity ?? 1)
+      let name      = it.name ?? it.product_name ?? null
+      let price     = Number(it.price ?? it.price_unit ?? 0)
+      let attributes = it.attributes ?? {}
+
+      if (skuCode && (!name || !price)) {
+        try {
+          const { rows } = await query(`
+            SELECT s.code, s.price_wholesale, s.attributes, p.name AS product_name
+            FROM skus s JOIN products p ON p.id = s.product_id
+            WHERE s.code = $1 LIMIT 1
+          `, [skuCode])
+          if (rows[0]) {
+            name = name ?? rows[0].product_name
+            price = price || Number(rows[0].price_wholesale)
+            if (!Object.keys(attributes).length && rows[0].attributes) attributes = rows[0].attributes
+          }
+        } catch (err) {
+          console.warn('[agent/bot-order enrich]', skuCode, err.message)
+        }
+      }
+
+      const item = {
+        sku_code: skuCode,
+        name: name || skuCode || 'Item',
+        quantity: qty,
+        price,
+        attributes,
+      }
+      enrichedItems.push(item)
+      computedTotal += qty * price
+    }
+
+    // Usa total enviado se for number, senão usa o calculado
+    const finalTotal = typeof total === 'number' && total > 0 ? total : Math.round(computedTotal * 100) / 100
 
     const { rows: [order] } = await query(`
       INSERT INTO bot_orders (
@@ -185,12 +229,29 @@ agentRouter.post('/bot-order', async (req, res) => {
     `, [
       String(customer_name).trim(),
       phoneClean,
-      JSON.stringify(items),
-      total,
+      JSON.stringify(enrichedItems),
+      finalTotal,
       JSON.stringify(conversation),
       dify_conversation_id,
       JSON.stringify(agent_metadata),
     ])
+
+    linkBotOrder(phoneClean, order.bot_order_id).catch(() => {})
+
+    // Notifica aprovador via WhatsApp (sem bloquear)
+    try {
+      const { getWahaConfig, sendText } = await import('../lib/wahaClient.js')
+      const cfg = await getWahaConfig()
+      if (cfg.approver_phone) {
+        const lines = enrichedItems.map(i => `• ${i.quantity}x ${i.name}${Object.keys(i.attributes ?? {}).length ? ' (' + Object.values(i.attributes).join('/') + ')' : ''} — R$ ${Number(i.price).toFixed(2)}`).join('\n')
+        const refShort = order.bot_order_id.replace(/^BOT-?/i, '')
+        const msg = `🆕 *Novo pedido pendente*\n\n*${order.bot_order_id}* — ${order.customer_name}\n📞 ${order.customer_phone}\n\n${lines}\n\n💰 Total: R$ ${Number(finalTotal).toFixed(2)}\n\nResponda:\n• *APROVAR ${refShort}*\n• *REJEITAR ${refShort}*`
+        sendText(cfg.approver_phone, msg).catch(err =>
+          console.error('[agent/bot-order notify]', err.message))
+      }
+    } catch (err) {
+      console.error('[agent/bot-order notify]', err.message)
+    }
 
     res.status(201).json({ ok: true, order })
   } catch (err) {
