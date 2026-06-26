@@ -40,7 +40,9 @@ echo "[$(date)] ERP OK" | tee -a $LOG
 
 # ── 4. Deploy staging ────────────────────────────────────────────
 if [ "$BRANCH" = "staging" ]; then
-  docker stop api-staging 2>/dev/null; docker rm api-staging 2>/dev/null || true
+  docker stop api-staging 2>/dev/null || true
+  docker rm -f api-staging 2>/dev/null || true
+  sleep 2
   docker run -d --name api-staging --restart unless-stopped \
     -v /var/run/docker.sock:/var/run/docker.sock \
     -v /usr/bin/docker:/usr/bin/docker:ro \
