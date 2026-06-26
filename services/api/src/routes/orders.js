@@ -53,7 +53,7 @@ async function logMovement(client, { skuId, type, qty, qtyBefore, reason, userNa
  * "Estorno" quando for crédito relacionado a cancelamento total (a guarda
  * de idempotência em `cancelOrderFully` usa essa convenção).
  */
-async function applyOrderWalletDelta(client, { order, deltaDecimal, description, userName }) {
+async function applyOrderWalletDelta(client, { order, deltaDecimal, description, userName, consolidate = false }) {
   if (!order || !order.customer_id) return
   if (order.payment_method !== 'credito') return
   const d = parseFloat(deltaDecimal)
@@ -62,10 +62,52 @@ async function applyOrderWalletDelta(client, { order, deltaDecimal, description,
   const abs = Math.abs(d).toFixed(2)
   const type = d > 0 ? 'debit' : 'credit'
 
+  // Consolidação: se o caller pede E há transação recente do mesmo pedido/tipo/usuário
+  // (descrição começa com "Ajuste pedido"), atualiza o amount somando o delta + contador.
+  if (consolidate) {
+    const { rows: [recent] } = await client.query(`
+      SELECT id, amount, description FROM wallet_transactions
+      WHERE order_ref = $1 AND type = $2 AND created_by = $3
+        AND order_status IS NOT DISTINCT FROM $4
+        AND created_at > NOW() - INTERVAL '10 minutes'
+        AND description ILIKE 'Ajuste pedido%'
+      ORDER BY created_at DESC
+      LIMIT 1
+      FOR UPDATE
+    `, [order.id, type, userName ?? 'erp', order.status ?? null])
+
+    if (recent) {
+      const newAmount = (parseFloat(recent.amount) + parseFloat(abs)).toFixed(2)
+      const oldDesc = recent.description ?? ''
+      const m = oldDesc.match(/\((\d+) alteraç[ãa]o[es]*\)\s*$/)
+      const count = m ? parseInt(m[1]) + 1 : 2
+      const newDesc = `Ajuste pedido ${order.id.slice(-6).toUpperCase()} (${count} alterações)`
+      await client.query(`
+        UPDATE wallet_transactions
+        SET amount = $1, description = $2, created_at = NOW()
+        WHERE id = $3
+      `, [newAmount, newDesc, recent.id])
+
+      if (type === 'debit') {
+        await client.query(
+          'UPDATE customers SET credit_balance = credit_balance + $1, updated_at = NOW() WHERE id = $2',
+          [abs, order.customer_id]
+        )
+      } else {
+        await client.query(
+          'UPDATE customers SET credit_balance = GREATEST(0, credit_balance - $1), updated_at = NOW() WHERE id = $2',
+          [abs, order.customer_id]
+        )
+      }
+      return
+    }
+  }
+
+  // Caso padrão (não consolida): cria nova transação
   await client.query(`
-    INSERT INTO wallet_transactions (customer_id, type, amount, description, order_ref, created_by)
-    VALUES ($1, $2, $3, $4, $5, $6)
-  `, [order.customer_id, type, abs, description, order.id, userName ?? 'erp'])
+    INSERT INTO wallet_transactions (customer_id, type, amount, description, order_ref, created_by, order_status)
+    VALUES ($1, $2, $3, $4, $5, $6, $7)
+  `, [order.customer_id, type, abs, description, order.id, userName ?? 'erp', order.status ?? null])
 
   if (type === 'debit') {
     await client.query(
@@ -509,8 +551,8 @@ ordersRouter.post('/:id/items', authorize('admin','operador'), async (req, res) 
 
     await applyOrderWalletDelta(client, {
       order, deltaDecimal: +itemTotal,
-      description: `Acréscimo pedido ${orderId.slice(-6).toUpperCase()}: ${sku.product_name} (${qtyInt}x)`,
-      userName,
+      description: `Ajuste pedido ${orderId.slice(-6).toUpperCase()}: ${sku.product_name} +${qtyInt}x`,
+      userName, consolidate: true,
     })
 
     await client.query(`
@@ -594,7 +636,7 @@ ordersRouter.put('/:id/items/:itemId', authorize('admin','operador'), async (req
       await applyOrderWalletDelta(client, {
         order, deltaDecimal: qtyDiff * parseFloat(item.price_unit),
         description: `Ajuste pedido ${orderId.slice(-6).toUpperCase()}: ${item.product_name} (${item.old_qty}x→${qtyInt}x)`,
-        userName,
+        userName, consolidate: true,
       })
     }
 
@@ -686,8 +728,8 @@ ordersRouter.patch('/:id/items/:itemId/cancel', authorize('admin','operador'), a
     // Estorna em wallet o valor do cancelamento
     await applyOrderWalletDelta(client, {
       order, deltaDecimal: -(cancelQty * parseFloat(item.price_unit)),
-      description: `Cancelamento ${isPartial ? 'parcial ' : ''}item pedido ${orderId.slice(-6).toUpperCase()}: ${item.product_name} (${cancelQty}x)`,
-      userName,
+      description: `Ajuste pedido ${orderId.slice(-6).toUpperCase()}: ${item.product_name} cancelado (${cancelQty}x)`,
+      userName, consolidate: true,
     })
 
     const newTotal = await recalcOrderTotal(client, orderId)
@@ -752,8 +794,8 @@ ordersRouter.delete('/:id/items/:itemId', authorize('admin','operador'), async (
       if (refund > 0) {
         await applyOrderWalletDelta(client, {
           order, deltaDecimal: -refund,
-          description: `Remoção item pedido ${orderId.slice(-6).toUpperCase()}: ${item.product_name}`,
-          userName,
+          description: `Ajuste pedido ${orderId.slice(-6).toUpperCase()}: ${item.product_name} removido`,
+          userName, consolidate: true,
         })
       }
     }
