@@ -21,6 +21,17 @@ e o projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ---
 
+## [1.6.6] — 2026-06-26
+
+### Adicionado
+- **orders:** Agrupamento por cor expansível no modo lista da tela de Novo Pedido (#58)
+- **orders:** Combobox de cliente com busca por nome / razão social / CNPJ + navegação por teclado (#58)
+- **orders:** Busca de catálogo no Novo Pedido agora cobre código de SKU e atributos (cor, tamanho) (#58)
+
+### Corrigido
+- **orders:** Lista de clientes no Novo Pedido respeita status ativo e `customerIds` do usuário; admin vê todos, usuários comuns vêem só os vinculados — comportamento legado preservado p/ usuários sem vínculo configurado (#58)
+- **api:** Middleware `authenticate` passa a expor `customerIds` em `req.auth` — bug pré-existente que impedia a pré-seleção automática de cliente único (#58)
+
 ## [1.6.5] — 2026-06-18
 
 ### Corrigido
