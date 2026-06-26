@@ -24,6 +24,7 @@ import {
   ChevronRight, Monitor,
 } from 'lucide-react'
 import { useAuth } from '../auth/AuthContext.jsx'
+import { useWhatsappMenuStatus } from '../hooks/useWhatsappMenuStatus.js'
 import { NAV_ITEMS } from './navItems.js'
 import { VersionBadge } from '../components/WhatsNew.jsx'
 
@@ -59,10 +60,15 @@ export function Sidebar({ tenantInfo }) {
     })
   }, [])
 
-  /* Filtra itens pelo papel do usuário */
-  const visibleItems = NAV_ITEMS.filter(item =>
-    item.roles === null || (user && hasRole(...item.roles))
-  )
+  /* Visibilidade do item WhatsApp */
+  const wppStatus = useWhatsappMenuStatus()
+
+  /* Filtra itens pelo papel do usuário + visibilidade WhatsApp */
+  const visibleItems = NAV_ITEMS.filter(item => {
+    if (!(item.roles === null || (user && hasRole(...item.roles)))) return false
+    if (item.key === 'whatsapp' && wppStatus.ready && !wppStatus.show) return false
+    return true
+  })
 
   return (
     <motion.aside
@@ -144,6 +150,7 @@ export function Sidebar({ tenantInfo }) {
             )
           }
 
+          const isWppDisconnected = item.key === 'whatsapp' && wppStatus.ready && wppStatus.hasHistory && !wppStatus.connected
           return (
             <NavLink
               key={item.key}
@@ -158,8 +165,16 @@ export function Sidebar({ tenantInfo }) {
               `}
               title={collapsed ? t(`nav.${item.key}`) : undefined}
             >
-              <Icon size={20} className="shrink-0" />
+              <div className="relative shrink-0">
+                <Icon size={20} className={isWppDisconnected ? 'opacity-50' : ''} />
+                {isWppDisconnected && (
+                  <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-red-500 border border-[var(--color-surface)]" title="WhatsApp desconectado" />
+                )}
+              </div>
               {labelNode}
+              {isWppDisconnected && !collapsed && (
+                <span className="ml-auto text-[9px] font-medium text-red-500 shrink-0">offline</span>
+              )}
             </NavLink>
           )
         })}

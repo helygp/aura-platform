@@ -1,25 +1,6 @@
 {
-  "current": "1.7.0",
+  "current": "1.6.5",
   "releases": [
-    {
-      "version": "1.7.0",
-      "date": "2026-06-25",
-      "title": "3 novidades nesta versão",
-      "highlights": [
-        {
-          "icon": "📦",
-          "text": "Novo pedido: SKUs organizados por Cor e Tamanho na sequência correta (P → M → G → GG…)"
-        },
-        {
-          "icon": "⊞",
-          "text": "Novo pedido: visualização em grade Cor × Tamanho para produtos com muitas variações — ative em Configurações → Pedidos"
-        },
-        {
-          "icon": "💳",
-          "text": "Contas a receber: saldo devedor reflete o período filtrado — o card exibe 'Saldo no período' quando o filtro de datas está ativo"
-        }
-      ]
-    },
     {
       "version": "1.6.5",
       "date": "2026-06-18",

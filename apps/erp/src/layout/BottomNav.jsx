@@ -2,7 +2,7 @@
  * layout/BottomNav.jsx
  *
  * Navegação inferior mobile — visível apenas em telas < md.
- * Exibe os 5 itens principais do BOTTOM_NAV_ITEMS.
+ * Exibe os 5 itens principais do BOTTOM_NAV_ITEMS (filtrado por role + visibilidade WhatsApp).
  * Item ativo destacado com cor primária.
  * Itens com newTab:true abrem em nova aba.
  */
@@ -16,6 +16,7 @@ import {
 } from 'lucide-react'
 import { BOTTOM_NAV_ITEMS } from './navItems.js'
 import { useAuth } from '../auth/AuthContext.jsx'
+import { useWhatsappMenuStatus } from '../hooks/useWhatsappMenuStatus.js'
 
 const ICONS = {
   LayoutDashboard, Package, Warehouse, ShoppingCart, Wallet, Monitor, UserCog,
@@ -23,12 +24,16 @@ const ICONS = {
 }
 
 export function BottomNav() {
+  const wppStatus = useWhatsappMenuStatus()
+
   const { t }    = useTranslation()
   const { user, hasRole } = useAuth()
 
-  const visibleItems = BOTTOM_NAV_ITEMS.filter(item =>
-    item.roles === null || (user && hasRole(...item.roles))
-  )
+  const visibleItems = BOTTOM_NAV_ITEMS.filter(item => {
+    if (!(item.roles === null || (user && hasRole(...item.roles)))) return false
+    if (item.key === 'whatsapp' && wppStatus.ready && !wppStatus.show) return false
+    return true
+  })
 
   return (
     <nav className="

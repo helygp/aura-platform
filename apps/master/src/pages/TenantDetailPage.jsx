@@ -8,7 +8,9 @@ import {
   ArrowLeft, Globe, Users, Play, Pause, XCircle, RefreshCw,
   ExternalLink, Activity, Terminal, Wifi, WifiOff,
   CheckCircle, XCircle as XC, ShieldAlert, LogOut, Clock,
+  MessageCircle, Key, RotateCw, Save, Copy, Phone, Bot,
 } from 'lucide-react'
+import { useEffect } from 'react'
 import { StatusBadge }  from '../components/StatusBadge.jsx'
 import { PageSpinner }  from '../components/Spinner.jsx'
 import { ErrorState }   from '../components/ErrorState.jsx'
@@ -657,6 +659,280 @@ function TabHealth({ slug }) {
   )
 }
 
+/* ─── Tab WhatsApp ─── */
+function TabWhatsapp({ slug }) {
+  const [cfg, setCfg]   = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [err, setErr]   = useState(null)
+  const [form, setForm] = useState({})
+  const [dirty, setDirty] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved]   = useState(false)
+  const [provisioning, setProvisioning] = useState(false)
+  const [rotating, setRotating] = useState(false)
+  const [newSecrets, setNewSecrets] = useState(null)
+
+  const load = useCallback(async () => {
+    setLoading(true); setErr(null)
+    try {
+      const c = await api.tenants.whatsapp.get(slug)
+      setCfg(c)
+      setForm({
+        processor:       c.processor       ?? 'none',
+        approver_phone:  c.approver_phone  ?? '',
+        dify_api_url:    c.dify_api_url    ?? '',
+        dify_app_id:     c.dify_app_id     ?? '',
+        n8n_webhook_url: c.n8n_webhook_url ?? '',
+        custom_url:      c.custom_url      ?? '',
+        // Secrets em branco — só preenchem se for atualizar
+        dify_api_key:    '',
+        api_key:         '',
+      })
+      setDirty(false)
+    } catch (e) {
+      setErr(e.message)
+    } finally {
+      setLoading(false)
+    }
+  }, [slug])
+
+  useEffect(() => { load() }, [load])
+
+  const upd = (k, v) => { setForm(f => ({ ...f, [k]: v })); setDirty(true); setSaved(false) }
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      // Envia apenas campos não vazios (para secrets) ou todos os outros
+      const patch = {}
+      const fields = ['processor', 'approver_phone', 'dify_api_url', 'dify_app_id', 'n8n_webhook_url', 'custom_url']
+      fields.forEach(k => { if (form[k] !== undefined) patch[k] = form[k] || null })
+      // Secrets — só envia se preenchido
+      if (form.dify_api_key) patch.dify_api_key = form.dify_api_key
+      if (form.api_key)      patch.api_key      = form.api_key
+
+      const updated = await api.tenants.whatsapp.update(slug, patch)
+      setCfg(updated)
+      setForm(f => ({ ...f, dify_api_key: '', api_key: '' }))
+      setDirty(false)
+      setSaved(true)
+      setTimeout(() => setSaved(false), 3000)
+    } catch (e) {
+      alert('Erro ao salvar: ' + e.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleProvision = async () => {
+    if (!confirm('Provisionar nova instância WAHA para ' + slug + '?\n\nIsto cria um container WhatsApp dedicado via Aurazap.')) return
+    setProvisioning(true)
+    try {
+      const result = await api.tenants.whatsapp.provision(slug)
+      if (result.secrets_generated) setNewSecrets(result.secrets_generated)
+      await load()
+      alert('Instância provisionada!\nInstance: ' + result.provisioned.instance_id + '\nWebhook: ' + result.provisioned.webhook_url)
+    } catch (e) {
+      alert('Erro ao provisionar: ' + e.message)
+    } finally {
+      setProvisioning(false)
+    }
+  }
+
+  const handleRotate = async () => {
+    if (!confirm('Gerar novas chaves de segurança?\n\nIsto invalida as chaves atuais. Tenha certeza de que pode atualizar onde necessário.')) return
+    setRotating(true)
+    try {
+      const result = await api.tenants.whatsapp.rotateKeys(slug)
+      setNewSecrets({
+        internal_api_key: result.internal_api_key,
+        webhook_secret:   result.webhook_secret,
+      })
+      await load()
+    } catch (e) {
+      alert('Erro ao rotacionar: ' + e.message)
+    } finally {
+      setRotating(false)
+    }
+  }
+
+  if (loading) return <PageSpinner />
+  if (err)     return <ErrorState message={err} onRetry={load} />
+  if (!cfg)    return null
+
+  return (
+    <div className="space-y-5 max-w-3xl">
+      {/* ── Status da instância WAHA ── */}
+      <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
+        <div className="flex items-center gap-2 mb-4">
+          <MessageCircle size={16} className="text-[var(--color-primary)]" />
+          <h3 className="font-semibold text-[var(--color-text)]">Instância WAHA</h3>
+        </div>
+
+        {cfg.instance_id ? (
+          <div className="space-y-2">
+            <InfoRow label="Instance ID"  value={<code className="text-xs font-mono">{cfg.instance_id}</code>} />
+            <InfoRow label="Base URL"     value={<code className="text-xs font-mono break-all">{cfg.base_url ?? '—'}</code>} />
+            <InfoRow label="Sessão"       value={<code className="text-xs font-mono">{cfg.session}</code>} />
+            <InfoRow label="API Key"      value={cfg.api_key?.set ? <code className="text-xs">{cfg.api_key.preview}</code> : <span className="text-[var(--color-text-muted)]">não definida</span>} />
+            <div className="pt-3 flex gap-2">
+              <button onClick={handleProvision} disabled={provisioning}
+                className="flex items-center gap-1.5 h-9 px-4 rounded-lg text-sm font-medium border border-[var(--color-border)] hover:bg-[var(--color-bg-subtle)] disabled:opacity-50">
+                {provisioning ? <><RotateCw size={13} className="animate-spin" /> Reprovisionando…</> : <><RotateCw size={13} /> Reprovisionar</>}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="text-center py-4">
+            <p className="text-sm text-[var(--color-text-muted)] mb-3">Nenhuma instância WAHA provisionada.</p>
+            <button onClick={handleProvision} disabled={provisioning}
+              className="inline-flex items-center gap-2 h-10 px-5 rounded-lg text-sm font-medium bg-[var(--color-primary)] text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-50">
+              {provisioning ? <><RotateCw size={14} className="animate-spin" /> Provisionando…</> : <><Wifi size={14} /> Provisionar via Aurazap</>}
+            </button>
+          </div>
+        )}
+      </section>
+
+      {/* ── Dispatcher ── */}
+      <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
+        <div className="flex items-center gap-2 mb-4">
+          <Bot size={16} className="text-[var(--color-primary)]" />
+          <h3 className="font-semibold text-[var(--color-text)]">Processador de mensagens</h3>
+        </div>
+
+        <div className="space-y-4">
+          <div>
+            <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Tipo de processador</label>
+            <select value={form.processor ?? 'none'} onChange={e => upd('processor', e.target.value)}
+              className="w-full h-9 px-3 rounded-lg text-sm bg-[var(--color-bg)] border border-[var(--color-border)]">
+              <option value="none">Nenhum (não responde mensagens)</option>
+              <option value="dify">Dify Agent</option>
+              <option value="n8n">n8n webhook</option>
+              <option value="custom">URL customizada</option>
+            </select>
+          </div>
+
+          {form.processor === 'dify' && (
+            <div className="space-y-3 pl-3 border-l-2 border-[var(--color-border)]">
+              <div>
+                <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Dify API URL</label>
+                <input type="text" placeholder="https://dify.aurabr.app" value={form.dify_api_url ?? ''}
+                  onChange={e => upd('dify_api_url', e.target.value)}
+                  className="w-full h-9 px-3 rounded-lg text-sm font-mono bg-[var(--color-bg)] border border-[var(--color-border)]" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">
+                  Dify API Key {cfg.dify_api_key?.set && <span className="text-green-500">· atual: {cfg.dify_api_key.preview}</span>}
+                </label>
+                <input type="password" placeholder={cfg.dify_api_key?.set ? '••••• (deixe vazio para manter)' : 'app-...'}
+                  value={form.dify_api_key ?? ''} onChange={e => upd('dify_api_key', e.target.value)}
+                  className="w-full h-9 px-3 rounded-lg text-sm font-mono bg-[var(--color-bg)] border border-[var(--color-border)]" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Dify App ID (opcional)</label>
+                <input type="text" placeholder="uuid do app" value={form.dify_app_id ?? ''}
+                  onChange={e => upd('dify_app_id', e.target.value)}
+                  className="w-full h-9 px-3 rounded-lg text-sm font-mono bg-[var(--color-bg)] border border-[var(--color-border)]" />
+              </div>
+            </div>
+          )}
+
+          {form.processor === 'n8n' && (
+            <div className="pl-3 border-l-2 border-[var(--color-border)]">
+              <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">n8n Webhook URL</label>
+              <input type="text" placeholder="https://n8n.aurabr.app/webhook/..." value={form.n8n_webhook_url ?? ''}
+                onChange={e => upd('n8n_webhook_url', e.target.value)}
+                className="w-full h-9 px-3 rounded-lg text-sm font-mono bg-[var(--color-bg)] border border-[var(--color-border)]" />
+            </div>
+          )}
+
+          {form.processor === 'custom' && (
+            <div className="pl-3 border-l-2 border-[var(--color-border)]">
+              <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">URL customizada</label>
+              <input type="text" placeholder="https://meu-bot.exemplo.com/webhook" value={form.custom_url ?? ''}
+                onChange={e => upd('custom_url', e.target.value)}
+                className="w-full h-9 px-3 rounded-lg text-sm font-mono bg-[var(--color-bg)] border border-[var(--color-border)]" />
+              <p className="text-xs text-[var(--color-text-muted)] mt-1">Endpoint POST que recebe JSON com from, chatId, text e retorna JSON com reply.</p>
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* ── Aprovador ── */}
+      <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
+        <div className="flex items-center gap-2 mb-4">
+          <Phone size={16} className="text-[var(--color-primary)]" />
+          <h3 className="font-semibold text-[var(--color-text)]">Aprovador de pedidos</h3>
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">WhatsApp do aprovador</label>
+          <input type="text" placeholder="5511999999999 (apenas dígitos com DDI)" value={form.approver_phone ?? ''}
+            onChange={e => upd('approver_phone', e.target.value)}
+            className="w-full h-9 px-3 rounded-lg text-sm font-mono bg-[var(--color-bg)] border border-[var(--color-border)]" />
+          <p className="text-xs text-[var(--color-text-muted)] mt-1">
+            Receberá notificações de novos pedidos e poderá responder `APROVAR &lt;num&gt;` / `REJEITAR &lt;num&gt;`.
+          </p>
+        </div>
+      </section>
+
+      {/* ── Secrets ── */}
+      <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
+        <div className="flex items-center gap-2 mb-4">
+          <Key size={16} className="text-[var(--color-primary)]" />
+          <h3 className="font-semibold text-[var(--color-text)]">Chaves de segurança</h3>
+        </div>
+        <div className="space-y-3">
+          <InfoRow label="Internal API Key" value={
+            cfg.internal_api_key?.set
+              ? <span className="text-xs flex items-center gap-2"><CheckCircle size={12} className="text-green-500" /> definida ({cfg.internal_api_key.preview})</span>
+              : <span className="text-xs text-yellow-500">não gerada</span>
+          } />
+          <InfoRow label="Webhook Secret" value={
+            cfg.webhook_secret?.set
+              ? <span className="text-xs flex items-center gap-2"><CheckCircle size={12} className="text-green-500" /> definida ({cfg.webhook_secret.preview})</span>
+              : <span className="text-xs text-yellow-500">não gerada</span>
+          } />
+
+          {newSecrets && (
+            <div className="mt-3 p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-xs">
+              <p className="font-semibold text-yellow-700 dark:text-yellow-400 mb-2">⚠️ Copie agora — não serão exibidas novamente:</p>
+              {newSecrets.internal_api_key && (
+                <div className="mb-2">
+                  <p className="text-[var(--color-text-muted)] mb-1">Internal API Key:</p>
+                  <code className="block bg-[var(--color-bg)] p-2 rounded font-mono break-all">{newSecrets.internal_api_key}</code>
+                </div>
+              )}
+              {newSecrets.webhook_secret && (
+                <div>
+                  <p className="text-[var(--color-text-muted)] mb-1">Webhook Secret:</p>
+                  <code className="block bg-[var(--color-bg)] p-2 rounded font-mono break-all">{newSecrets.webhook_secret}</code>
+                </div>
+              )}
+              <button onClick={() => setNewSecrets(null)} className="mt-2 text-xs underline">Já copiei, ocultar</button>
+            </div>
+          )}
+
+          <button onClick={handleRotate} disabled={rotating}
+            className="flex items-center gap-1.5 h-9 px-4 rounded-lg text-sm font-medium border border-[var(--color-border)] hover:bg-[var(--color-bg-subtle)] disabled:opacity-50">
+            {rotating ? <><RotateCw size={13} className="animate-spin" /> Gerando…</> : <><RotateCw size={13} /> Gerar novas chaves</>}
+          </button>
+        </div>
+      </section>
+
+      {/* ── Footer salvar ── */}
+      <div className="flex justify-end gap-2 pt-2">
+        {dirty && <button onClick={load} className="h-9 px-4 rounded-lg text-sm border border-[var(--color-border)]">Cancelar</button>}
+        <button onClick={handleSave} disabled={saving || (!dirty && !saved)}
+          className="flex items-center gap-1.5 h-9 px-5 rounded-lg text-sm font-medium bg-[var(--color-primary)] text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-50">
+          {saved   ? <><CheckCircle size={13} /> Salvo!</>
+           : saving ? <><RotateCw size={13} className="animate-spin" /> Salvando…</>
+           :          <><Save size={13} /> Salvar configuração</>}
+        </button>
+      </div>
+    </div>
+  )
+}
+
 /* ─── Página principal ─── */
 export function TenantDetailPage() {
   const { slug } = useParams()
@@ -699,6 +975,9 @@ export function TenantDetailPage() {
         <Tab active={tab === 'health'}   onClick={() => setTab('health')}>
           <span className="flex items-center gap-1.5"><Activity size={13}/>Saúde & Logs</span>
         </Tab>
+        <Tab active={tab === 'whatsapp'} onClick={() => setTab('whatsapp')}>
+          <span className="flex items-center gap-1.5"><MessageCircle size={13}/>WhatsApp</span>
+        </Tab>
       </div>
 
       <div className="pt-2">
@@ -706,6 +985,7 @@ export function TenantDetailPage() {
         {tab === 'users'    && <TabUsers    slug={slug} />}
         {tab === 'events'   && <TabEvents   slug={slug} />}
         {tab === 'health'   && <TabHealth   slug={slug} />}
+        {tab === 'whatsapp' && <TabWhatsapp slug={slug} />}
       </div>
     </div>
   )

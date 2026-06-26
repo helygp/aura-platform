@@ -38,6 +38,12 @@ export const api = {
         method: 'PATCH',
         body:   JSON.stringify({ status, reason }),
       }),
+    whatsapp: {
+      get:        (slug)       => request(`/master/tenants/${slug}/whatsapp`),
+      update:     (slug, patch) => request(`/master/tenants/${slug}/whatsapp`, { method: 'PUT', body: JSON.stringify(patch) }),
+      rotateKeys: (slug)       => request(`/master/tenants/${slug}/whatsapp/rotate-keys`, { method: 'POST' }),
+      provision:  (slug, body) => request(`/master/tenants/${slug}/whatsapp/provision`, { method: 'POST', body: JSON.stringify(body ?? {}) }),
+    },
   },
   billing: {
     overview: (months = 12) => request(`/master/billing?months=${months}`),
