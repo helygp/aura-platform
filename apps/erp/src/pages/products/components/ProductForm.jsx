@@ -21,7 +21,7 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Upload, X, RefreshCw, Info, ChevronDown, Search, Plus, Lock } from 'lucide-react'
+import { Upload, X, RefreshCw, Info, ChevronDown, Search, Plus, Lock, Trash2, AlertTriangle } from 'lucide-react'
 import { Button, Input, Badge } from '@aura/ui'
 import { AttributeBuilder, loadAttrDefs } from './AttributeBuilder.jsx'
 import { SkuGrid }           from './SkuGrid.jsx'
@@ -30,16 +30,50 @@ import {
   generateSkus, validateSimpleProduct, validateVariantProduct,
 } from '../productsTypes.js'
 import { useAuth } from '../../../auth/AuthContext.jsx'
+import ImageCropModal from './ImageCropModal.jsx'
 
-/* ── Foto upload ── */
+/* ── Foto upload ──
+ * Fluxo:
+ *   1. Usuário seleciona arquivo
+ *   2. Validação prévia: tipo MIME image/* e tamanho ≤ MAX_INPUT_BYTES (15 MB)
+ *   3. Abre modal de crop (react-easy-crop) com aspect 4:3
+ *   4. Modal redimensiona/comprime para JPEG ≤ ~800 KB
+ *   5. Resultado vai para imageUrl como data URL
+ */
+const MAX_INPUT_BYTES = 15 * 1024 * 1024 // 15 MB
+function _fmtBytes(n) {
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`
+  return `${(n / 1024 / 1024).toFixed(1)} MB`
+}
 function ImageUpload({ imageUrl, onImageChange }) {
   const inputRef = useRef(null)
+  const [pendingFile, setPendingFile] = useState(null)
+  const [error,       setError]       = useState(null)
+
   const handleFile = (e) => {
-    const file = e.target.files?.[0]; if (!file) return
-    const reader = new FileReader()
-    reader.onload = () => onImageChange(reader.result)
-    reader.readAsDataURL(file)
+    const file = e.target.files?.[0]
+    // limpa o input para permitir re-selecionar o mesmo arquivo depois
+    if (e.target) e.target.value = ''
+    if (!file) return
+    setError(null)
+
+    if (!file.type?.startsWith('image/')) {
+      setError('Arquivo inválido. Envie uma imagem (JPG, PNG ou WebP).')
+      return
+    }
+    if (file.size > MAX_INPUT_BYTES) {
+      setError(`Arquivo muito grande (${_fmtBytes(file.size)}). Máximo: 15 MB. Reduza pelo aplicativo de fotos do celular ou envie uma foto menor.`)
+      return
+    }
+    setPendingFile(file)
   }
+
+  const handleCropConfirm = (dataUrl) => {
+    onImageChange(dataUrl)
+    setPendingFile(null)
+  }
+
   return (
     <div>
       <p className="text-sm font-medium text-[var(--color-text)] mb-1.5">Foto do produto</p>
@@ -62,7 +96,23 @@ function ImageUpload({ imageUrl, onImageChange }) {
           </div>
         )}
       </div>
+      <p className="text-xs text-[var(--color-text-muted)] mt-1.5 leading-relaxed max-w-[280px]">
+        JPG, PNG ou WebP · Máximo 15 MB · Você poderá ajustar o enquadramento (4:3)
+      </p>
+      {error && (
+        <p className="text-xs text-red-600 dark:text-red-400 mt-1.5 leading-relaxed max-w-[280px]">
+          {error}
+        </p>
+      )}
       <input ref={inputRef} type="file" accept="image/*" onChange={handleFile} className="hidden" />
+
+      {pendingFile && (
+        <ImageCropModal
+          file={pendingFile}
+          onCancel={() => setPendingFile(null)}
+          onConfirm={handleCropConfirm}
+        />
+      )}
     </div>
   )
 }
@@ -328,6 +378,25 @@ function SkuEditTable({ skus, onChange, productCode, attrDefs: attrDefsProp, rea
     setAdding(false)
   }
 
+  /* Remove um SKU não utilizado (stock === 0).
+   * O backend revalida e bloqueia se houver movimentações/pedidos atrelados. */
+  const requestRemoveSku = (index) => {
+    const target = skus[index]
+    if (!target) return
+    if ((target.stock ?? 0) > 0) return // guard extra (botão já está desabilitado)
+    const labelBits = [
+      target.code,
+      ...(target.attributes ? Object.values(target.attributes) : []),
+    ].filter(Boolean).join(' · ')
+    setConfirm({
+      label: `exclusão do SKU ${labelBits || target.code}`,
+      message: 'Esta variação será removida do produto. Só é possível remover SKUs sem estoque e sem histórico de movimentações ou pedidos. Esta ação não pode ser desfeita.',
+      onConfirm: () => {
+        onChange(skus.filter((_, i) => i !== index))
+      },
+    })
+  }
+
   // T6.2 — chaves dos atributos ordenadas para o cabeçalho
   const ATTR_ORDER = ['cor', 'color', 'tamanho', 'size', 'tam']
   const attrKeys = useMemo(() => {
@@ -417,12 +486,19 @@ function SkuEditTable({ skus, onChange, productCode, attrDefs: attrDefsProp, rea
             onClick={e => e.stopPropagation()}
           >
             <h3 className="text-base font-bold text-[var(--color-text)] mb-2">Tem certeza?</h3>
-            <p className="text-sm text-[var(--color-text-muted)] mb-5 leading-relaxed">
-              O{' '}<strong className="text-[var(--color-text)]">{confirm.label}</strong>{' '}
-              será aplicado a todos os{' '}
-              <strong className="text-[var(--color-text)]">{skus.length} SKUs</strong>,
-              sobrepondo os valores existentes. Esta ação não pode ser desfeita.
-            </p>
+            {confirm.message ? (
+              <p className="text-sm text-[var(--color-text-muted)] mb-5 leading-relaxed">
+                Confirmar{' '}<strong className="text-[var(--color-text)]">{confirm.label}</strong>?
+                {' '}{confirm.message}
+              </p>
+            ) : (
+              <p className="text-sm text-[var(--color-text-muted)] mb-5 leading-relaxed">
+                O{' '}<strong className="text-[var(--color-text)]">{confirm.label}</strong>{' '}
+                será aplicado a todos os{' '}
+                <strong className="text-[var(--color-text)]">{skus.length} SKUs</strong>,
+                sobrepondo os valores existentes. Esta ação não pode ser desfeita.
+              </p>
+            )}
             <div className="flex gap-3 justify-end">
               <button
                 type="button"
@@ -567,7 +643,7 @@ function SkuEditTable({ skus, onChange, productCode, attrDefs: attrDefsProp, rea
                   <th
                     key={k}
                     onClick={() => toggleSort(k)}
-                    className="px-3 py-2.5 text-left font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap cursor-pointer hover:bg-[var(--color-bg-subtle)] select-none transition-colors"
+                    className="px-2 py-2.5 text-left font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap cursor-pointer hover:bg-[var(--color-bg-subtle)] select-none transition-colors"
                   >
                     <span className="inline-flex items-center gap-1">
                       {k}
@@ -577,35 +653,38 @@ function SkuEditTable({ skus, onChange, productCode, attrDefs: attrDefsProp, rea
                 ))}
                 <th
                   onClick={() => toggleSort('code')}
-                  className="px-3 py-2.5 text-left font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap cursor-pointer hover:bg-[var(--color-bg-subtle)] select-none transition-colors"
+                  className="px-2 py-2.5 text-left font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap cursor-pointer hover:bg-[var(--color-bg-subtle)] select-none transition-colors"
                 >
                   <span className="inline-flex items-center gap-1">
                     Código
                     <SortIcon active={sortBy?.key === 'code'} dir={sortBy?.dir} />
                   </span>
                 </th>
-                <th className="px-3 py-2.5 text-left font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap">Preço R$</th>
-                <th className="px-3 py-2.5 text-left font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap">Est. Mín</th>
-                <th className="px-3 py-2.5 text-center font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap">Estoque</th>
+                <th className="px-2 py-2.5 text-left font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap">Preço R$</th>
+                <th className="px-2 py-2.5 text-left font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap">Est. Mín</th>
+                <th className="px-2 py-2.5 text-center font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap">Estoque</th>
+                {!readOnly && (
+                  <th className="px-2 py-2.5 text-center font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap w-12 sticky right-0 bg-[var(--color-surface)] shadow-[-4px_0_6px_-2px_rgba(0,0,0,0.05)] z-10">Ações</th>
+                )}
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--color-border)]">
               {displayedSkus.length === 0 ? (
                 <tr>
-                  <td colSpan={attrKeys.length + 4} className="px-3 py-8 text-center text-[var(--color-text-muted)]">
+                  <td colSpan={attrKeys.length + (readOnly ? 4 : 5)} className="px-3 py-8 text-center text-[var(--color-text-muted)]">
                     Nenhum SKU encontrado para "{search}".
                   </td>
                 </tr>
               ) : displayedSkus.map((sku) => {
                 const origIdx = skus.indexOf(sku)
                 return (
-                <tr key={sku.id ?? sku._tempId ?? origIdx} className="hover:bg-[var(--color-bg-subtle)] transition-colors">
+                <tr key={sku.id ?? sku._tempId ?? origIdx} className="group hover:bg-[var(--color-bg-subtle)] transition-colors">
                   {attrKeys.map(k => (
-                    <td key={k} className="px-3 py-2 font-medium text-[var(--color-text)] whitespace-nowrap">
+                    <td key={k} className="px-2 py-2 font-medium text-[var(--color-text)] whitespace-nowrap">
                       {sku.attributes?.[k] ?? '—'}
                     </td>
                   ))}
-                  <td className="px-3 py-2 font-mono text-[10px] text-[var(--color-text-muted)] whitespace-nowrap">
+                  <td className="px-2 py-2 font-mono text-[10px] text-[var(--color-text-muted)] whitespace-nowrap">
                     {sku.code}
                     {sku._tempId && (
                       <span className="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-semibold bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-300">
@@ -613,7 +692,7 @@ function SkuEditTable({ skus, onChange, productCode, attrDefs: attrDefsProp, rea
                       </span>
                     )}
                   </td>
-                  <td className="px-3 py-2 min-w-[90px]">
+                  <td className="px-2 py-2 min-w-[72px]">
                     <input
                       type="number" min="0" step="0.01"
                       value={sku.priceWholesale ?? ''}
@@ -625,7 +704,7 @@ function SkuEditTable({ skus, onChange, productCode, attrDefs: attrDefsProp, rea
                       ].join(' ')}
                     />
                   </td>
-                  <td className="px-3 py-2 min-w-[72px]">
+                  <td className="px-2 py-2 min-w-[56px]">
                     <input
                       type="number" min="0"
                       value={sku.stockMin ?? 0}
@@ -637,7 +716,7 @@ function SkuEditTable({ skus, onChange, productCode, attrDefs: attrDefsProp, rea
                       ].join(' ')}
                     />
                   </td>
-                  <td className="px-3 py-2 text-center">
+                  <td className="px-2 py-2 text-center">
                     <span className={[
                       'text-xs font-semibold px-2 py-0.5 rounded-full',
                       sku.stock <= 0
@@ -649,6 +728,31 @@ function SkuEditTable({ skus, onChange, productCode, attrDefs: attrDefsProp, rea
                       {sku.stock ?? 0}
                     </span>
                   </td>
+                  {!readOnly && (
+                    <td className="px-2 py-2 text-center sticky right-0 bg-[var(--color-bg)] group-hover:bg-[var(--color-bg-subtle)] shadow-[-4px_0_6px_-2px_rgba(0,0,0,0.05)] z-10 transition-colors">
+                      {(() => {
+                        const canDelete = (sku.stock ?? 0) <= 0
+                        return (
+                          <button
+                            type="button"
+                            disabled={!canDelete}
+                            onClick={() => canDelete && requestRemoveSku(origIdx)}
+                            title={canDelete
+                              ? 'Excluir SKU (precisa estar sem estoque e sem histórico)'
+                              : 'Não dá para excluir: SKU possui estoque. Zere o estoque primeiro.'}
+                            className={[
+                              'inline-flex items-center justify-center w-7 h-7 rounded-md transition-colors',
+                              canDelete
+                                ? 'text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40'
+                                : 'text-[var(--color-text-disabled)] cursor-not-allowed opacity-40',
+                            ].join(' ')}
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        )
+                      })()}
+                    </td>
+                  )}
                 </tr>
                 )
               })}
