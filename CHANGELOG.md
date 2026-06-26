@@ -21,6 +21,14 @@ e o projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ---
 
+## [1.7.0] — 2026-06-26
+
+### Adicionado
+- **products:** exclusão de variações (SKUs) não utilizadas direto pela lista de SKUs com soft delete inteligente — SKUs com estoque ou histórico ficam protegidos (#70)
+
+### Corrigido
+- **products:** erro 413 ao adicionar foto de produto — novo editor de enquadramento (4:3) com zoom, arraste e compressão automática (#70)
+
 ## [1.6.6] — 2026-06-26
 
 ### Adicionado
