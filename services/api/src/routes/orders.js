@@ -295,6 +295,7 @@ ordersRouter.get('/', async (req, res) => {
             'qty', oi.qty, 'qtyReturned', oi.qty_returned, 'priceUnit', oi.price_unit,
             'status', COALESCE(oi.status, 'ativo')
           )
+          ORDER BY oi.created_at, oi.id
         ) FILTER (WHERE oi.id IS NOT NULL) AS items,
         (SELECT json_agg(json_build_object(
             'status', oh.status, 'note', oh.note,
