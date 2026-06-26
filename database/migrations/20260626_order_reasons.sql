@@ -47,3 +47,19 @@ INSERT INTO order_reasons (kind, label, sort_order) VALUES
   ('return',       'Arrependimento (7 dias)',          50),
   ('return',       'Erro no envio (item trocado)',     60)
 ON CONFLICT (kind, lower(label)) DO NOTHING;
+
+-- ── 3. GRANTs para o role do tenant ──
+-- Tabelas criadas por CREATE TABLE neste banco ficam com owner=postgres por padrão.
+-- O app conecta usando o role com o mesmo nome do database (aura_staging,
+-- aura_fastmalhas, aura_acme). Garante privilégios.
+DO $$
+DECLARE
+  tenant_role text := current_database();
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = tenant_role) THEN
+    EXECUTE format('GRANT ALL PRIVILEGES ON TABLE order_reasons TO %I', tenant_role);
+    EXECUTE format('GRANT USAGE ON TYPE order_reason_kind TO %I', tenant_role);
+  ELSE
+    RAISE NOTICE 'Skipping GRANT — role % does not exist', tenant_role;
+  END IF;
+END $$;
