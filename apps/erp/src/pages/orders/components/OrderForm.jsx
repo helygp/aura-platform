@@ -1,9 +1,14 @@
 /**
  * pages/orders/components/OrderForm.jsx
  *
- * Ticket #49: autosave de rascunho em banco (server-first + localStorage fallback).
- * fix #81:    sort canônico Cor → Tamanho nos SKUs do catálogo.
- * feat:       viewMode lista | grade (toggle em Configurações → Pedidos).
+ * Ticket #49:  autosave de rascunho em banco (server-first + localStorage fallback).
+ * fix #81:     sort canônico Cor → Tamanho nos SKUs do catálogo.
+ * feat:        viewMode lista | grade (toggle em Configurações → Pedidos).
+ * Ticket #115: 4 melhorias na tela de Novo Pedido —
+ *              1. agrupamento por cor no modo lista (expansível);
+ *              2. combobox de cliente com busca por nome / razão social / CNPJ;
+ *              3. clientes filtrados por status ativo + acesso do usuário;
+ *              4. filtro de produtos também busca em código e variações (cor/tamanho).
  *
  * Props:
  *   open     : boolean
@@ -114,6 +119,88 @@ function SkuRow({ sku, qty, onQtyChange }) {
   )
 }
 
+/* ─── Detecta se o produto tem algum atributo não-tamanho (ex: Cor, Estampa) ─── */
+function hasColorAttribute(product) {
+  return (product.skus ?? []).some(s => {
+    const attrs = s.attributes ?? {}
+    return Object.keys(attrs).some(k => !_SZ_ROWS.includes(k))
+  })
+}
+
+/* ─── Agrupa SKUs por cor (atributo não-tamanho) — ticket #115 ─── */
+function groupSkusByColor(skus) {
+  const groups = new Map()
+  for (const sku of skus) {
+    const attrs = sku.attributes ?? {}
+    const colorEntry = Object.entries(attrs).find(([k]) => !_SZ_ROWS.includes(k))
+    const colorKey = colorEntry ? String(colorEntry[1]) : '—'
+    if (!groups.has(colorKey)) groups.set(colorKey, [])
+    groups.get(colorKey).push(sku)
+  }
+  // Ordena grupos por nome da cor, depois ordena tamanhos canônicos dentro
+  return [...groups.entries()]
+    .sort(([a], [b]) => a.localeCompare(b, 'pt-BR'))
+    .map(([color, list]) => ({
+      color,
+      skus: [...list].sort((a, b) => {
+        const szA = Object.keys(a.attributes ?? {}).find(k => _SZ_ROWS.includes(k))
+        const szB = Object.keys(b.attributes ?? {}).find(k => _SZ_ROWS.includes(k))
+        const ka  = szA ? _szKey(a.attributes[szA]) : ''
+        const kb  = szB ? _szKey(b.attributes[szB]) : ''
+        return ka < kb ? -1 : ka > kb ? 1 : 0
+      }),
+    }))
+}
+
+/* ─── Grupo de cor expansível (modo lista) — ticket #115 ─── */
+function ColorGroup({ color, skus, product, quantities, onQtyChange }) {
+  const qtyInColor = skus.reduce((a, s) => a + (quantities[s.id] ?? 0), 0)
+  const totalStock = skus.reduce((a, s) => a + (s.stock ?? 0), 0)
+  // Default: recolhido. Se já tem item da cor no pedido, começa expandido.
+  const [open, setOpen] = useState(qtyInColor > 0)
+
+  // Auto-expande quando um SKU dessa cor recebe o primeiro item
+  const prevQtyRef = useRef(qtyInColor)
+  useEffect(() => {
+    if (prevQtyRef.current === 0 && qtyInColor > 0) setOpen(true)
+    prevQtyRef.current = qtyInColor
+  }, [qtyInColor])
+
+  return (
+    <div className={`rounded-md border ${qtyInColor > 0 ? 'border-blue-200 dark:border-blue-800' : 'border-[var(--color-border)]'} bg-[var(--color-bg-subtle)]/30`}>
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center gap-2 px-2 py-1.5 text-left"
+      >
+        <span className="text-xs font-semibold text-[var(--color-text)]">{color}</span>
+        <span className="text-[10px] text-[var(--color-text-muted)]">
+          {skus.length} tam.
+        </span>
+        <StockBadge stock={totalStock} />
+        {qtyInColor > 0 && (
+          <span className="text-[10px] font-bold text-blue-600 bg-blue-100 dark:bg-blue-900/40 px-1.5 py-0.5 rounded-full">
+            {qtyInColor} no pedido
+          </span>
+        )}
+        <span className="flex-1" />
+        {open
+          ? <ChevronUp size={12} className="text-[var(--color-text-muted)] shrink-0" />
+          : <ChevronDown size={12} className="text-[var(--color-text-muted)] shrink-0" />}
+      </button>
+      {open && (
+        <div className="px-1 pb-1 space-y-0.5">
+          {skus.map(sku => (
+            <SkuRow key={sku.id} sku={sku}
+              qty={quantities[sku.id] ?? 0}
+              onQtyChange={qty => onQtyChange(sku, qty, product)} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 /* ─── Card de produto no catálogo ─── */
 function ProductCard({ product, quantities, onQtyChange, viewMode }) {
   const [open, setOpen] = useState(false)
@@ -123,6 +210,8 @@ function ProductCard({ product, quantities, onQtyChange, viewMode }) {
 
   /* Em modo grade: usa matriz se o produto tiver Cor×Tamanho; senão, lista flat */
   const useMatrix = viewMode === 'matrix' && hasProductGrid(product)
+  /* Em modo lista: agrupa por cor se o produto tiver atributo não-tamanho (ticket #115) */
+  const useColorGroups = viewMode === 'list' && hasColorAttribute(product)
 
   return (
     <div className={`rounded-xl border transition-colors ${qtyInCart > 0 ? 'border-blue-300 dark:border-blue-700' : 'border-[var(--color-border)]'} bg-[var(--color-bg)]`}>
@@ -149,13 +238,18 @@ function ProductCard({ product, quantities, onQtyChange, viewMode }) {
       </button>
 
       {open && skus.length > 0 && (
-        <div className={`border-t border-[var(--color-border)] ${useMatrix ? 'p-2' : 'px-1 pb-2 space-y-0.5 pt-1.5'}`}>
+        <div className={`border-t border-[var(--color-border)] ${useMatrix ? 'p-2' : 'px-1 pb-2 space-y-1 pt-1.5'}`}>
           {useMatrix ? (
             <OrderGradeMatrix
               product={product}
               quantities={quantities}
               onQtyChange={onQtyChange}
             />
+          ) : useColorGroups ? (
+            groupSkusByColor(skus).map(g => (
+              <ColorGroup key={g.color} color={g.color} skus={g.skus}
+                product={product} quantities={quantities} onQtyChange={onQtyChange} />
+            ))
           ) : (
             sortSkus(skus).map(sku => (
               <SkuRow key={sku.id} sku={sku}
@@ -233,6 +327,161 @@ function DraftBanner({ draft, onResume, onDiscard }) {
   )
 }
 
+/* ─── Combobox de cliente com busca por nome / razão social / CNPJ — ticket #115 ─── */
+function fmtDoc(doc, personType) {
+  if (!doc) return ''
+  const d = String(doc).replace(/\D/g, '')
+  if (personType === 'pj' || d.length === 14) {
+    return d.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2}).*/, '$1.$2.$3/$4-$5')
+  }
+  if (d.length === 11) {
+    return d.replace(/^(\d{3})(\d{3})(\d{3})(\d{2}).*/, '$1.$2.$3-$4')
+  }
+  return doc
+}
+
+function CustomerCombobox({ customers, value, onChange, error, disabled = false }) {
+  const [open, setOpen]           = useState(false)
+  const [query, setQuery]         = useState('')
+  const [highlight, setHighlight] = useState(0)
+  const wrapperRef = useRef(null)
+  const inputRef   = useRef(null)
+  const listRef    = useRef(null)
+
+  const selected = useMemo(
+    () => customers.find(c => c.id === value) ?? null,
+    [customers, value]
+  )
+
+  /* Fecha ao clicar fora */
+  useEffect(() => {
+    function onClickOutside(e) {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target)) {
+        setOpen(false)
+        setQuery('')
+      }
+    }
+    if (open) document.addEventListener('mousedown', onClickOutside)
+    return () => document.removeEventListener('mousedown', onClickOutside)
+  }, [open])
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return customers
+    const qDigits = q.replace(/\D/g, '')
+    return customers.filter(c => {
+      const name = (c.name ?? '').toLowerCase()
+      if (name.includes(q)) return true
+      if (qDigits) {
+        const docDigits = String(c.document ?? '').replace(/\D/g, '')
+        if (docDigits.includes(qDigits)) return true
+      }
+      return false
+    })
+  }, [customers, query])
+
+  useEffect(() => { setHighlight(0) }, [query])
+
+  /* Mantém highlight visível */
+  useEffect(() => {
+    if (!open || !listRef.current) return
+    const el = listRef.current.querySelector(`[data-idx="${highlight}"]`)
+    if (el) el.scrollIntoView({ block: 'nearest' })
+  }, [highlight, open])
+
+  function selectItem(c) {
+    onChange(c)
+    setQuery('')
+    setOpen(false)
+  }
+
+  function handleKeyDown(e) {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      if (!open) setOpen(true)
+      setHighlight(h => Math.min(filtered.length - 1, h + 1))
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setHighlight(h => Math.max(0, h - 1))
+    } else if (e.key === 'Enter') {
+      if (open && filtered[highlight]) {
+        e.preventDefault()
+        selectItem(filtered[highlight])
+      }
+    } else if (e.key === 'Escape') {
+      setOpen(false)
+      setQuery('')
+      inputRef.current?.blur()
+    }
+  }
+
+  function clear(e) {
+    e.stopPropagation()
+    onChange(null)
+    setQuery('')
+    inputRef.current?.focus()
+  }
+
+  const displayValue = open ? query : (selected?.name ?? '')
+  const placeholder = customers.length === 0
+    ? 'Nenhum cliente disponível'
+    : 'Buscar por nome, razão social ou CNPJ…'
+
+  return (
+    <div ref={wrapperRef} className="relative">
+      <div className={`flex items-center w-full h-9 rounded-lg bg-[var(--color-bg)] border focus-within:ring-2 focus-within:ring-[var(--color-primary)] ${error ? 'border-red-500' : 'border-[var(--color-border)]'} ${disabled ? 'opacity-50' : ''}`}>
+        <Search size={12} className="ml-3 text-[var(--color-text-muted)] shrink-0" />
+        <input
+          ref={inputRef}
+          type="text"
+          value={displayValue}
+          placeholder={placeholder}
+          disabled={disabled || customers.length === 0}
+          onFocus={() => setOpen(true)}
+          onChange={e => { setQuery(e.target.value); setOpen(true) }}
+          onKeyDown={handleKeyDown}
+          className="flex-1 h-full px-2 bg-transparent text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-disabled)] focus:outline-none disabled:cursor-not-allowed"
+        />
+        {selected && !open && !disabled && (
+          <button type="button" onClick={clear} aria-label="Limpar cliente"
+            className="mr-1 w-5 h-5 flex items-center justify-center rounded text-[var(--color-text-muted)] hover:text-red-500">
+            <X size={12} />
+          </button>
+        )}
+        <button type="button" onClick={() => { if (!disabled) { setOpen(o => !o); inputRef.current?.focus() } }} aria-label="Abrir lista"
+          className="mr-2 w-5 h-5 flex items-center justify-center text-[var(--color-text-muted)]">
+          {open ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+        </button>
+      </div>
+
+      {open && customers.length > 0 && (
+        <div ref={listRef}
+          className="absolute z-20 mt-1 w-full max-h-60 overflow-y-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] shadow-lg">
+          {filtered.length === 0 ? (
+            <div className="px-3 py-2 text-xs text-[var(--color-text-muted)]">Nenhum cliente encontrado.</div>
+          ) : filtered.map((c, idx) => (
+            <button
+              type="button"
+              key={c.id}
+              data-idx={idx}
+              onMouseEnter={() => setHighlight(idx)}
+              onClick={() => selectItem(c)}
+              className={`w-full text-left px-3 py-2 transition-colors ${
+                idx === highlight ? 'bg-[var(--color-bg-subtle)]' : 'hover:bg-[var(--color-bg-subtle)]'
+              } ${c.id === value ? 'border-l-2 border-[var(--color-primary)]' : ''}`}
+            >
+              <p className="text-sm text-[var(--color-text)] truncate">{c.name}</p>
+              {c.document && (
+                <p className="text-[10px] font-mono text-[var(--color-text-muted)]">{fmtDoc(c.document, c.personType)}</p>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 /* ─── Form principal ─── */
 const EMPTY_FORM = { customerId: '', customerName: '', customerWhatsapp: '', channel: ORDER_CHANNEL.MANUAL, notes: '' }
 
@@ -262,6 +511,24 @@ export function OrderForm({ open, onClose, onSave, customers = [], skus = [], pr
 
   const hasContent = items.length > 0 || form.customerId
 
+  /* ── Clientes acessíveis: ativos + filtro de acesso do usuário (ticket #115) ──
+   * Regra:
+   *   - admin: vê todos os clientes ativos
+   *   - não-admin com customerIds configurado: vê só os vinculados (e ativos)
+   *   - não-admin sem customerIds: sem restrição (vê todos os ativos)
+   * Isso preserva compat com usuários legados sem vínculo configurado.
+   */
+  const accessibleCustomers = useMemo(() => {
+    const isAdmin   = (user?.roles ?? []).includes('admin')
+    const linkedIds = user?.customerIds ?? []
+    return (customers ?? []).filter(c => {
+      if (c.status !== 'ativo') return false
+      if (isAdmin) return true
+      if (linkedIds.length === 0) return true
+      return linkedIds.includes(c.id)
+    })
+  }, [customers, user])
+
   /* ── Ao abrir o modal: carrega draft do servidor ── */
   useEffect(() => {
     if (!open) return
@@ -276,10 +543,10 @@ export function OrderForm({ open, onClose, onSave, customers = [], skus = [], pr
       setShowBanner(false)
       setPendingDraft(null)
 
-      const linkedIds = user?.customerIds ?? []
-      if (linkedIds.length === 1) {
-        const cust = customers.find(c => c.id === linkedIds[0])
-        if (cust) setForm({ ...EMPTY_FORM, customerId: cust.id, customerName: cust.name, customerWhatsapp: cust.whatsapp ?? '' })
+      // Se o usuário só tem 1 cliente acessível, pré-seleciona automaticamente.
+      if (accessibleCustomers.length === 1) {
+        const cust = accessibleCustomers[0]
+        setForm({ ...EMPTY_FORM, customerId: cust.id, customerName: cust.name, customerWhatsapp: cust.whatsapp ?? '' })
       }
 
       const draft = await loadDraft()
@@ -328,20 +595,29 @@ export function OrderForm({ open, onClose, onSave, customers = [], skus = [], pr
     return Object.values(map)
   }, [products, skus])
 
+  /* ── Filtro de catálogo — agora também busca em código e variações (ticket #115) ── */
   const filteredCatalog = useMemo(() => {
     if (!search.trim()) return catalog
     const q = search.toLowerCase()
     return catalog.filter(p =>
-      p.name.toLowerCase().includes(q) ||
-      p.category?.toLowerCase().includes(q) ||
-      p.skus?.some(s => s.code.toLowerCase().includes(q))
+      (p.name ?? '').toLowerCase().includes(q) ||
+      (p.category ?? '').toLowerCase().includes(q) ||
+      (p.skus ?? []).some(s =>
+        (s.code ?? '').toLowerCase().includes(q) ||
+        Object.values(s.attributes ?? {}).some(v => String(v).toLowerCase().includes(q))
+      )
     )
   }, [catalog, search])
 
-  const handleCustomerChange = (e) => {
-    const cust = customers.find(c => c.id === e.target.value)
-    setForm(prev => ({ ...prev, customerId: cust?.id ?? '', customerName: cust?.name ?? '', customerWhatsapp: cust?.whatsapp ?? '' }))
-  }
+  const handleCustomerChange = useCallback((cust) => {
+    setForm(prev => ({
+      ...prev,
+      customerId:       cust?.id ?? '',
+      customerName:     cust?.name ?? '',
+      customerWhatsapp: cust?.whatsapp ?? '',
+    }))
+    if (cust) setErrors(prev => ({ ...prev, customer: undefined }))
+  }, [])
 
   const handleQtyChange = useCallback((sku, newQty, product) => {
     setQtys(prev => ({ ...prev, [sku.id]: newQty }))
@@ -413,11 +689,12 @@ export function OrderForm({ open, onClose, onSave, customers = [], skus = [], pr
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wide mb-1">Cliente *</label>
-              <select value={form.customerId} onChange={handleCustomerChange}
-                className={`w-full h-9 px-3 rounded-lg text-sm bg-[var(--color-bg)] border text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] ${errors.customer ? 'border-red-500' : 'border-[var(--color-border)]'}`}>
-                <option value="">Selecionar…</option>
-                {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
+              <CustomerCombobox
+                customers={accessibleCustomers}
+                value={form.customerId}
+                onChange={handleCustomerChange}
+                error={errors.customer}
+              />
               {errors.customer && <p className="text-[10px] text-red-500 mt-0.5">{errors.customer}</p>}
             </div>
             <div>
@@ -445,7 +722,7 @@ export function OrderForm({ open, onClose, onSave, customers = [], skus = [], pr
                 <label className="text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wide shrink-0">Produtos</label>
                 <div className="relative flex-1">
                   <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)] pointer-events-none" />
-                  <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Buscar produto ou SKU…"
+                  <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Buscar por nome, código ou variação…"
                     className="w-full h-7 pl-7 pr-3 rounded-lg text-xs bg-[var(--color-bg-subtle)] border border-[var(--color-border)] text-[var(--color-text)] placeholder:text-[var(--color-text-disabled)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]" />
                 </div>
                 {/* Toggle lista / grade */}
