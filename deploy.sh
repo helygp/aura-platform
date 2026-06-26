@@ -38,6 +38,14 @@ docker run --rm \
   sh -c "npm install --silent 2>/dev/null; npx vite@5.4.21 build" >> $LOG 2>&1
 echo "[$(date)] ERP OK" | tee -a $LOG
 
+echo "[$(date)] Buildando Master Panel..." | tee -a $LOG
+docker run --rm \
+  -v $REPO_DIR:/workspace \
+  -w /workspace/apps/master \
+  node:22-bookworm-slim \
+  sh -c "npm install --silent 2>/dev/null; npx vite@5.4.21 build" >> $LOG 2>&1
+echo "[$(date)] Master Panel OK" | tee -a $LOG
+
 # ── 4. Deploy staging ────────────────────────────────────────────
 if [ "$BRANCH" = "staging" ]; then
   docker stop api-staging 2>/dev/null || true
@@ -78,7 +86,9 @@ if [ "$BRANCH" = "staging" ]; then
 
   docker cp $REPO_DIR/apps/erp/dist/. erp-staging:/usr/share/nginx/html/
   docker exec erp-staging nginx -s reload
-  echo "[$(date)] ✅ https://staging.aurabr.app" | tee -a $LOG
+  docker cp $REPO_DIR/apps/master/dist/. master-panel:/usr/share/nginx/html/
+  docker exec master-panel nginx -s reload
+  echo "[$(date)] ✅ https://staging.aurabr.app + master.aurabr.app" | tee -a $LOG
 
 # ── 5. Deploy produção ───────────────────────────────────────────
 elif [ "$BRANCH" = "main" ]; then
