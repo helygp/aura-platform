@@ -197,6 +197,48 @@ productsRouter.put('/:id', authorize('admin', 'estoque'), async (req, res) => {
       }
     }
 
+    /* Diff: SKUs que existiam no banco mas sumiram do payload são candidatos a exclusão.
+     * Só removemos os que NÃO têm vínculo com stock_movements nem order_items.
+     * Se algum bloqueado, abortamos a transação inteira e listamos os impedimentos. */
+    const payloadIds = new Set(
+      (skus || []).filter(s => s.id != null).map(s => String(s.id))
+    )
+    const { rows: existingSkus } = await client.query(
+      'SELECT id, code FROM skus WHERE product_id=$1', [req.params.id]
+    )
+    const orphans = existingSkus.filter(s => !payloadIds.has(String(s.id)))
+
+    if (orphans.length > 0) {
+      const blocked = []
+      for (const orph of orphans) {
+        const { rows: mov } = await client.query(
+          'SELECT 1 FROM stock_movements WHERE sku_id=$1 LIMIT 1', [orph.id]
+        )
+        const { rows: ord } = await client.query(
+          'SELECT 1 FROM order_items WHERE sku_id=$1 LIMIT 1', [orph.id]
+        )
+        if (mov.length > 0 || ord.length > 0) {
+          const reasons = []
+          if (mov.length > 0) reasons.push('movimentações de estoque')
+          if (ord.length > 0) reasons.push('pedidos')
+          blocked.push({ id: orph.id, code: orph.code, reason: reasons.join(' e ') })
+        }
+      }
+      if (blocked.length > 0) {
+        await client.query('ROLLBACK')
+        return res.status(409).json({
+          error: 'Alguns SKUs não podem ser removidos porque possuem histórico.',
+          blockedSkus: blocked,
+        })
+      }
+      /* Deleta órfãos sem vínculo */
+      const orphanIds = orphans.map(o => o.id)
+      await client.query(
+        'DELETE FROM skus WHERE id = ANY($1::text[]) AND product_id=$2',
+        [orphanIds, req.params.id]
+      )
+    }
+
     await client.query('COMMIT')
 
     /* Retorna produto com SKUs atualizados */
