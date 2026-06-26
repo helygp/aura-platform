@@ -57,7 +57,7 @@ productsRouter.get('/', async (req, res) => {
         ) ORDER BY s.code
       ) FILTER (WHERE s.id IS NOT NULL) AS skus
       FROM products p
-      LEFT JOIN skus s ON s.product_id = p.id
+      LEFT JOIN skus s ON s.product_id = p.id AND s.active = true
       ${whereClause}
       GROUP BY p.id
       ORDER BY p.created_at DESC
@@ -158,7 +158,7 @@ productsRouter.get('/:id', async (req, res) => {
     if (!product) return res.status(404).json({ error: 'Produto não encontrado.' })
 
     const { rows: skus } = await query(
-      'SELECT * FROM skus WHERE product_id=$1 ORDER BY code', [req.params.id]
+      'SELECT * FROM skus WHERE product_id=$1 AND active=true ORDER BY code', [req.params.id]
     )
     res.json(normalizeProduct({ ...product, skus }))
   } catch (err) {
@@ -197,11 +197,76 @@ productsRouter.put('/:id', authorize('admin', 'estoque'), async (req, res) => {
       }
     }
 
+    /* Diff: SKUs ATIVOS que existiam no banco mas sumiram do payload são candidatos.
+     * Regras (estoque ZERO é precondição obrigatória):
+     *   - estoque > 0              → 409 (bloqueia, cliente precisa zerar antes)
+     *   - estoque 0, sem histórico → DELETE (remoção física, sem vínculos)
+     *   - estoque 0, com histórico → UPDATE active=false (soft delete, preserva integridade
+     *                                 de stock_movements e order_items)
+     * Listagem (GET /, GET /:id) já filtra active=true, então SKUs inativados desaparecem da UI. */
+    const payloadIds = new Set(
+      (skus || []).filter(s => s.id != null).map(s => String(s.id))
+    )
+    const { rows: existingActive } = await client.query(
+      'SELECT id, code, stock FROM skus WHERE product_id=$1 AND active=true',
+      [req.params.id]
+    )
+    const orphans = existingActive.filter(s => !payloadIds.has(String(s.id)))
+
+    if (orphans.length > 0) {
+      const blocked     = []
+      const toDelete    = []
+      const toDeactivate = []
+
+      for (const orph of orphans) {
+        if ((orph.stock ?? 0) > 0) {
+          blocked.push({
+            id: orph.id, code: orph.code,
+            reason: 'possui estoque (zere o estoque antes de remover)',
+          })
+          continue
+        }
+        const { rows: mov } = await client.query(
+          'SELECT 1 FROM stock_movements WHERE sku_id=$1 LIMIT 1', [orph.id]
+        )
+        const { rows: ord } = await client.query(
+          'SELECT 1 FROM order_items WHERE sku_id=$1 LIMIT 1', [orph.id]
+        )
+        if (mov.length > 0 || ord.length > 0) {
+          toDeactivate.push(orph.id)
+        } else {
+          toDelete.push(orph.id)
+        }
+      }
+
+      if (blocked.length > 0) {
+        await client.query('ROLLBACK')
+        return res.status(409).json({
+          error: 'Alguns SKUs não podem ser removidos porque possuem estoque.',
+          blockedSkus: blocked,
+        })
+      }
+
+      if (toDelete.length > 0) {
+        await client.query(
+          'DELETE FROM skus WHERE id = ANY($1::text[]) AND product_id=$2',
+          [toDelete, req.params.id]
+        )
+      }
+      if (toDeactivate.length > 0) {
+        await client.query(
+          `UPDATE skus SET active=false, updated_at=now()
+            WHERE id = ANY($1::text[]) AND product_id=$2`,
+          [toDeactivate, req.params.id]
+        )
+      }
+    }
+
     await client.query('COMMIT')
 
-    /* Retorna produto com SKUs atualizados */
+    /* Retorna produto com SKUs ativos atualizados */
     const { rows: updatedSkus } = await client.query(
-      'SELECT * FROM skus WHERE product_id=$1 ORDER BY code', [req.params.id]
+      'SELECT * FROM skus WHERE product_id=$1 AND active=true ORDER BY code', [req.params.id]
     )
     res.json(normalizeProduct({ ...product, skus: updatedSkus }))
   } catch (err) {
