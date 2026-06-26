@@ -1,6 +1,29 @@
 {
-  "current": "1.7.0",
+  "current": "1.8.0",
   "releases": [
+    {
+      "version": "1.8.0",
+      "date": "2026-06-26",
+      "title": "4 novidades nesta versão",
+      "highlights": [
+        {
+          "icon": "🐛",
+          "text": "Cancelamento de pedido agora estorna automaticamente em Contas a Receber"
+        },
+        {
+          "icon": "↩️",
+          "text": "Devolução parcial ou total de pedidos entregues, com motivo cadastrável"
+        },
+        {
+          "icon": "✏️",
+          "text": "Edição de pedidos em aberto: adicionar item, ajustar quantidade e cancelar item"
+        },
+        {
+          "icon": "📋",
+          "text": "Cadastro de motivos de cancelamento e devolução em Configurações → Pedidos"
+        }
+      ]
+    },
     {
       "version": "1.7.0",
       "date": "2026-06-26",
