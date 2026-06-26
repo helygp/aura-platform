@@ -643,7 +643,7 @@ function SkuEditTable({ skus, onChange, productCode, attrDefs: attrDefsProp, rea
                   <th
                     key={k}
                     onClick={() => toggleSort(k)}
-                    className="px-3 py-2.5 text-left font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap cursor-pointer hover:bg-[var(--color-bg-subtle)] select-none transition-colors"
+                    className="px-2 py-2.5 text-left font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap cursor-pointer hover:bg-[var(--color-bg-subtle)] select-none transition-colors"
                   >
                     <span className="inline-flex items-center gap-1">
                       {k}
@@ -653,18 +653,18 @@ function SkuEditTable({ skus, onChange, productCode, attrDefs: attrDefsProp, rea
                 ))}
                 <th
                   onClick={() => toggleSort('code')}
-                  className="px-3 py-2.5 text-left font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap cursor-pointer hover:bg-[var(--color-bg-subtle)] select-none transition-colors"
+                  className="px-2 py-2.5 text-left font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap cursor-pointer hover:bg-[var(--color-bg-subtle)] select-none transition-colors"
                 >
                   <span className="inline-flex items-center gap-1">
                     Código
                     <SortIcon active={sortBy?.key === 'code'} dir={sortBy?.dir} />
                   </span>
                 </th>
-                <th className="px-3 py-2.5 text-left font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap">Preço R$</th>
-                <th className="px-3 py-2.5 text-left font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap">Est. Mín</th>
-                <th className="px-3 py-2.5 text-center font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap">Estoque</th>
+                <th className="px-2 py-2.5 text-left font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap">Preço R$</th>
+                <th className="px-2 py-2.5 text-left font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap">Est. Mín</th>
+                <th className="px-2 py-2.5 text-center font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap">Estoque</th>
                 {!readOnly && (
-                  <th className="px-3 py-2.5 text-center font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap w-12">Ações</th>
+                  <th className="px-2 py-2.5 text-center font-semibold text-[var(--color-text-muted)] uppercase tracking-wide whitespace-nowrap w-12 sticky right-0 bg-[var(--color-surface)] shadow-[-4px_0_6px_-2px_rgba(0,0,0,0.05)] z-10">Ações</th>
                 )}
               </tr>
             </thead>
@@ -678,13 +678,13 @@ function SkuEditTable({ skus, onChange, productCode, attrDefs: attrDefsProp, rea
               ) : displayedSkus.map((sku) => {
                 const origIdx = skus.indexOf(sku)
                 return (
-                <tr key={sku.id ?? sku._tempId ?? origIdx} className="hover:bg-[var(--color-bg-subtle)] transition-colors">
+                <tr key={sku.id ?? sku._tempId ?? origIdx} className="group hover:bg-[var(--color-bg-subtle)] transition-colors">
                   {attrKeys.map(k => (
-                    <td key={k} className="px-3 py-2 font-medium text-[var(--color-text)] whitespace-nowrap">
+                    <td key={k} className="px-2 py-2 font-medium text-[var(--color-text)] whitespace-nowrap">
                       {sku.attributes?.[k] ?? '—'}
                     </td>
                   ))}
-                  <td className="px-3 py-2 font-mono text-[10px] text-[var(--color-text-muted)] whitespace-nowrap">
+                  <td className="px-2 py-2 font-mono text-[10px] text-[var(--color-text-muted)] whitespace-nowrap">
                     {sku.code}
                     {sku._tempId && (
                       <span className="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-semibold bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-300">
@@ -692,7 +692,7 @@ function SkuEditTable({ skus, onChange, productCode, attrDefs: attrDefsProp, rea
                       </span>
                     )}
                   </td>
-                  <td className="px-3 py-2 min-w-[90px]">
+                  <td className="px-2 py-2 min-w-[72px]">
                     <input
                       type="number" min="0" step="0.01"
                       value={sku.priceWholesale ?? ''}
@@ -704,7 +704,7 @@ function SkuEditTable({ skus, onChange, productCode, attrDefs: attrDefsProp, rea
                       ].join(' ')}
                     />
                   </td>
-                  <td className="px-3 py-2 min-w-[72px]">
+                  <td className="px-2 py-2 min-w-[56px]">
                     <input
                       type="number" min="0"
                       value={sku.stockMin ?? 0}
@@ -716,7 +716,7 @@ function SkuEditTable({ skus, onChange, productCode, attrDefs: attrDefsProp, rea
                       ].join(' ')}
                     />
                   </td>
-                  <td className="px-3 py-2 text-center">
+                  <td className="px-2 py-2 text-center">
                     <span className={[
                       'text-xs font-semibold px-2 py-0.5 rounded-full',
                       sku.stock <= 0
@@ -729,7 +729,7 @@ function SkuEditTable({ skus, onChange, productCode, attrDefs: attrDefsProp, rea
                     </span>
                   </td>
                   {!readOnly && (
-                    <td className="px-3 py-2 text-center">
+                    <td className="px-2 py-2 text-center sticky right-0 bg-[var(--color-bg)] group-hover:bg-[var(--color-bg-subtle)] shadow-[-4px_0_6px_-2px_rgba(0,0,0,0.05)] z-10 transition-colors">
                       {(() => {
                         const canDelete = (sku.stock ?? 0) <= 0
                         return (
