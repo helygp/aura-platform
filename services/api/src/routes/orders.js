@@ -1,13 +1,21 @@
 /**
  * routes/orders.js
  *
- * GET  /api/orders                    — lista com filtros
- * POST /api/orders                    — cria pedido manual (com validação de SKU/estoque)
- * PUT  /api/orders/:id/status         — muda status
- * POST /api/orders/:id/items          — adiciona item ao pedido
- * PUT  /api/orders/:id/items/:itemId  — edita quantidade do item
- * DELETE /api/orders/:id/items/:itemId — remove item do pedido
- * DELETE /api/orders/:id/items/:itemId/cancel — cancela item (mantém no pedido, devolve estoque)
+ * GET  /api/orders                            — lista com filtros
+ * POST /api/orders                            — cria pedido manual (valida SKU/estoque)
+ * PUT  /api/orders/:id/status                 — muda status (com side-effects p/ cancelamento)
+ * POST /api/orders/:id/items                  — adiciona item (só até status 'separando')
+ * PUT  /api/orders/:id/items/:itemId          — edita qty (só até 'separando')
+ * DELETE /api/orders/:id/items/:itemId        — remove item (só até 'separando')
+ * PATCH /api/orders/:id/items/:itemId/cancel  — cancela item (mantém linha, devolve estoque)
+ * POST /api/orders/:id/return                 — devolução parcial/total (pedido 'entregue')
+ *
+ * Tickets #83 + #117:
+ *  - Cancelamento via PUT /status agora estorna wallet + devolve estoque (era stub).
+ *  - Edição de itens passou a registrar order_history corretamente (enum estendido).
+ *  - Qualquer mudança no total propaga em wallet_transactions + customers.credit_balance
+ *    para pedidos com payment_method='credito'.
+ *  - Devolução é uma nova rota, com motivo obrigatório. Devolução total = cancelamento.
  */
 
 import { Router } from 'express'
@@ -17,15 +25,188 @@ import { query, getClient } from '../lib/tenantDb.js'
 import { dispatch } from '../lib/webhookDispatcher.js'
 
 const VALID_PAYMENT_METHODS = ['pix', 'boleto', 'a_combinar', 'credito']
+const EDITABLE_STATUSES     = ['pendente', 'confirmado', 'separando']
 
-/* ── helper: registra movimentação de estoque ── */
+/* ────────────────────────────────────────────────────────────────────────── */
+/* HELPERS                                                                    */
+/* ────────────────────────────────────────────────────────────────────────── */
+
+/** Registra movimentação de estoque. */
 async function logMovement(client, { skuId, type, qty, qtyBefore, reason, userName, orderId, customerName }) {
   await client.query(`
     INSERT INTO stock_movements (sku_id, type, qty, qty_before, qty_after, reason, user_name, order_id, customer_name)
     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-  `, [skuId, type, Math.abs(qty), qtyBefore, qtyBefore + (type === 'saida' ? -Math.abs(qty) : Math.abs(qty)),
+  `, [skuId, type, Math.abs(qty), qtyBefore,
+      qtyBefore + (type === 'saida' ? -Math.abs(qty) : Math.abs(qty)),
       reason, userName, orderId ?? null, customerName ?? null])
 }
+
+/**
+ * Ajusta saldo devedor do cliente (wallet B2B) quando o valor líquido do
+ * pedido muda. Só atua em pedidos a crédito com cliente associado.
+ *
+ *   deltaDecimal > 0 → débito  (acréscimo a pagar)
+ *   deltaDecimal < 0 → crédito (estorno)
+ *   deltaDecimal ≈ 0 → no-op
+ *
+ * `description` é o texto que aparece no extrato; precisa começar com
+ * "Estorno" quando for crédito relacionado a cancelamento total (a guarda
+ * de idempotência em `cancelOrderFully` usa essa convenção).
+ */
+async function applyOrderWalletDelta(client, { order, deltaDecimal, description, userName }) {
+  if (!order || !order.customer_id) return
+  if (order.payment_method !== 'credito') return
+  const d = parseFloat(deltaDecimal)
+  if (!d || Math.abs(d) < 0.005) return
+
+  const abs = Math.abs(d).toFixed(2)
+  const type = d > 0 ? 'debit' : 'credit'
+
+  await client.query(`
+    INSERT INTO wallet_transactions (customer_id, type, amount, description, order_ref, created_by)
+    VALUES ($1, $2, $3, $4, $5, $6)
+  `, [order.customer_id, type, abs, description, order.id, userName ?? 'erp'])
+
+  if (type === 'debit') {
+    await client.query(
+      'UPDATE customers SET credit_balance = credit_balance + $1, updated_at = NOW() WHERE id = $2',
+      [abs, order.customer_id]
+    )
+  } else {
+    await client.query(
+      'UPDATE customers SET credit_balance = GREATEST(0, credit_balance - $1), updated_at = NOW() WHERE id = $2',
+      [abs, order.customer_id]
+    )
+  }
+}
+
+/** Carrega pedido em modo gravação (FOR UPDATE). Retorna `null` se não existir. */
+async function loadOrderForUpdate(client, orderId) {
+  const { rows: [order] } = await client.query(
+    `SELECT id, customer_id, customer_name, payment_method, status, total
+     FROM orders WHERE id = $1 FOR UPDATE`,
+    [orderId]
+  )
+  return order ?? null
+}
+
+/** Lança erro 422 se o pedido não está em estado que aceita edição de itens. */
+function assertEditable(order) {
+  if (!EDITABLE_STATUSES.includes(order.status)) {
+    const err = new Error(
+      `Edição de itens só é permitida até o status "separando". ` +
+      `Pedido atual: "${order.status}". ` +
+      `Para pedidos entregues use devolução; pedidos cancelados não podem ser editados.`
+    )
+    err.statusCode = 422
+    throw err
+  }
+}
+
+/**
+ * Cancela o pedido por completo com TODOS os side-effects:
+ *   - devolve estoque dos itens ativos (qty - qty_returned)
+ *   - marca itens e pedido como 'cancelado'
+ *   - estorna em wallet o saldo ainda em aberto (idempotente via descrição)
+ *   - registra em order_history
+ *
+ * NÃO faz dispatch (caller decide). NÃO faz BEGIN/COMMIT (caller decide).
+ */
+async function cancelOrderFully(client, order, { reason, userName, historyStatus = 'cancelado' }) {
+  // Idempotência básica
+  if (order.status === 'cancelado') {
+    return { changed: false, reason: 'já cancelado' }
+  }
+
+  // 1. Devolve estoque (somente o que ainda estava ativo)
+  const { rows: items } = await client.query(`
+    SELECT oi.id, oi.sku_id, oi.qty, oi.qty_returned, oi.product_name, s.stock
+    FROM order_items oi
+    JOIN skus s ON s.id = oi.sku_id
+    WHERE oi.order_id = $1 AND COALESCE(oi.status,'ativo') != 'cancelado'
+  `, [order.id])
+
+  for (const item of items) {
+    const restoreQty = (item.qty ?? 0) - (item.qty_returned ?? 0)
+    if (restoreQty <= 0) continue
+    await client.query(
+      'UPDATE skus SET stock = stock + $1, updated_at = NOW() WHERE id = $2',
+      [restoreQty, item.sku_id]
+    )
+    await logMovement(client, {
+      skuId: item.sku_id, type: 'entrada', qty: restoreQty, qtyBefore: item.stock,
+      reason: `Cancelamento pedido ${order.id.slice(-6).toUpperCase()}${reason ? ' — ' + reason : ''}`,
+      userName, orderId: order.id, customerName: order.customer_name,
+    })
+  }
+
+  // 2. Marca itens e pedido como cancelado
+  await client.query(
+    `UPDATE order_items SET status='cancelado', updated_at = NOW()
+     WHERE order_id = $1 AND COALESCE(status,'ativo') != 'cancelado'`,
+    [order.id]
+  )
+  await client.query(
+    "UPDATE orders SET status='cancelado', updated_at = NOW() WHERE id = $1",
+    [order.id]
+  )
+
+  // 3. Estorna wallet (idempotente: se já há crédito 'Estorno%' p/ este pedido, pula)
+  if (order.payment_method === 'credito' && order.customer_id) {
+    const { rows: [existingEstorno] } = await client.query(`
+      SELECT id FROM wallet_transactions
+      WHERE order_ref = $1 AND type = 'credit' AND description ILIKE 'Estorno%'
+      LIMIT 1
+    `, [order.id])
+
+    if (!existingEstorno) {
+      // Quanto ainda está em aberto = total - tudo que já foi creditado (devoluções parciais)
+      const { rows: [{ refunded }] } = await client.query(`
+        SELECT COALESCE(SUM(amount), 0) AS refunded
+        FROM wallet_transactions
+        WHERE order_ref = $1 AND type = 'credit'
+      `, [order.id])
+      const toRefund = +(parseFloat(order.total ?? 0) - parseFloat(refunded ?? 0)).toFixed(2)
+      if (toRefund > 0) {
+        await applyOrderWalletDelta(client, {
+          order,
+          deltaDecimal: -toRefund,
+          description: `Estorno cancelamento ${order.id.slice(-6).toUpperCase()}${reason ? ' — ' + reason : ''}`,
+          userName,
+        })
+      }
+    }
+  }
+
+  // 4. order_history
+  await client.query(`
+    INSERT INTO order_history (order_id, status, note, user_name)
+    VALUES ($1, $2, $3, $4)
+  `, [order.id, historyStatus,
+      reason ? `Cancelado: ${reason}` : 'Pedido cancelado',
+      userName])
+
+  return { changed: true }
+}
+
+/** Recalcula `orders.total` a partir do soma dos itens ativos (descontando devolvidos). */
+async function recalcOrderTotal(client, orderId) {
+  const { rows: [t] } = await client.query(`
+    SELECT COALESCE(SUM((qty - qty_returned) * price_unit), 0) AS new_total
+    FROM order_items
+    WHERE order_id = $1 AND COALESCE(status,'ativo') != 'cancelado'
+  `, [orderId])
+  const total = parseFloat(t.new_total) || 0
+  await client.query(
+    'UPDATE orders SET total = $1, updated_at = NOW() WHERE id = $2',
+    [total, orderId]
+  )
+  return total
+}
+
+/* ────────────────────────────────────────────────────────────────────────── */
+/* ROUTER                                                                     */
+/* ────────────────────────────────────────────────────────────────────────── */
 
 export const ordersRouter = Router()
 ordersRouter.use(authenticate)
@@ -54,7 +235,7 @@ ordersRouter.get('/', async (req, res) => {
           json_build_object(
             'id', oi.id, 'skuId', oi.sku_id, 'skuCode', oi.sku_code,
             'productName', oi.product_name, 'attributes', oi.attributes,
-            'qty', oi.qty, 'priceUnit', oi.price_unit,
+            'qty', oi.qty, 'qtyReturned', oi.qty_returned, 'priceUnit', oi.price_unit,
             'status', COALESCE(oi.status, 'ativo')
           )
         ) FILTER (WHERE oi.id IS NOT NULL) AS items,
@@ -124,12 +305,6 @@ ordersRouter.post('/', authorize('admin','operador'), async (req, res) => {
         })
       }
 
-      if (sku.stock <= 0) {
-        return res.status(422).json({
-          error: `Produto "${sku.product_name}" (${sku.code}) sem estoque disponível.`,
-        })
-      }
-
       total += parseFloat(sku.price_wholesale) * qty
 
       resolvedItems.push({
@@ -177,15 +352,12 @@ ordersRouter.post('/', authorize('admin','operador'), async (req, res) => {
 
     // Wallet: débito automático se pagamento = crédito e tem cliente
     if (pm === 'credito' && customerId) {
-      await client.query(`
-        INSERT INTO wallet_transactions (customer_id, type, amount, description, order_ref, created_by)
-        VALUES ($1, 'debit', $2, $3, $4, 'erp')
-      `, [customerId, total.toFixed(2), `Pedido ERP ${order.id}`, order.id])
-
-      await client.query(
-        'UPDATE customers SET credit_balance = credit_balance + $1, updated_at = NOW() WHERE id = $2',
-        [total.toFixed(2), customerId]
-      )
+      await applyOrderWalletDelta(client, {
+        order: { ...order, customer_id: customerId },
+        deltaDecimal: total,
+        description: `Pedido ERP ${order.id.slice(-6).toUpperCase()}`,
+        userName: 'erp',
+      })
     }
 
     await client.query('COMMIT')
@@ -205,33 +377,47 @@ ordersRouter.post('/', authorize('admin','operador'), async (req, res) => {
   } finally { client.release() }
 })
 
-/* ── PUT /api/orders/:id/status ── */
+/* ── PUT /api/orders/:id/status ──
+ * Body: { status, note?, reason? }
+ *
+ * Quando newStatus === 'cancelado' e o pedido NÃO estava cancelado, dispara
+ * o cancelamento completo (estoque + wallet + history). Para outras transições
+ * mantém o comportamento simples de mudar status.
+ */
 ordersRouter.put('/:id/status', async (req, res) => {
   const client = await getClient()
   try {
     await client.query('BEGIN')
-    const { status, note='' } = req.body
+    const { status, note='', reason='' } = req.body
     const userName = req.user?.name ?? req.user?.email ?? 'sistema'
 
-    const { rows:[order] } = await client.query(
-      'UPDATE orders SET status=$1, updated_at=now() WHERE id=$2 RETURNING id',
-      [status, req.params.id]
-    )
+    const order = await loadOrderForUpdate(client, req.params.id)
     if (!order) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Pedido não encontrado.' }) }
 
-    await client.query(`
-      INSERT INTO order_history (order_id, status, note, user_name) VALUES ($1,$2,$3,$4)
-    `, [req.params.id, status, note, userName])
+    const isCancelling = status === 'cancelado' && order.status !== 'cancelado'
+
+    if (isCancelling) {
+      await cancelOrderFully(client, order, { reason: reason || note, userName })
+    } else {
+      await client.query(
+        'UPDATE orders SET status=$1, updated_at=now() WHERE id=$2',
+        [status, req.params.id]
+      )
+      await client.query(`
+        INSERT INTO order_history (order_id, status, note, user_name) VALUES ($1,$2,$3,$4)
+      `, [req.params.id, status, note, userName])
+    }
 
     await client.query('COMMIT')
-    res.json({ ok: true })
+    res.json({ ok: true, cancelled: isCancelling })
     dispatch(req.tenantSlug ?? process.env.TENANT_SLUG, 'order.status_changed', {
-      id: req.params.id, new_status: status, note,
+      id: req.params.id, new_status: status, note, reason: reason || undefined,
     })
   } catch (err) {
-    await client.query('ROLLBACK')
+    await client.query('ROLLBACK').catch(() => {})
     console.error('[orders/status]', err.message)
-    res.status(500).json({ error: 'Erro interno.' })
+    const code = err.statusCode || 500
+    res.status(code).json({ error: code === 500 ? 'Erro interno.' : err.message })
   } finally { client.release() }
 })
 
@@ -245,13 +431,13 @@ ordersRouter.post('/:id/items', authorize('admin','operador'), async (req, res) 
     const orderId  = req.params.id
     const userName = req.user?.name ?? req.user?.email ?? 'operador'
 
-    const { rows: [order] } = await client.query(
-      'SELECT id, total, customer_name FROM orders WHERE id = $1', [orderId]
-    )
+    const order = await loadOrderForUpdate(client, orderId)
     if (!order) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Pedido não encontrado.' }) }
+    assertEditable(order)
 
     const qtyInt = parseInt(qty)
     if (!skuId || qtyInt < 1) {
+      await client.query('ROLLBACK')
       return res.status(400).json({ error: 'SKU inválido ou quantidade incorreta.' })
     }
 
@@ -263,9 +449,10 @@ ordersRouter.post('/:id/items', authorize('admin','operador'), async (req, res) 
       WHERE s.id = $1
     `, [skuId])
 
-    if (!sku) return res.status(404).json({ error: `SKU ${skuId} não encontrado.` })
+    if (!sku) { await client.query('ROLLBACK'); return res.status(404).json({ error: `SKU ${skuId} não encontrado.` }) }
 
     if (sku.stock < qtyInt) {
+      await client.query('ROLLBACK')
       return res.status(422).json({
         error: `Estoque insuficiente para "${sku.product_name}". Disponível: ${sku.stock}.`,
       })
@@ -289,14 +476,13 @@ ordersRouter.post('/:id/items', authorize('admin','operador'), async (req, res) 
       userName, orderId, customerName: order.customer_name,
     })
 
-    const { rows: [totals] } = await client.query(`
-      SELECT COALESCE(SUM(qty * price_unit), 0) AS new_total FROM order_items WHERE order_id = $1
-    `, [orderId])
+    const newTotal = await recalcOrderTotal(client, orderId)
 
-    await client.query(
-      'UPDATE orders SET total = $1, updated_at = NOW() WHERE id = $2',
-      [parseFloat(totals.new_total), orderId]
-    )
+    await applyOrderWalletDelta(client, {
+      order, deltaDecimal: +itemTotal,
+      description: `Acréscimo pedido ${orderId.slice(-6).toUpperCase()}: ${sku.product_name} (${qtyInt}x)`,
+      userName,
+    })
 
     await client.query(`
       INSERT INTO order_history (order_id, status, note, user_name)
@@ -304,11 +490,12 @@ ordersRouter.post('/:id/items', authorize('admin','operador'), async (req, res) 
     `, [orderId, `Item adicionado: ${sku.product_name} (${qtyInt}x)`, userName])
 
     await client.query('COMMIT')
-    res.status(201).json({ ok: true, itemTotal, newOrderTotal: parseFloat(totals.new_total) })
+    res.status(201).json({ ok: true, itemTotal, newOrderTotal: newTotal })
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {})
     console.error('[orders/items/add]', err.message)
-    res.status(500).json({ error: 'Erro ao adicionar item.' })
+    const code = err.statusCode || 500
+    res.status(code).json({ error: code === 500 ? 'Erro ao adicionar item.' : err.message })
   } finally { client.release() }
 })
 
@@ -323,21 +510,33 @@ ordersRouter.put('/:id/items/:itemId', authorize('admin','operador'), async (req
     const userName = req.user?.name ?? req.user?.email ?? 'operador'
 
     const qtyInt = parseInt(qty)
-    if (qtyInt < 1) return res.status(400).json({ error: 'Quantidade deve ser >= 1.' })
+    if (qtyInt < 1) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'Quantidade deve ser >= 1.' }) }
+
+    const order = await loadOrderForUpdate(client, orderId)
+    if (!order) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Pedido não encontrado.' }) }
+    assertEditable(order)
 
     const { rows: [item] } = await client.query(`
-      SELECT oi.id, oi.sku_id, oi.qty AS old_qty, oi.product_name, s.stock,
-             o.customer_name
+      SELECT oi.id, oi.sku_id, oi.qty AS old_qty, oi.qty_returned, oi.product_name, oi.price_unit, s.stock,
+             COALESCE(oi.status,'ativo') AS item_status
       FROM order_items oi
       JOIN skus s ON s.id = oi.sku_id
-      JOIN orders o ON o.id = oi.order_id
       WHERE oi.id = $1 AND oi.order_id = $2
     `, [itemId, orderId])
 
-    if (!item) return res.status(404).json({ error: 'Item não encontrado.' })
+    if (!item) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Item não encontrado.' }) }
+    if (item.item_status === 'cancelado') {
+      await client.query('ROLLBACK')
+      return res.status(422).json({ error: 'Item cancelado não pode ser editado.' })
+    }
+    if (qtyInt < (item.qty_returned ?? 0)) {
+      await client.query('ROLLBACK')
+      return res.status(422).json({ error: `Quantidade não pode ser menor que o já devolvido (${item.qty_returned}).` })
+    }
 
     const qtyDiff = qtyInt - item.old_qty
     if (qtyDiff > 0 && item.stock < qtyDiff) {
+      await client.query('ROLLBACK')
       return res.status(422).json({
         error: `Estoque insuficiente. Disponível para adicionar: ${item.stock}.`,
       })
@@ -360,18 +559,17 @@ ordersRouter.put('/:id/items/:itemId', authorize('admin','operador'), async (req
         qty: Math.abs(qtyDiff),
         qtyBefore: item.stock,
         reason: `Ajuste pedido ${orderId.slice(-6).toUpperCase()}: ${item.old_qty}x→${qtyInt}x`,
-        userName, orderId, customerName: item.customer_name,
+        userName, orderId, customerName: order.customer_name,
+      })
+
+      await applyOrderWalletDelta(client, {
+        order, deltaDecimal: qtyDiff * parseFloat(item.price_unit),
+        description: `Ajuste pedido ${orderId.slice(-6).toUpperCase()}: ${item.product_name} (${item.old_qty}x→${qtyInt}x)`,
+        userName,
       })
     }
 
-    const { rows: [totals] } = await client.query(`
-      SELECT COALESCE(SUM(qty * price_unit), 0) AS new_total FROM order_items WHERE order_id = $1
-    `, [orderId])
-
-    await client.query(
-      'UPDATE orders SET total = $1, updated_at = NOW() WHERE id = $2',
-      [parseFloat(totals.new_total), orderId]
-    )
+    const newTotal = await recalcOrderTotal(client, orderId)
 
     await client.query(`
       INSERT INTO order_history (order_id, status, note, user_name)
@@ -379,15 +577,16 @@ ordersRouter.put('/:id/items/:itemId', authorize('admin','operador'), async (req
     `, [orderId, `${item.product_name}: ${item.old_qty}x → ${qtyInt}x`, userName])
 
     await client.query('COMMIT')
-    res.json({ ok: true, newOrderTotal: parseFloat(totals.new_total) })
+    res.json({ ok: true, newOrderTotal: newTotal })
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {})
     console.error('[orders/items/update]', err.message)
-    res.status(500).json({ error: 'Erro ao editar item.' })
+    const code = err.statusCode || 500
+    res.status(code).json({ error: code === 500 ? 'Erro ao editar item.' : err.message })
   } finally { client.release() }
 })
 
-/* ── PATCH /api/orders/:id/items/:itemId/cancel — cancela item parcial ── */
+/* ── PATCH /api/orders/:id/items/:itemId/cancel — cancela item (parcial ou total) ── */
 ordersRouter.patch('/:id/items/:itemId/cancel', authorize('admin','operador'), async (req, res) => {
   const client = await getClient()
   try {
@@ -396,30 +595,27 @@ ordersRouter.patch('/:id/items/:itemId/cancel', authorize('admin','operador'), a
     const { id: orderId, itemId } = req.params
     const userName = req.user?.name ?? req.user?.email ?? 'operador'
 
-    // Busca item + status do pedido (T1.3: bloqueia cancel a partir de separando)
-    const { rows: [item] } = await client.query(`
-      SELECT oi.id, oi.sku_id, oi.qty, oi.product_name, oi.price_unit,
-             COALESCE(oi.status, 'ativo') AS status,
-             s.stock, o.customer_name, o.status AS order_status
-      FROM order_items oi
-      JOIN skus s ON s.id = oi.sku_id
-      JOIN orders o ON o.id = oi.order_id
-      WHERE oi.id = $1 AND oi.order_id = $2
-    `, [itemId, orderId])
+    const order = await loadOrderForUpdate(client, orderId)
+    if (!order) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Pedido não encontrado.' }) }
 
-    if (!item) return res.status(404).json({ error: 'Item não encontrado.' })
-    if (item.status === 'cancelado') return res.status(400).json({ error: 'Item já cancelado.' })
-
-    // T1.3 — permite cancelar apenas em: pendente, confirmado, separando
-    const ALLOWED_STATUSES = ['pendente', 'confirmado', 'separando']
-    if (!ALLOWED_STATUSES.includes(item.order_status)) {
+    if (!EDITABLE_STATUSES.includes(order.status)) {
       await client.query('ROLLBACK')
       return res.status(422).json({
-        error: `Cancelamento de item não permitido: pedido está "${item.order_status}". Só é possível cancelar itens em pedidos pendentes, confirmados ou em separação.`,
+        error: `Cancelamento de item não permitido: pedido está "${order.status}". Só é possível cancelar itens em pedidos pendentes, confirmados ou em separação.`,
       })
     }
 
-    // Cancelamento parcial: cancelQty pode ser < item.qty (apenas se qty > 1)
+    const { rows: [item] } = await client.query(`
+      SELECT oi.id, oi.sku_id, oi.qty, oi.qty_returned, oi.price_unit, oi.product_name,
+             COALESCE(oi.status,'ativo') AS status, s.stock
+      FROM order_items oi
+      JOIN skus s ON s.id = oi.sku_id
+      WHERE oi.id = $1 AND oi.order_id = $2
+    `, [itemId, orderId])
+
+    if (!item) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Item não encontrado.' }) }
+    if (item.status === 'cancelado') { await client.query('ROLLBACK'); return res.status(400).json({ error: 'Item já cancelado.' }) }
+
     const cancelQty = Math.min(
       Math.max(1, parseInt(req.body?.cancelQty) || item.qty),
       item.qty
@@ -429,8 +625,8 @@ ordersRouter.patch('/:id/items/:itemId/cancel', authorize('admin','operador'), a
     if (isPartial) {
       // Reduz qty do item original; insere linha cancelada separada
       await client.query(
-        'UPDATE order_items SET qty = $1, updated_at = NOW() WHERE id = $2',
-        [item.qty - cancelQty, itemId]
+        'UPDATE order_items SET qty = qty - $1, updated_at = NOW() WHERE id = $2',
+        [cancelQty, itemId]
       )
       await client.query(`
         INSERT INTO order_items (order_id, sku_id, sku_code, product_name, attributes, qty, price_unit, status)
@@ -455,19 +651,17 @@ ordersRouter.patch('/:id/items/:itemId/cancel', authorize('admin','operador'), a
       skuId: item.sku_id, type: 'entrada', qty: cancelQty,
       qtyBefore: item.stock,
       reason: `Cancelamento ${isPartial ? 'parcial' : ''} item pedido ${orderId.slice(-6).toUpperCase()}`,
-      userName, orderId, customerName: item.customer_name,
+      userName, orderId, customerName: order.customer_name,
     })
 
-    // Recalcula total do pedido (sem itens cancelados)
-    const { rows: [totals] } = await client.query(`
-      SELECT COALESCE(SUM(qty * price_unit), 0) AS new_total
-      FROM order_items WHERE order_id = $1 AND COALESCE(status,'ativo') != 'cancelado'
-    `, [orderId])
+    // Estorna em wallet o valor do cancelamento
+    await applyOrderWalletDelta(client, {
+      order, deltaDecimal: -(cancelQty * parseFloat(item.price_unit)),
+      description: `Cancelamento ${isPartial ? 'parcial ' : ''}item pedido ${orderId.slice(-6).toUpperCase()}: ${item.product_name} (${cancelQty}x)`,
+      userName,
+    })
 
-    await client.query(
-      'UPDATE orders SET total = $1, updated_at = NOW() WHERE id = $2',
-      [parseFloat(totals.new_total) || 0, orderId]
-    )
+    const newTotal = await recalcOrderTotal(client, orderId)
 
     const noteQty = isPartial ? `${cancelQty} de ${item.qty}` : `${item.qty}`
     await client.query(`
@@ -476,7 +670,7 @@ ordersRouter.patch('/:id/items/:itemId/cancel', authorize('admin','operador'), a
     `, [orderId, `Item cancelado: ${item.product_name} (${noteQty}x) — estoque devolvido`, userName])
 
     await client.query('COMMIT')
-    res.json({ ok: true, newOrderTotal: parseFloat(totals.new_total) || 0 })
+    res.json({ ok: true, cancelQty, isPartial, newOrderTotal: newTotal })
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {})
     console.error('[orders/items/cancel]', err.message)
@@ -493,43 +687,49 @@ ordersRouter.delete('/:id/items/:itemId', authorize('admin','operador'), async (
     const { id: orderId, itemId } = req.params
     const userName = req.user?.name ?? req.user?.email ?? 'operador'
 
+    const order = await loadOrderForUpdate(client, orderId)
+    if (!order) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Pedido não encontrado.' }) }
+    assertEditable(order)
+
     const { rows: [item] } = await client.query(`
-      SELECT oi.id, oi.sku_id, oi.qty, oi.product_name,
-             COALESCE(oi.status,'ativo') AS status, s.stock, o.customer_name
+      SELECT oi.id, oi.sku_id, oi.qty, oi.qty_returned, oi.price_unit, oi.product_name,
+             COALESCE(oi.status,'ativo') AS status, s.stock
       FROM order_items oi
       JOIN skus s ON s.id = oi.sku_id
-      JOIN orders o ON o.id = oi.order_id
       WHERE oi.id = $1 AND oi.order_id = $2
     `, [itemId, orderId])
 
-    if (!item) return res.status(404).json({ error: 'Item não encontrado.' })
+    if (!item) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Item não encontrado.' }) }
 
     await client.query('DELETE FROM order_items WHERE id = $1', [itemId])
 
-    // Só devolve estoque se item não estava já cancelado
+    // Só devolve estoque + estorna wallet se item não estava já cancelado
     if (item.status !== 'cancelado') {
-      await client.query(
-        'UPDATE skus SET stock = stock + $1, updated_at = NOW() WHERE id = $2',
-        [item.qty, item.sku_id]
-      )
+      const restoreQty = item.qty - (item.qty_returned ?? 0)
+      if (restoreQty > 0) {
+        await client.query(
+          'UPDATE skus SET stock = stock + $1, updated_at = NOW() WHERE id = $2',
+          [restoreQty, item.sku_id]
+        )
+        await logMovement(client, {
+          skuId: item.sku_id, type: 'entrada', qty: restoreQty,
+          qtyBefore: item.stock,
+          reason: `Item removido pedido ${orderId.slice(-6).toUpperCase()}`,
+          userName, orderId, customerName: order.customer_name,
+        })
+      }
 
-      await logMovement(client, {
-        skuId: item.sku_id, type: 'entrada', qty: item.qty,
-        qtyBefore: item.stock,
-        reason: `Item removido pedido ${orderId.slice(-6).toUpperCase()}`,
-        userName, orderId, customerName: item.customer_name,
-      })
+      const refund = restoreQty * parseFloat(item.price_unit)
+      if (refund > 0) {
+        await applyOrderWalletDelta(client, {
+          order, deltaDecimal: -refund,
+          description: `Remoção item pedido ${orderId.slice(-6).toUpperCase()}: ${item.product_name}`,
+          userName,
+        })
+      }
     }
 
-    const { rows: [totals] } = await client.query(`
-      SELECT COALESCE(SUM(qty * price_unit), 0) AS new_total
-      FROM order_items WHERE order_id = $1 AND COALESCE(status,'ativo') != 'cancelado'
-    `, [orderId])
-
-    await client.query(
-      'UPDATE orders SET total = $1, updated_at = NOW() WHERE id = $2',
-      [parseFloat(totals.new_total) || 0, orderId]
-    )
+    const newTotal = await recalcOrderTotal(client, orderId)
 
     await client.query(`
       INSERT INTO order_history (order_id, status, note, user_name)
@@ -537,13 +737,137 @@ ordersRouter.delete('/:id/items/:itemId', authorize('admin','operador'), async (
     `, [orderId, `Item removido: ${item.product_name} (${item.qty}x)`, userName])
 
     await client.query('COMMIT')
-    res.json({ ok: true, newOrderTotal: parseFloat(totals.new_total) || 0 })
+    res.json({ ok: true, newOrderTotal: newTotal })
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {})
     console.error('[orders/items/delete]', err.message)
-    res.status(500).json({ error: 'Erro ao remover item.' })
+    const code = err.statusCode || 500
+    res.status(code).json({ error: code === 500 ? 'Erro ao remover item.' : err.message })
   } finally { client.release() }
 })
+
+/* ── POST /api/orders/:id/return — devolução parcial ou total ──
+ *  Body: { items?: [{ itemId, qty }], reason }
+ *
+ *  - Pedido deve estar em 'entregue'. Motivo é obrigatório.
+ *  - Se `items` ausente ou vazio: devolução total (= cancelar pedido entregue).
+ *  - Para devolução parcial: aumenta order_items.qty_returned, devolve estoque,
+ *    estorna wallet proporcionalmente.
+ */
+ordersRouter.post('/:id/return', authorize('admin','operador'), async (req, res) => {
+  const client = await getClient()
+  try {
+    await client.query('BEGIN')
+
+    const orderId  = req.params.id
+    const userName = req.user?.name ?? req.user?.email ?? 'operador'
+    const { items: reqItems = [], reason = '' } = req.body || {}
+
+    if (!reason || !reason.trim()) {
+      await client.query('ROLLBACK')
+      return res.status(400).json({ error: 'Motivo da devolução é obrigatório.' })
+    }
+
+    const order = await loadOrderForUpdate(client, orderId)
+    if (!order) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Pedido não encontrado.' }) }
+
+    if (order.status !== 'entregue') {
+      await client.query('ROLLBACK')
+      return res.status(422).json({
+        error: `Devolução só é permitida em pedidos com status "entregue". Atual: "${order.status}".`,
+      })
+    }
+
+    // Devolução total: simplesmente cancela o pedido (com motivo)
+    const isTotal = !Array.isArray(reqItems) || reqItems.length === 0
+    if (isTotal) {
+      await cancelOrderFully(client, order, {
+        reason, userName, historyStatus: 'devolucao_total',
+      })
+      await client.query('COMMIT')
+      res.json({ ok: true, type: 'total' })
+      return
+    }
+
+    // Devolução parcial: itera os itens informados
+    let totalRefund = 0
+    const summaries = []
+
+    for (const ri of reqItems) {
+      const retQty = parseInt(ri.qty)
+      if (!ri.itemId || !(retQty > 0)) {
+        await client.query('ROLLBACK')
+        return res.status(400).json({ error: 'Itens inválidos para devolução.' })
+      }
+
+      const { rows: [item] } = await client.query(`
+        SELECT oi.id, oi.sku_id, oi.qty, oi.qty_returned, oi.price_unit, oi.product_name,
+               COALESCE(oi.status,'ativo') AS status, s.stock
+        FROM order_items oi
+        JOIN skus s ON s.id = oi.sku_id
+        WHERE oi.id = $1 AND oi.order_id = $2
+      `, [ri.itemId, orderId])
+
+      if (!item) { await client.query('ROLLBACK'); return res.status(404).json({ error: `Item ${ri.itemId} não encontrado.` }) }
+      if (item.status === 'cancelado') { await client.query('ROLLBACK'); return res.status(422).json({ error: `Item "${item.product_name}" está cancelado.` }) }
+
+      const remaining = item.qty - (item.qty_returned ?? 0)
+      if (retQty > remaining) {
+        await client.query('ROLLBACK')
+        return res.status(422).json({
+          error: `Quantidade a devolver (${retQty}) maior que o disponível para "${item.product_name}" (${remaining}).`,
+        })
+      }
+
+      // Atualiza qty_returned, devolve estoque, contabiliza refund
+      await client.query(
+        'UPDATE order_items SET qty_returned = qty_returned + $1, updated_at = NOW() WHERE id = $2',
+        [retQty, item.id]
+      )
+      await client.query(
+        'UPDATE skus SET stock = stock + $1, updated_at = NOW() WHERE id = $2',
+        [retQty, item.sku_id]
+      )
+      await logMovement(client, {
+        skuId: item.sku_id, type: 'entrada', qty: retQty, qtyBefore: item.stock,
+        reason: `Devolução pedido ${orderId.slice(-6).toUpperCase()}: ${reason}`,
+        userName, orderId, customerName: order.customer_name,
+      })
+
+      const itemRefund = retQty * parseFloat(item.price_unit)
+      totalRefund += itemRefund
+      summaries.push(`${item.product_name} (${retQty}x)`)
+    }
+
+    // Estorno único agregando todos os itens (uma linha em wallet_transactions)
+    if (totalRefund > 0) {
+      await applyOrderWalletDelta(client, {
+        order, deltaDecimal: -totalRefund,
+        description: `Devolução parcial pedido ${orderId.slice(-6).toUpperCase()} — ${reason}`,
+        userName,
+      })
+    }
+
+    const newTotal = await recalcOrderTotal(client, orderId)
+
+    await client.query(`
+      INSERT INTO order_history (order_id, status, note, user_name)
+      VALUES ($1, 'devolucao_parcial', $2, $3)
+    `, [orderId, `Devolução: ${summaries.join(', ')} — Motivo: ${reason}`, userName])
+
+    await client.query('COMMIT')
+    res.json({ ok: true, type: 'parcial', refund: +totalRefund.toFixed(2), newOrderTotal: newTotal })
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {})
+    console.error('[orders/return]', err.message)
+    const code = err.statusCode || 500
+    res.status(code).json({ error: code === 500 ? 'Erro ao processar devolução.' : err.message })
+  } finally { client.release() }
+})
+
+/* ────────────────────────────────────────────────────────────────────────── */
+/* NORMALIZAÇÃO                                                                */
+/* ────────────────────────────────────────────────────────────────────────── */
 
 function normalizeOrder(o) {
   return {

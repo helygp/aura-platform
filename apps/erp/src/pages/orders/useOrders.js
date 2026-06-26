@@ -3,6 +3,7 @@
  * Sem dados mockados — usa apenas a API real.
  *
  * Ticket #49: trocado helper local por auth/authFetch.js (com auto-refresh em 401).
+ * Tickets #83/#117: updateStatus aceita `reason`; nova `returnOrderItems` para devolução.
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
@@ -141,17 +142,37 @@ export function useOrders() {
     await fetchAll()
   }, [fetchAll])
 
-  /* ─── Atualizar status ─── */
-  const updateStatus = useCallback(async (orderId, newStatus, note = '') => {
+  /* ─── Atualizar status (#83: aceita reason p/ cancelamento) ─── */
+  const updateStatus = useCallback(async (orderId, newStatus, note = '', reason = '') => {
     const res = await authFetch(`/api/orders/${orderId}/status`, {
       method: 'PUT',
-      body:   JSON.stringify({ status: newStatus, note: note || NOTE_TEMPLATES[newStatus] || '' }),
+      body:   JSON.stringify({
+        status: newStatus,
+        note:   note || NOTE_TEMPLATES[newStatus] || '',
+        reason: reason || undefined,
+      }),
     })
     if (!res.ok) {
       const d = await res.json().catch(() => ({}))
       throw new Error(d.error || 'Erro ao atualizar status')
     }
     await fetchAll()
+  }, [fetchAll])
+
+  /* ─── Devolução (#117): parcial ou total ───
+   * items: [{itemId, qty}] (vazio/omitido => devolução total)
+   * reason: obrigatório */
+  const returnOrderItems = useCallback(async (orderId, items, reason) => {
+    const res = await authFetch(`/api/orders/${orderId}/return`, {
+      method: 'POST',
+      body:   JSON.stringify({ items, reason }),
+    })
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}))
+      throw new Error(d.error || 'Erro ao processar devolução')
+    }
+    await fetchAll()
+    return res.json().catch(() => ({}))
   }, [fetchAll])
 
   const getOrder = useCallback((orderId) =>
@@ -185,6 +206,7 @@ export function useOrders() {
     createOrder,
     updateStatus,
     cancelItem,
+    returnOrderItems,
     getOrder,
     stats,
     PAGE_SIZE,

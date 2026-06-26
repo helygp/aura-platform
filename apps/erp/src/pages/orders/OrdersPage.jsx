@@ -220,7 +220,7 @@ export function OrdersPage() {
   const {
     orders, total, totalPages, isLoading, error,
     filters, setFilters, page, setPage,
-    refetch, createOrder, updateStatus, cancelItem,
+    refetch, createOrder, updateStatus, cancelItem, returnOrderItems,
     stats, PAGE_SIZE,
     customers, skus, products,
   } = useOrders()
@@ -269,8 +269,8 @@ export function OrdersPage() {
     })
   }
 
-  const handleStatusChange = useCallback(async (orderId, newStatus) => {
-    await updateStatus(orderId, newStatus)
+  const handleStatusChange = useCallback(async (orderId, newStatus, note, reason) => {
+    await updateStatus(orderId, newStatus, note, reason)
     setDetailOrder(prev => prev?.id === orderId
       ? {
           ...prev,
@@ -283,6 +283,11 @@ export function OrdersPage() {
       : prev
     )
   }, [updateStatus])
+
+  // #117 — devolução parcial/total em pedido entregue
+  const handleReturn = useCallback(async (orderId, items, reason) => {
+    await returnOrderItems(orderId, items, reason)
+  }, [returnOrderItems])
 
   const handleCreate = useCallback(async (payload) => {
     await createOrder(payload)
@@ -468,6 +473,7 @@ export function OrdersPage() {
         onClose={closeDetail}
         onStatusChange={handleStatusChange}
         onItemCancel={cancelItem}
+        onReturn={handleReturn}
       />
 
       {/* ── Formulário de criação ── */}
