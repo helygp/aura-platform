@@ -1,1 +1,18 @@
-[]
+[
+  {
+    "icon": "🐛",
+    "text": "Cancelamento de pedido agora estorna automaticamente em Contas a Receber"
+  },
+  {
+    "icon": "↩️",
+    "text": "Devolução parcial ou total de pedidos entregues, com motivo cadastrável"
+  },
+  {
+    "icon": "✏️",
+    "text": "Edição de pedidos em aberto: adicionar item, ajustar quantidade e cancelar item"
+  },
+  {
+    "icon": "📋",
+    "text": "Cadastro de motivos de cancelamento e devolução em Configurações → Pedidos"
+  }
+]

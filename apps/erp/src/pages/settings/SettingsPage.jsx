@@ -16,18 +16,197 @@ import {
   Upload, X, RefreshCw, Save, Check, Palette, Type, Circle, Send,
   RotateCcw, BarChart2, Tag, Store, MessageCircle, Wifi, WifiOff,
   Link, Key, Hash, QrCode, Phone, AlertCircle, ShoppingBag, LayoutList, LayoutGrid,
+  Trash2, PencilLine, Plus, Ban, Undo2,
 } from 'lucide-react'
 import { useTheme }        from '@aura/theme'
 import { useTenantTheme }  from '../../hooks/useTenantTheme.js'
 import { Card, Button }    from '@aura/ui'
 import { PhoneInput }     from '../whatsapp/components/PhoneInput.jsx'
 import { FONT_PAIRS, RADIUS_TOKENS, MOOD_PALETTES } from '@aura/theme'
+import { authFetch } from '../../auth/authFetch.js'
 
 /* ─── Paleta de sugestões de cor primária ─── */
 const COLOR_PRESETS = [
   '#0284C7','#7C3AED','#059669','#DC2626','#D97706',
   '#DB2777','#0891B2','#65A30D','#1D4ED8','#374151',
 ]
+
+/* ─── Tickets #83/#117: cadastro de motivos de cancelamento e devolução ─── */
+function OrderReasonsManager({ kind, accentColor }) {
+  const [reasons, setReasons]   = useState([])
+  const [loading, setLoading]   = useState(true)
+  const [busy,    setBusy]      = useState(false)
+  const [newLabel, setNewLabel] = useState('')
+  const [editing, setEditing]   = useState(null) // { id, label, sortOrder }
+  const [err,     setErr]       = useState(null)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const res = await authFetch('/api/order-reasons/all')
+      if (res.ok) {
+        const { reasons: all = [] } = await res.json()
+        setReasons(all.filter(r => r.kind === kind))
+      }
+    } finally { setLoading(false) }
+  }, [kind])
+
+  useEffect(() => { load() }, [load])
+
+  const handleCreate = async () => {
+    if (!newLabel.trim()) return
+    setBusy(true); setErr(null)
+    try {
+      const next = reasons.length > 0 ? Math.max(...reasons.map(r => r.sortOrder ?? 0)) + 10 : 10
+      const res = await authFetch('/api/order-reasons', {
+        method: 'POST',
+        body:   JSON.stringify({ kind, label: newLabel.trim(), sortOrder: next, active: true }),
+      })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        throw new Error(d.error || 'Erro')
+      }
+      setNewLabel('')
+      await load()
+    } catch (e) { setErr(e.message) }
+    finally { setBusy(false) }
+  }
+
+  const handleSaveEdit = async () => {
+    if (!editing || !editing.label.trim()) return
+    setBusy(true); setErr(null)
+    try {
+      const res = await authFetch(`/api/order-reasons/${editing.id}`, {
+        method: 'PUT',
+        body:   JSON.stringify({ label: editing.label.trim(), sortOrder: parseInt(editing.sortOrder) || 0 }),
+      })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        throw new Error(d.error || 'Erro')
+      }
+      setEditing(null)
+      await load()
+    } catch (e) { setErr(e.message) }
+    finally { setBusy(false) }
+  }
+
+  const handleToggleActive = async (r) => {
+    setBusy(true); setErr(null)
+    try {
+      const res = await authFetch(`/api/order-reasons/${r.id}`, {
+        method: 'PUT',
+        body:   JSON.stringify({ active: !r.active }),
+      })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        throw new Error(d.error || 'Erro')
+      }
+      await load()
+    } catch (e) { setErr(e.message) }
+    finally { setBusy(false) }
+  }
+
+  const handleDelete = async (r) => {
+    if (!confirm(`Remover "${r.label}"? (oculta nas próximas listagens; histórico antigo preservado)`)) return
+    setBusy(true); setErr(null)
+    try {
+      const res = await authFetch(`/api/order-reasons/${r.id}`, { method: 'DELETE' })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        throw new Error(d.error || 'Erro')
+      }
+      await load()
+    } catch (e) { setErr(e.message) }
+    finally { setBusy(false) }
+  }
+
+  return (
+    <div className="space-y-3">
+      {loading ? (
+        <p className="text-sm text-[var(--color-text-muted)]">Carregando…</p>
+      ) : (
+        <>
+          <div className="space-y-1.5">
+            {reasons.length === 0 && (
+              <p className="text-xs text-[var(--color-text-muted)]">Nenhum motivo cadastrado.</p>
+            )}
+            {reasons.map(r => {
+              const isEditing = editing?.id === r.id
+              return (
+                <div key={r.id} className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg border ${r.active ? 'border-[var(--color-border)] bg-[var(--color-bg-subtle)]' : 'border-[var(--color-border)] bg-[var(--color-surface)] opacity-60'}`}>
+                  {isEditing ? (
+                    <>
+                      <input
+                        type="number" min={0}
+                        value={editing.sortOrder}
+                        onChange={e => setEditing(s => ({ ...s, sortOrder: e.target.value }))}
+                        className="w-14 text-xs px-1.5 py-1 rounded border border-[var(--color-border)] bg-[var(--color-bg)]"
+                      />
+                      <input
+                        value={editing.label}
+                        onChange={e => setEditing(s => ({ ...s, label: e.target.value }))}
+                        onKeyDown={e => { if (e.key === 'Enter') handleSaveEdit() }}
+                        autoFocus
+                        className="flex-1 text-sm px-2 py-1 rounded border border-[var(--color-border)] bg-[var(--color-bg)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]"
+                      />
+                      <button onClick={handleSaveEdit} disabled={busy}
+                        className="text-xs font-semibold px-2 py-1 rounded bg-[var(--color-primary)] text-white hover:opacity-90 disabled:opacity-40">
+                        Salvar
+                      </button>
+                      <button onClick={() => setEditing(null)} disabled={busy}
+                        className="text-xs px-2 py-1 rounded border border-[var(--color-border)] hover:bg-[var(--color-surface)] disabled:opacity-40">
+                        Cancelar
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <span className="text-[10px] font-mono text-[var(--color-text-disabled)] w-7 text-center">{r.sortOrder ?? 0}</span>
+                      <span className="flex-1 text-sm text-[var(--color-text)]">{r.label}</span>
+                      {!r.active && <span className="text-[10px] font-semibold text-[var(--color-text-muted)]">inativo</span>}
+                      <button onClick={() => setEditing({ id: r.id, label: r.label, sortOrder: r.sortOrder ?? 0 })} disabled={busy}
+                        title="Editar"
+                        className="w-7 h-7 flex items-center justify-center rounded hover:bg-[var(--color-bg)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-40">
+                        <PencilLine size={13} />
+                      </button>
+                      <button onClick={() => handleToggleActive(r)} disabled={busy}
+                        title={r.active ? 'Desativar' : 'Reativar'}
+                        className="text-[10px] font-semibold px-2 py-1 rounded border border-[var(--color-border)] hover:bg-[var(--color-bg)] disabled:opacity-40">
+                        {r.active ? 'Desativar' : 'Reativar'}
+                      </button>
+                      {r.active && (
+                        <button onClick={() => handleDelete(r)} disabled={busy}
+                          title="Remover"
+                          className="w-7 h-7 flex items-center justify-center rounded hover:bg-red-50 dark:hover:bg-red-950/30 text-[var(--color-text-muted)] hover:text-red-500 disabled:opacity-40">
+                          <Trash2 size={13} />
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+
+          <div className="flex items-center gap-2 pt-2 border-t border-[var(--color-border)]">
+            <input
+              value={newLabel}
+              onChange={e => setNewLabel(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') handleCreate() }}
+              placeholder={`Novo motivo de ${kind === 'cancellation' ? 'cancelamento' : 'devolução'}…`}
+              className="flex-1 text-sm px-2 py-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]"
+            />
+            <button onClick={handleCreate} disabled={busy || !newLabel.trim()}
+              className="text-xs font-semibold flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[var(--color-primary)] text-white hover:opacity-90 disabled:opacity-40">
+              <Plus size={12} /> Adicionar
+            </button>
+          </div>
+
+          {err && <p className="text-xs text-red-500">{err}</p>}
+        </>
+      )}
+    </div>
+  )
+}
 
 /* ─── Labels legíveis ─── */
 const MOOD_OPTIONS = [
@@ -946,6 +1125,20 @@ export function SettingsPage() {
                 Preferência salva neste navegador. O ícone ⊞ no modal de pedido também permite trocar na hora.
               </p>
             </div>
+          </Section>
+
+          <Section icon={Ban} title="Motivos de cancelamento">
+            <p className="text-xs text-[var(--color-text-muted)] mb-3">
+              Lista usada no modal de cancelamento de pedidos. A observação livre fica como complemento opcional.
+            </p>
+            <OrderReasonsManager kind="cancellation" />
+          </Section>
+
+          <Section icon={Undo2} title="Motivos de devolução">
+            <p className="text-xs text-[var(--color-text-muted)] mb-3">
+              Lista usada no modal de devolução (parcial ou total) de pedidos entregues.
+            </p>
+            <OrderReasonsManager kind="return" />
           </Section>
         </div>
       )}

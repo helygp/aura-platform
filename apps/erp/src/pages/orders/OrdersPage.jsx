@@ -28,6 +28,7 @@ import { OrderDetail }  from './components/OrderDetail.jsx'
 import { OrderForm }       from './components/OrderForm.jsx'
 import { SeparationSheet } from './components/SeparationSheet.jsx'
 import { useOrders }    from './useOrders.js'
+import { useOrderReasons } from './useOrderReasons.js'
 import {
   ORDER_STATUS, ORDER_CHANNEL, CHANNEL_META,
   PAYMENT_METHOD_META,
@@ -220,11 +221,13 @@ export function OrdersPage() {
   const {
     orders, total, totalPages, isLoading, error,
     filters, setFilters, page, setPage,
-    refetch, createOrder, updateStatus, cancelItem,
+    refetch, createOrder, updateStatus, cancelItem, returnOrderItems,
+    addItemToOrder, updateItemQty,
     stats, PAGE_SIZE,
     customers, skus, products,
   } = useOrders()
   const { sorted: sortedOrders, sortKey: oSortKey, sortDir: oSortDir, handleSort: oHandleSort } = useSortable(orders, 'createdAt', 'desc')
+  const reasons = useOrderReasons()
 
   const location = useLocation()
   const [detailOrder, setDetailOrder] = useState(null)
@@ -269,20 +272,24 @@ export function OrdersPage() {
     })
   }
 
-  const handleStatusChange = useCallback(async (orderId, newStatus) => {
-    await updateStatus(orderId, newStatus)
-    setDetailOrder(prev => prev?.id === orderId
-      ? {
-          ...prev,
-          status: newStatus,
-          history: [
-            ...prev.history,
-            { status: newStatus, note: '', user: 'admin', at: new Date().toISOString() },
-          ],
-        }
-      : prev
-    )
+  const handleStatusChange = useCallback(async (orderId, newStatus, opts = {}) => {
+    await updateStatus(orderId, newStatus, opts)
+    // fetchAll() do useOrders já refresh a lista; useEffect sincroniza detailOrder
   }, [updateStatus])
+
+  // #117 — devolução parcial/total em pedido entregue
+  const handleReturn = useCallback(async (orderId, items, opts) => {
+    await returnOrderItems(orderId, items, opts)
+  }, [returnOrderItems])
+
+  // #117 — edição de itens (add/update qty)
+  const handleAddItem = useCallback(async (orderId, skuId, qty) => {
+    await addItemToOrder(orderId, skuId, qty)
+  }, [addItemToOrder])
+
+  const handleUpdateItemQty = useCallback(async (orderId, itemId, qty) => {
+    await updateItemQty(orderId, itemId, qty)
+  }, [updateItemQty])
 
   const handleCreate = useCallback(async (payload) => {
     await createOrder(payload)
@@ -468,6 +475,11 @@ export function OrdersPage() {
         onClose={closeDetail}
         onStatusChange={handleStatusChange}
         onItemCancel={cancelItem}
+        onReturn={handleReturn}
+        onAddItem={handleAddItem}
+        onUpdateItemQty={handleUpdateItemQty}
+        skus={skus}
+        reasons={{ cancellation: reasons.cancellation, return: reasons.return }}
       />
 
       {/* ── Formulário de criação ── */}
