@@ -257,6 +257,14 @@ export function ReceivablesPage() {
     setTimeout(() => win.print(), 400)
   }
 
+  const printOrders = () => {
+    if (!detail || !selected) return
+    const win = window.open('', '_blank', 'width=900,height=700')
+    win.document.write(buildOrdersReportHtml(selected, detail, { dateFrom, dateTo }))
+    win.document.close(); win.focus()
+    setTimeout(() => win.print(), 400)
+  }
+
   // ── render ──────────────────────────────────────────────────────────────
   return (
     <div className="flex h-full gap-0 overflow-hidden">
@@ -349,7 +357,11 @@ export function ReceivablesPage() {
             </div>
             <button onClick={printReport} disabled={!detail}
               className="shrink-0 rounded border border-[var(--color-border)] px-3 py-1.5 text-xs font-medium text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] disabled:opacity-40">
-              Imprimir
+              Imprimir extrato
+            </button>
+            <button onClick={printOrders} disabled={!detail}
+              className="shrink-0 rounded border border-[var(--color-border)] px-3 py-1.5 text-xs font-medium text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] disabled:opacity-40">
+              Imprimir pedidos
             </button>
             <button onClick={() => { setLimitValue(((selected.creditLimit || 0) / 100).toFixed(2).replace('.', ',')); setLimitModal(true) }}
               className="shrink-0 rounded border border-[var(--color-border)] px-3 py-1.5 text-xs font-medium text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)]">
@@ -747,6 +759,94 @@ const STATUS_MAP = {
 function StatusBadge({ status }) {
   const { label, cls } = STATUS_MAP[status] ?? { label: status, cls: 'bg-gray-100 text-gray-700' }
   return <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${cls}`}>{label}</span>
+}
+
+/* ── Impressão pedidos com itens ───────────────────────────────────────── */
+function buildOrdersReportHtml(customer, detail, { dateFrom, dateTo } = {}) {
+  const now  = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'full', timeStyle: 'short' }).format(new Date())
+  const fmtC = v => ((v ?? 0) / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+  const fD   = iso => { try { return new Intl.DateTimeFormat('pt-BR', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' }).format(new Date(iso)) } catch { return '—' } }
+  const PM   = { pix:'Pix', boleto:'Boleto', dinheiro:'Dinheiro', transferencia:'Transferência', cartao:'Cartão', outros:'Outros', a_combinar:'A combinar', credito:'Crédito' }
+  const ST   = { pendente:'Pendente', confirmado:'Confirmado', separando:'Separando', enviado:'Enviado', entregue:'Entregue', cancelado:'Cancelado' }
+  const periodo = detail.filtered ? `Período: ${dateFrom} a ${dateTo}` : 'Histórico completo'
+
+  const ordRows = (detail.orders ?? []).map(o => {
+    const items = o.items ?? []
+    const itemsHtml = items.length
+      ? '<tr class="items-row"><td colspan="5"><table class="items">'
+        + '<thead><tr><th>SKU</th><th>Produto</th><th class="num">Qtd</th><th class="num">Preço unit.</th><th class="num">Total</th></tr></thead>'
+        + '<tbody>'
+        + items.map(it => {
+            const cancelled = it.status === 'cancelado'
+            const activeQty = (it.qty || 0) - (it.qtyReturned || 0)
+            const returned  = (it.qtyReturned || 0) > 0
+            const label     = cancelled ? ' (cancelado)' : returned ? ` (devolv. ${it.qtyReturned})` : ''
+            return `<tr class="${cancelled ? 'item-cancelled' : ''}">`
+              + `<td class="mono">${it.skuCode || '—'}</td>`
+              + `<td>${it.productName || ''}${label}</td>`
+              + `<td class="num">${cancelled || returned ? `${activeQty}/${it.qty}` : it.qty}x</td>`
+              + `<td class="num">${fmtC(it.priceUnit)}</td>`
+              + `<td class="num">${fmtC(activeQty * it.priceUnit)}</td>`
+              + '</tr>'
+          }).join('')
+        + '</tbody></table></td></tr>'
+      : ''
+    return '<tr class="order-header">'
+      + `<td class="mono">${o.ref || '—'}</td>`
+      + `<td>${fD(o.createdAt)}</td>`
+      + `<td>${ST[o.status] ?? o.status}</td>`
+      + `<td>${PM[o.paymentMethod] ?? (o.paymentMethod || '—')}</td>`
+      + `<td class="num bold">${fmtC(o.total)}</td>`
+      + `</tr>${itemsHtml}`
+  }).join('') || '<tr><td colspan="5" class="empty">Sem pedidos</td></tr>'
+
+  const css = `
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{font-family:'Segoe UI',Arial,sans-serif;font-size:12px;color:#1a1a1a;padding:32px}
+    .header{display:flex;justify-content:space-between;border-bottom:2px solid #111;padding-bottom:16px;margin-bottom:20px}
+    h1{font-size:20px;font-weight:700}
+    h2{font-size:13px;font-weight:600;color:#444;text-transform:uppercase;letter-spacing:.05em;margin:24px 0 8px}
+    .cards{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:12px 0}
+    .card{border:1px solid #e0e0e0;border-radius:6px;padding:12px;text-align:center}
+    .card .lbl{font-size:10px;color:#888;text-transform:uppercase;margin-bottom:4px}
+    .card .val{font-size:18px;font-weight:700}
+    .card.used .val{color:#dc2626}.card.avail .val{color:#16a34a}
+    table{width:100%;border-collapse:collapse}
+    th{background:#f0f0f0;text-align:left;padding:7px 10px;font-size:10px;font-weight:600;text-transform:uppercase;border-bottom:2px solid #ddd}
+    th.num,td.num{text-align:right}
+    td{padding:7px 10px;border-bottom:1px solid #f0f0f0;font-size:11.5px;vertical-align:top}
+    .bold{font-weight:700}
+    .mono{font-family:monospace;font-size:10.5px}
+    .order-header td{background:#f8fafc;font-weight:600;border-top:2px solid #e2e8f0}
+    .items-row>td{padding:0 10px 10px 28px;background:#fff;border-bottom:none}
+    table.items{font-size:10.5px;width:100%;border-collapse:collapse;margin-top:4px}
+    table.items th{background:#e8eef5;padding:4px 8px;font-size:9.5px;font-weight:600;text-transform:uppercase}
+    table.items th.num,table.items td.num{text-align:right}
+    table.items td{padding:4px 8px;border-bottom:1px solid #eef2f7}
+    .item-cancelled td{text-decoration:line-through;color:#94a3b8}
+    .empty{text-align:center;color:#aaa;padding:16px;font-style:italic}
+    .footer{margin-top:32px;border-top:1px solid #e0e0e0;padding-top:12px;font-size:10px;color:#aaa;display:flex;justify-content:space-between}
+    @media print{body{padding:16px}@page{margin:1.5cm;size:A4 portrait}}`
+
+  return '<!DOCTYPE html>'
+    + '<html lang="pt-BR"><head><meta charset="UTF-8"/>'
+    + `<title>Pedidos — ${customer.name}</title>`
+    + `<style>${css}</style></head><body>`
+    + '<div class="header">'
+    + `<div><h1>Pedidos — Contas a Receber</h1><p style="font-size:11px;color:#666;margin-top:4px">${periodo}</p></div>`
+    + `<div style="text-align:right;font-size:11px;color:#666;line-height:1.7"><strong>${customer.name}</strong><br/>${customer.email}<br/>Gerado: ${now}</div>`
+    + '</div>'
+    + '<div class="cards">'
+    + `<div class="card"><div class="lbl">Limite</div><div class="val">${fmtC(detail.buyer.creditLimit)}</div></div>`
+    + `<div class="card used"><div class="lbl">Saldo devedor</div><div class="val">${fmtC(detail.buyer.creditBalance)}</div></div>`
+    + `<div class="card avail"><div class="lbl">Disponível</div><div class="val">${fmtC(detail.buyer.creditAvailable)}</div></div>`
+    + '</div>'
+    + '<h2>Pedidos</h2>'
+    + '<table><thead><tr>'
+    + '<th>Referência</th><th>Data</th><th>Status</th><th>Pagamento</th><th class="num">Total</th>'
+    + `</tr></thead><tbody>${ordRows}</tbody></table>`
+    + `<div class="footer"><span>Aura Platform — Contas a Receber</span><span>${now}</span></div>`
+    + '</body></html>'
 }
 
 /* ── Impressão: tabela bancária ─────────────────────────────────────────── */
