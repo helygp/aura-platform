@@ -761,7 +761,7 @@ function StatusBadge({ status }) {
   return <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${cls}`}>{label}</span>
 }
 
-/* ── Impressão pedidos com itens ───────────────────────────────────────── */
+/* ── Impressão pedidos: formato original (Movimentações + Pedidos) ─────── */
 function buildOrdersReportHtml(customer, detail, { dateFrom, dateTo } = {}) {
   const now  = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'full', timeStyle: 'short' }).format(new Date())
   const fmtC = v => ((v ?? 0) / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
@@ -770,84 +770,73 @@ function buildOrdersReportHtml(customer, detail, { dateFrom, dateTo } = {}) {
   const ST   = { pendente:'Pendente', confirmado:'Confirmado', separando:'Separando', enviado:'Enviado', entregue:'Entregue', cancelado:'Cancelado' }
   const periodo = detail.filtered ? `Período: ${dateFrom} a ${dateTo}` : 'Histórico completo'
 
-  const ordRows = (detail.orders ?? []).map(o => {
-    const items = o.items ?? []
-    const itemsHtml = items.length
-      ? '<tr class="items-row"><td colspan="5"><table class="items">'
-        + '<thead><tr><th>SKU</th><th>Produto</th><th class="num">Qtd</th><th class="num">Preço unit.</th><th class="num">Total</th></tr></thead>'
-        + '<tbody>'
-        + items.map(it => {
-            const cancelled = it.status === 'cancelado'
-            const activeQty = (it.qty || 0) - (it.qtyReturned || 0)
-            const returned  = (it.qtyReturned || 0) > 0
-            const label     = cancelled ? ' (cancelado)' : returned ? ` (devolv. ${it.qtyReturned})` : ''
-            return `<tr class="${cancelled ? 'item-cancelled' : ''}">`
-              + `<td class="mono">${it.skuCode || '—'}</td>`
-              + `<td>${it.productName || ''}${label}</td>`
-              + `<td class="num">${cancelled || returned ? `${activeQty}/${it.qty}` : it.qty}x</td>`
-              + `<td class="num">${fmtC(it.priceUnit)}</td>`
-              + `<td class="num">${fmtC(activeQty * it.priceUnit)}</td>`
-              + '</tr>'
-          }).join('')
-        + '</tbody></table></td></tr>'
-      : ''
-    return '<tr class="order-header">'
-      + `<td class="mono">${o.ref || '—'}</td>`
-      + `<td>${fD(o.createdAt)}</td>`
-      + `<td>${ST[o.status] ?? o.status}</td>`
-      + `<td>${PM[o.paymentMethod] ?? (o.paymentMethod || '—')}</td>`
-      + `<td class="num bold">${fmtC(o.total)}</td>`
-      + `</tr>${itemsHtml}`
-  }).join('') || '<tr><td colspan="5" class="empty">Sem pedidos</td></tr>'
+  const txRows = (detail.transactions ?? []).map(t => '<tr>'
+    + `<td>${fD(t.createdAt)}</td>`
+    + `<td>${t.description}</td>`
+    + `<td>${PM[t.paymentMethod] ?? (t.paymentMethod || '—')}</td>`
+    + `<td class="${t.type === 'debit' ? 'debit' : 'credit'}">${t.type === 'debit' ? 'Débito' : 'Crédito'}</td>`
+    + `<td class="num ${t.type === 'debit' ? 'debit' : 'credit'}">${t.type === 'debit' ? '−' : '+'}${fmtC(t.amount)}</td>`
+    + '</tr>'
+  ).join('') || '<tr><td colspan="5" class="empty">Sem movimentações</td></tr>'
 
-  const css = `
-    *{margin:0;padding:0;box-sizing:border-box}
-    body{font-family:'Segoe UI',Arial,sans-serif;font-size:12px;color:#1a1a1a;padding:32px}
-    .header{display:flex;justify-content:space-between;border-bottom:2px solid #111;padding-bottom:16px;margin-bottom:20px}
-    h1{font-size:20px;font-weight:700}
-    h2{font-size:13px;font-weight:600;color:#444;text-transform:uppercase;letter-spacing:.05em;margin:24px 0 8px}
-    .cards{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:12px 0}
-    .card{border:1px solid #e0e0e0;border-radius:6px;padding:12px;text-align:center}
-    .card .lbl{font-size:10px;color:#888;text-transform:uppercase;margin-bottom:4px}
-    .card .val{font-size:18px;font-weight:700}
-    .card.used .val{color:#dc2626}.card.avail .val{color:#16a34a}
-    table{width:100%;border-collapse:collapse}
-    th{background:#f0f0f0;text-align:left;padding:7px 10px;font-size:10px;font-weight:600;text-transform:uppercase;border-bottom:2px solid #ddd}
-    th.num,td.num{text-align:right}
-    td{padding:7px 10px;border-bottom:1px solid #f0f0f0;font-size:11.5px;vertical-align:top}
-    .bold{font-weight:700}
-    .mono{font-family:monospace;font-size:10.5px}
-    .order-header td{background:#f8fafc;font-weight:600;border-top:2px solid #e2e8f0}
-    .items-row>td{padding:0 10px 10px 28px;background:#fff;border-bottom:none}
-    table.items{font-size:10.5px;width:100%;border-collapse:collapse;margin-top:4px}
-    table.items th{background:#e8eef5;padding:4px 8px;font-size:9.5px;font-weight:600;text-transform:uppercase}
-    table.items th.num,table.items td.num{text-align:right}
-    table.items td{padding:4px 8px;border-bottom:1px solid #eef2f7}
-    .item-cancelled td{text-decoration:line-through;color:#94a3b8}
-    .empty{text-align:center;color:#aaa;padding:16px;font-style:italic}
-    .footer{margin-top:32px;border-top:1px solid #e0e0e0;padding-top:12px;font-size:10px;color:#aaa;display:flex;justify-content:space-between}
-    @media print{body{padding:16px}@page{margin:1.5cm;size:A4 portrait}}`
+  const ordRows = (detail.orders ?? []).map(o => '<tr>'
+    + `<td class="mono">${o.ref || '—'}</td>`
+    + `<td>${fD(o.createdAt)}</td>`
+    + `<td>${ST[o.status] ?? o.status}</td>`
+    + `<td>${PM[o.paymentMethod] ?? (o.paymentMethod || '—')}</td>`
+    + `<td class="num">${fmtC(o.total)}</td>`
+    + '</tr>'
+  ).join('') || '<tr><td colspan="5" class="empty">Sem pedidos</td></tr>'
+
+  const css = [
+    '*{margin:0;padding:0;box-sizing:border-box}',
+    "body{font-family:'Segoe UI',Arial,sans-serif;font-size:12px;color:#1a1a1a;padding:32px}",
+    'h1{font-size:20px;font-weight:700}',
+    '.header{display:flex;justify-content:space-between;border-bottom:2px solid #111;padding-bottom:16px;margin-bottom:20px}',
+    'h2{font-size:13px;font-weight:600;color:#444;text-transform:uppercase;letter-spacing:.05em;margin:24px 0 8px}',
+    '.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:12px 0}',
+    '.card{border:1px solid #e0e0e0;border-radius:6px;padding:12px;text-align:center}',
+    '.card .lbl{font-size:10px;color:#888;text-transform:uppercase;margin-bottom:4px}',
+    '.card .val{font-size:18px;font-weight:700}',
+    '.card.used .val{color:#dc2626}.card.avail .val{color:#16a34a}',
+    'table{width:100%;border-collapse:collapse;margin-top:4px}',
+    'th{background:#f0f0f0;text-align:left;padding:7px 10px;font-size:11px;font-weight:600;color:#444;text-transform:uppercase;border-bottom:1px solid #ddd}',
+    'td{padding:7px 10px;border-bottom:1px solid #f0f0f0}',
+    'tr:nth-child(even) td{background:#fafafa}',
+    '.num{text-align:right;font-variant-numeric:tabular-nums}',
+    '.mono{font-family:monospace;font-size:11px}',
+    '.debit{color:#dc2626}.credit{color:#16a34a}',
+    '.empty{text-align:center;color:#aaa;padding:16px;font-style:italic}',
+    '.footer{margin-top:32px;border-top:1px solid #e0e0e0;padding-top:12px;font-size:10px;color:#aaa;display:flex;justify-content:space-between}',
+    '@media print{body{padding:16px}@page{margin:1.5cm;size:A4 portrait}}',
+  ].join('')
 
   return '<!DOCTYPE html>'
     + '<html lang="pt-BR"><head><meta charset="UTF-8"/>'
-    + `<title>Pedidos — ${customer.name}</title>`
+    + `<title>Contas a Receber — ${customer.name}</title>`
     + `<style>${css}</style></head><body>`
     + '<div class="header">'
-    + `<div><h1>Pedidos — Contas a Receber</h1><p style="font-size:11px;color:#666;margin-top:4px">${periodo}</p></div>`
-    + `<div style="text-align:right;font-size:11px;color:#666;line-height:1.7"><strong>${customer.name}</strong><br/>${customer.email}<br/>Gerado: ${now}</div>`
+    + `<div><h1>Contas a Receber</h1><p style="font-size:11px;color:#666;margin-top:4px">${periodo}</p></div>`
+    + `<div style="text-align:right;font-size:11px;color:#666;line-height:1.6"><strong>${customer.name}</strong><br/>${customer.email}<br/>Gerado: ${now}</div>`
     + '</div>'
     + '<div class="cards">'
     + `<div class="card"><div class="lbl">Limite</div><div class="val">${fmtC(detail.buyer.creditLimit)}</div></div>`
     + `<div class="card used"><div class="lbl">Saldo devedor</div><div class="val">${fmtC(detail.buyer.creditBalance)}</div></div>`
     + `<div class="card avail"><div class="lbl">Disponível</div><div class="val">${fmtC(detail.buyer.creditAvailable)}</div></div>`
     + '</div>'
+    + '<h2>Movimentações</h2>'
+    + '<table><thead><tr>'
+    + '<th>Data</th><th>Descrição</th><th>Forma</th><th>Tipo</th><th class="num">Valor</th>'
+    + `</tr></thead><tbody>${txRows}</tbody></table>`
     + '<h2>Pedidos</h2>'
     + '<table><thead><tr>'
     + '<th>Referência</th><th>Data</th><th>Status</th><th>Pagamento</th><th class="num">Total</th>'
     + `</tr></thead><tbody>${ordRows}</tbody></table>`
+    + `<div style="display:flex;justify-content:flex-end;padding:8px 10px 0">Total devedor: <strong style="margin-left:8px;color:#dc2626">${fmtC(detail.buyer.creditBalance)}</strong></div>`
     + `<div class="footer"><span>Aura Platform — Contas a Receber</span><span>${now}</span></div>`
     + '</body></html>'
 }
+
 
 /* ── Impressão: tabela bancária ─────────────────────────────────────────── */
 function buildReportHtml(customer, detail, txWithBalance, { dateFrom, dateTo } = {}) {
