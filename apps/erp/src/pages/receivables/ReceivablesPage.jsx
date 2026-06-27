@@ -5,9 +5,11 @@
  * T2.1 — filtro por data com recomposição de saldo de abertura
  * T2.2 — forma de pagamento + upload de comprovante
  * fix #82 — saldo devedor reflete período filtrado + reload ao toggle do filtro
+ * ticket #118 — busca de cliente, presets de período, timeline unificada
+ *               com drilldown de pedido + validação de pagamento ≤ saldo
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useAuth } from '../../auth/AuthContext.jsx'
 
 const fmt  = cents => new Intl.NumberFormat('pt-BR', { style:'currency', currency:'BRL' }).format((cents ?? 0) / 100)
@@ -16,18 +18,48 @@ const fmtDate = iso => {
   try { return new Intl.DateTimeFormat('pt-BR', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' }).format(new Date(iso)) }
   catch { return '—' }
 }
-const today = () => new Date().toISOString().slice(0, 10)
-const firstOfMonth = () => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().slice(0, 10) }
+const fmtDateShort = iso => {
+  if (!iso) return '—'
+  try { return new Intl.DateTimeFormat('pt-BR', { day:'2-digit', month:'2-digit' }).format(new Date(iso)) }
+  catch { return '—' }
+}
+const toISODate = d => d.toISOString().slice(0, 10)
+const today = () => toISODate(new Date())
+
+// ── Presets de período ─────────────────────────────────────────────────────
+function rangeForPreset(preset) {
+  const now = new Date()
+  const y = now.getFullYear(), m = now.getMonth(), d = now.getDate()
+  const dow = now.getDay() // 0=domingo
+  const mondayOffset = dow === 0 ? -6 : 1 - dow
+
+  switch (preset) {
+    case 'today':   return { from: toISODate(new Date(y, m, d)),                       to: toISODate(new Date(y, m, d)) }
+    case 'week':    return { from: toISODate(new Date(y, m, d + mondayOffset)),         to: toISODate(new Date(y, m, d + mondayOffset + 6)) }
+    case 'month':   return { from: toISODate(new Date(y, m, 1)),                       to: toISODate(new Date(y, m + 1, 0)) }
+    case 'last30':  return { from: toISODate(new Date(y, m, d - 29)),                  to: toISODate(new Date(y, m, d)) }
+    default:        return null
+  }
+}
+
+const QUICK_PRESETS = [
+  { id: 'today',  label: 'Hoje' },
+  { id: 'week',   label: 'Esta semana' },
+  { id: 'month',  label: 'Este mês' },
+  { id: 'last30', label: '30 dias' },
+  { id: 'custom', label: 'Personalizado' },
+]
 
 const PAYMENT_METHODS = [
-  { value: 'pix',      label: 'Pix' },
-  { value: 'boleto',   label: 'Boleto' },
-  { value: 'dinheiro', label: 'Dinheiro' },
+  { value: 'pix',           label: 'Pix' },
+  { value: 'boleto',        label: 'Boleto' },
+  { value: 'dinheiro',      label: 'Dinheiro' },
   { value: 'transferencia', label: 'Transferência' },
-  { value: 'cartao',   label: 'Cartão' },
-  { value: 'outros',   label: 'Outros' },
+  { value: 'cartao',        label: 'Cartão' },
+  { value: 'outros',        label: 'Outros' },
 ]
 const PM_LABEL = Object.fromEntries(PAYMENT_METHODS.map(p => [p.value, p.label]))
+const PM_LABEL_ALL = { ...PM_LABEL, a_combinar: 'A combinar', credito: 'Crédito' }
 
 function authFetch(url, opts = {}) {
   const tok = window.__aura_mem_token__ || ''
@@ -48,6 +80,19 @@ function authFetchJson(url, opts = {}) {
   })
 }
 
+// ── Heurística pra classificar o tipo de transação (ícone + cor) ──────────
+function txCategory(t) {
+  const desc = (t.description || '').toLowerCase()
+  if (t.type === 'credit') {
+    if (desc.startsWith('estorno'))         return { kind: 'estorno',  icon: '↩', tone: 'amber' }
+    if (desc.startsWith('devolução'))       return { kind: 'estorno',  icon: '↩', tone: 'amber' }
+    if (desc.startsWith('ajuste'))          return { kind: 'ajuste',   icon: '⚖', tone: 'slate' }
+    return { kind: 'pagamento', icon: '💸', tone: 'green' }
+  }
+  if (desc.startsWith('ajuste')) return { kind: 'ajuste', icon: '⚖', tone: 'slate' }
+  return { kind: 'pedido_debito', icon: '🛒', tone: 'red' }
+}
+
 export function ReceivablesPage() {
   const { user } = useAuth()
 
@@ -58,18 +103,26 @@ export function ReceivablesPage() {
   const [detail,     setDetail]     = useState(null)
   const [detailLoading, setDetailLoading] = useState(false)
 
-  // Filtro de data
-  const [dateFrom, setDateFrom] = useState(firstOfMonth())
-  const [dateTo,   setDateTo]   = useState(today())
-  const [useFilter, setUseFilter] = useState(false)
+  // Busca de clientes (ticket #118)
+  const [customerSearch, setCustomerSearch] = useState('')
+
+  // Filtro de data + presets (ticket #118)
+  const initialRange = rangeForPreset('month')
+  const [dateFrom,    setDateFrom]    = useState(initialRange.from)
+  const [dateTo,      setDateTo]      = useState(initialRange.to)
+  const [useFilter,   setUseFilter]   = useState(false)
+  const [quickPreset, setQuickPreset] = useState('month') // 'today'|'week'|'month'|'last30'|'custom'
+
+  // Drilldown de pedidos (ticket #118)
+  const [expandedOrders, setExpandedOrders] = useState(() => new Set())
 
   // Modal pagamento
   const [payModal,     setPayModal]     = useState(false)
   const [payAmount,    setPayAmount]    = useState('')
   const [payDesc,      setPayDesc]      = useState('Pagamento recebido')
   const [payMethod,    setPayMethod]    = useState('pix')
-  const [receiptFile,  setReceiptFile]  = useState(null)   // File object
-  const [receiptB64,   setReceiptB64]   = useState(null)   // base64 string
+  const [receiptFile,  setReceiptFile]  = useState(null)
+  const [receiptB64,   setReceiptB64]   = useState(null)
   const [paying,       setPaying]       = useState(false)
   const [payError,     setPayError]     = useState(null)
   const fileInputRef = useRef(null)
@@ -93,8 +146,20 @@ export function ReceivablesPage() {
 
   useEffect(() => { if (user) loadBuyers() }, [loadBuyers, user])
 
+  // Filtro client-side de buyers por nome/email (ticket #118)
+  const filteredBuyers = useMemo(() => {
+    const q = customerSearch.trim().toLowerCase()
+    if (!q) return buyers
+    return buyers.filter(b =>
+      (b.name || '').toLowerCase().includes(q) ||
+      (b.email || '').toLowerCase().includes(q) ||
+      (b.companyName || '').toLowerCase().includes(q)
+    )
+  }, [buyers, customerSearch])
+
   const fetchDetail = useCallback(async (buyer, { from, to, filtered } = {}) => {
     setDetail(null)
+    setExpandedOrders(new Set())
     setDetailLoading(true)
     try {
       const qs = new URLSearchParams()
@@ -118,10 +183,44 @@ export function ReceivablesPage() {
     if (selected) fetchDetail(selected, { from: dateFrom, to: dateTo, filtered: useFilter })
   }
 
+  // Aplicar preset rápido (ticket #118)
+  function applyPreset(presetId) {
+    setQuickPreset(presetId)
+    if (presetId === 'custom') {
+      setUseFilter(true)
+      return
+    }
+    const range = rangeForPreset(presetId)
+    if (!range) return
+    setDateFrom(range.from)
+    setDateTo(range.to)
+    setUseFilter(true)
+    if (selected) fetchDetail(selected, { from: range.from, to: range.to, filtered: true })
+  }
+
   // fix #82 — recarrega extrato ao ativar/desativar filtro
   useEffect(() => {
     if (selected) fetchDetail(selected, { from: dateFrom, to: dateTo, filtered: useFilter })
   }, [useFilter]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Toggle expansão de um pedido (ticket #118)
+  function toggleOrder(orderId) {
+    setExpandedOrders(prev => {
+      const next = new Set(prev)
+      if (next.has(orderId)) next.delete(orderId); else next.add(orderId)
+      return next
+    })
+  }
+
+  // Timeline unificada: pedidos + transações ordenados por data DESC (ticket #118)
+  const timeline = useMemo(() => {
+    if (!detail) return []
+    const entries = [
+      ...(detail.orders ?? []).map(o => ({ kind: 'order', date: o.createdAt, data: o })),
+      ...(detail.transactions ?? []).map(t => ({ kind: 'tx', date: t.createdAt, data: t })),
+    ]
+    return entries.sort((a, b) => new Date(b.date) - new Date(a.date))
+  }, [detail])
 
   // Upload comprovante → base64
   async function handleFileChange(e) {
@@ -140,15 +239,28 @@ export function ReceivablesPage() {
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
+  // Validação ao vivo do valor de pagamento (ticket #118)
+  const payAmountCents = useMemo(() => {
+    const n = parseFloat((payAmount || '').replace(',', '.'))
+    if (!isFinite(n) || n <= 0) return 0
+    return Math.round(n * 100)
+  }, [payAmount])
+  const balanceCents = selected?.creditBalance ?? 0
+  const payExceeds   = payAmountCents > 0 && payAmountCents > balanceCents
+  const payValid     = payAmountCents > 0 && payAmountCents <= balanceCents
+
   async function handlePayment() {
-    const amountCents = Math.round(parseFloat(payAmount.replace(',', '.')) * 100)
-    if (!amountCents || amountCents <= 0) return setPayError('Valor inválido.')
+    // Ticket #118: validações de valor
+    if (!payAmountCents) return setPayError('Valor inválido.')
+    if (payAmountCents > balanceCents)
+      return setPayError(`Valor maior que o saldo devedor (${fmt(balanceCents)}).`)
+
     setPaying(true); setPayError(null)
     try {
       const res = await authFetchJson(`/api/wallet/buyers/${selected.id}/payment`, {
         method: 'POST',
         body: JSON.stringify({
-          amount:        amountCents,
+          amount:        payAmountCents,
           description:   payDesc || 'Pagamento recebido',
           paymentMethod: payMethod,
           receiptData:   receiptB64 ?? null,
@@ -202,17 +314,39 @@ export function ReceivablesPage() {
           </button>
         </div>
 
+        {/* Busca de cliente (ticket #118) */}
+        <div className="border-b border-[var(--color-border)] px-3 py-2">
+          <div className="relative">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+              className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-secondary)] pointer-events-none">
+              <circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>
+            </svg>
+            <input type="text" value={customerSearch} onChange={e => setCustomerSearch(e.target.value)}
+              placeholder="Buscar cliente…"
+              className="w-full h-8 pl-8 pr-7 text-xs rounded border border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-text-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]" />
+            {customerSearch && (
+              <button onClick={() => setCustomerSearch('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
+                title="Limpar">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+              </button>
+            )}
+          </div>
+        </div>
+
         {error && <p className="px-4 py-2 text-xs text-red-500">{error}</p>}
 
         {loading ? (
           <div className="flex flex-1 items-center justify-center text-sm text-[var(--color-text-secondary)]">Carregando…</div>
-        ) : buyers.length === 0 ? (
+        ) : filteredBuyers.length === 0 ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-center">
-            <p className="text-sm text-[var(--color-text-secondary)]">Nenhum cliente com limite configurado.</p>
+            <p className="text-sm text-[var(--color-text-secondary)]">
+              {customerSearch ? 'Nenhum cliente encontrado.' : 'Nenhum cliente com limite configurado.'}
+            </p>
           </div>
         ) : (
           <ul className="flex-1 overflow-y-auto divide-y divide-[var(--color-border)]">
-            {buyers.map(b => (
+            {filteredBuyers.map(b => (
               <li key={b.id} onClick={() => openDetail(b)}
                 className={`cursor-pointer px-4 py-3 hover:bg-[var(--color-surface-hover)] transition-colors ${selected?.id === b.id ? 'bg-[var(--color-surface-hover)]' : ''}`}>
                 <div className="flex items-center justify-between gap-2">
@@ -270,15 +404,26 @@ export function ReceivablesPage() {
             </button>
           </div>
 
-          {/* ── Filtro de data ── */}
-          <div className="flex flex-wrap items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2.5">
-            <label className="flex items-center gap-1.5 text-xs text-[var(--color-text-secondary)] cursor-pointer select-none">
-              <input type="checkbox" checked={useFilter} onChange={e => setUseFilter(e.target.checked)}
-                className="rounded" />
-              Filtrar por período
-            </label>
-            {useFilter && (
-              <>
+          {/* ── Filtro de período: presets + range custom (ticket #118) ── */}
+          <div className="flex flex-col gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2.5">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <label className="flex items-center gap-1.5 text-xs text-[var(--color-text-secondary)] cursor-pointer select-none mr-2">
+                <input type="checkbox" checked={useFilter} onChange={e => setUseFilter(e.target.checked)} className="rounded" />
+                Filtrar por período
+              </label>
+              {useFilter && QUICK_PRESETS.map(p => (
+                <button key={p.id} onClick={() => applyPreset(p.id)}
+                  className={`h-7 px-3 text-xs font-medium rounded-full border transition-colors ${
+                    quickPreset === p.id
+                      ? 'border-[var(--color-primary)] bg-[var(--color-primary)] text-[var(--color-primary-foreground)]'
+                      : 'border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)]'
+                  }`}>
+                  {p.label}
+                </button>
+              ))}
+            </div>
+            {useFilter && quickPreset === 'custom' && (
+              <div className="flex flex-wrap items-center gap-2">
                 <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
                   className="h-7 px-2 text-xs rounded border border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-text-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]" />
                 <span className="text-xs text-[var(--color-text-secondary)]">até</span>
@@ -288,7 +433,10 @@ export function ReceivablesPage() {
                   className="h-7 px-3 text-xs font-medium rounded bg-[var(--color-primary)] text-[var(--color-primary-foreground)] hover:opacity-90">
                   Filtrar
                 </button>
-              </>
+              </div>
+            )}
+            {useFilter && quickPreset !== 'custom' && (
+              <p className="text-[10px] text-[var(--color-text-secondary)]">{dateFrom} → {dateTo}</p>
             )}
           </div>
 
@@ -331,69 +479,21 @@ export function ReceivablesPage() {
                 </div>
               )}
 
-              {/* Movimentações */}
-              <div className="px-4 pb-2 pt-4">
+              {/* Timeline unificada (ticket #118) */}
+              <div className="px-4 pb-6 pt-4">
                 <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-[var(--color-text-secondary)]">
                   Movimentações {detail.filtered ? `(${dateFrom} – ${dateTo})` : ''}
                 </h3>
-                {detail.transactions.length === 0 ? (
+                {timeline.length === 0 ? (
                   <p className="text-sm text-[var(--color-text-secondary)]">Sem movimentações{detail.filtered ? ' no período' : ''}.</p>
                 ) : (
                   <ul className="flex flex-col gap-1">
-                    {detail.transactions.map(t => (
-                      <li key={t.id} className="flex items-center justify-between rounded-[var(--radius)] border border-[var(--color-border)] px-3 py-2.5 gap-2">
-                        <div className="flex items-center gap-2.5 min-w-0">
-                          <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold ${t.type==='debit'?'bg-red-100 text-red-600':'bg-green-100 text-green-600'}`}>
-                            {t.type==='debit'?'−':'+'}
-                          </span>
-                          <div className="min-w-0">
-                            <p className="text-xs font-medium text-[var(--color-text-primary)] truncate">{t.description}</p>
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <p className="text-[10px] text-[var(--color-text-secondary)]">{fmtDate(t.createdAt)}</p>
-                              {t.paymentMethod && (
-                                <span className="text-[10px] rounded-full bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400 px-1.5 py-0.5 font-medium">
-                                  {PM_LABEL[t.paymentMethod] ?? t.paymentMethod}
-                                </span>
-                              )}
-                              {t.hasReceipt && (
-                                <a href={`/api/wallet/transactions/${t.id}/receipt`} target="_blank" rel="noopener noreferrer"
-                                  className="text-[10px] rounded-full bg-green-50 dark:bg-green-950/30 text-green-700 dark:text-green-400 px-1.5 py-0.5 font-medium hover:opacity-80">
-                                  📎 Comprovante
-                                </a>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                        <span className={`text-sm font-semibold shrink-0 ${t.type==='debit'?'text-red-600':'text-green-600'}`}>
-                          {t.type==='debit'?'−':'+'}{fmt(t.amount)}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-
-              {/* Pedidos */}
-              <div className="px-4 pb-6 pt-4">
-                <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-[var(--color-text-secondary)]">
-                  Pedidos {detail.filtered ? `(${dateFrom} – ${dateTo})` : ''}
-                </h3>
-                {detail.orders.length === 0 ? (
-                  <p className="text-sm text-[var(--color-text-secondary)]">Sem pedidos{detail.filtered ? ' no período' : ''}.</p>
-                ) : (
-                  <ul className="flex flex-col gap-1">
-                    {detail.orders.map(o => (
-                      <li key={o.ref || o.createdAt} className="flex items-center justify-between rounded-[var(--radius)] border border-[var(--color-border)] px-3 py-2.5">
-                        <div>
-                          <p className="font-mono text-xs font-medium text-[var(--color-text-primary)]">{o.ref || '—'}</p>
-                          <p className="text-[10px] text-[var(--color-text-secondary)]">{fmtDate(o.createdAt)} · {PM_LABEL[o.paymentMethod] ?? (o.paymentMethod||'—').replace('_',' ')}</p>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <StatusBadge status={o.status} />
-                          <span className="text-sm font-semibold text-[var(--color-text-primary)]">{fmt(o.total)}</span>
-                        </div>
-                      </li>
-                    ))}
+                    {timeline.map((entry, idx) => entry.kind === 'order'
+                      ? <OrderRow key={`o-${entry.data.id || idx}`} order={entry.data}
+                          expanded={expandedOrders.has(entry.data.id)}
+                          onToggle={() => toggleOrder(entry.data.id)} />
+                      : <TxRow key={`t-${entry.data.id}`} tx={entry.data} />
+                    )}
                   </ul>
                 )}
               </div>
@@ -418,7 +518,19 @@ export function ReceivablesPage() {
             <div>
               <label className="mb-1 block text-xs font-medium text-[var(--color-text-secondary)]">Valor recebido (R$)</label>
               <input type="text" inputMode="decimal" value={payAmount} onChange={e=>setPayAmount(e.target.value)} placeholder="0,00"
-                className="w-full rounded-[var(--radius)] border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/40" />
+                className={`w-full rounded-[var(--radius)] border px-3 py-2 text-sm focus:outline-none focus:ring-2 ${
+                  payExceeds
+                    ? 'border-red-400 bg-red-50/40 focus:ring-red-200'
+                    : 'border-[var(--color-border)] bg-[var(--color-background)] focus:ring-[var(--color-primary)]/40'
+                }`} />
+              {payExceeds && (
+                <p className="mt-1 text-[11px] text-red-600">
+                  Valor maior que o saldo devedor ({fmt(balanceCents)}). Use no máximo esse valor.
+                </p>
+              )}
+              {payAmountCents > 0 && payValid && payAmountCents === balanceCents && (
+                <p className="mt-1 text-[11px] text-green-600">✓ Quita o saldo integralmente.</p>
+              )}
             </div>
             <div>
               <label className="mb-1 block text-xs font-medium text-[var(--color-text-secondary)]">Forma de pagamento</label>
@@ -451,7 +563,8 @@ export function ReceivablesPage() {
           </div>
           <div className="mt-5 flex gap-3">
             <button onClick={resetPayModal} disabled={paying} className="flex-1 rounded-[var(--radius)] border border-[var(--color-border)] py-2 text-sm font-medium hover:bg-[var(--color-surface-hover)] disabled:opacity-50">Cancelar</button>
-            <button onClick={handlePayment} disabled={paying} className="flex flex-1 items-center justify-center rounded-[var(--radius)] bg-[var(--color-primary)] py-2 text-sm font-semibold text-[var(--color-primary-foreground)] hover:opacity-90 disabled:opacity-60">
+            <button onClick={handlePayment} disabled={paying || !payValid}
+              className="flex flex-1 items-center justify-center rounded-[var(--radius)] bg-[var(--color-primary)] py-2 text-sm font-semibold text-[var(--color-primary-foreground)] hover:opacity-90 disabled:opacity-60 disabled:cursor-not-allowed">
               {paying ? 'Registrando…' : 'Confirmar'}
             </button>
           </div>
@@ -479,6 +592,136 @@ export function ReceivablesPage() {
         </Modal>
       )}
     </div>
+  )
+}
+
+// ── Linha de transação na timeline (ticket #118) ──────────────────────────
+function TxRow({ tx }) {
+  const cat = txCategory(tx)
+  const isCredit = tx.type === 'credit'
+  return (
+    <li className="flex items-center justify-between rounded-[var(--radius)] border border-[var(--color-border)] px-3 py-2.5 gap-2">
+      <div className="flex items-center gap-2.5 min-w-0">
+        <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs ${isCredit?'bg-green-100 text-green-700':'bg-red-100 text-red-700'}`}>
+          {cat.icon}
+        </span>
+        <div className="min-w-0">
+          <p className="text-xs font-medium text-[var(--color-text-primary)] truncate">{tx.description}</p>
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="text-[10px] text-[var(--color-text-secondary)]">{fmtDate(tx.createdAt)}</p>
+            {tx.paymentMethod && (
+              <span className="text-[10px] rounded-full bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400 px-1.5 py-0.5 font-medium">
+                {PM_LABEL[tx.paymentMethod] ?? tx.paymentMethod}
+              </span>
+            )}
+            {tx.orderRef && (
+              <span className="text-[10px] rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 px-1.5 py-0.5 font-mono">
+                #{String(tx.orderRef).slice(-6).toUpperCase()}
+              </span>
+            )}
+            {tx.hasReceipt && (
+              <a href={`/api/wallet/transactions/${tx.id}/receipt`} target="_blank" rel="noopener noreferrer"
+                className="text-[10px] rounded-full bg-green-50 dark:bg-green-950/30 text-green-700 dark:text-green-400 px-1.5 py-0.5 font-medium hover:opacity-80">
+                📎 Comprovante
+              </a>
+            )}
+          </div>
+        </div>
+      </div>
+      <span className={`text-sm font-semibold shrink-0 ${isCredit?'text-green-600':'text-red-600'}`}>
+        {isCredit?'+':'−'}{fmt(tx.amount)}
+      </span>
+    </li>
+  )
+}
+
+// ── Linha de pedido na timeline + drilldown (ticket #118) ─────────────────
+function OrderRow({ order, expanded, onToggle }) {
+  const items = order.items ?? []
+  const hasItems = items.length > 0
+  return (
+    <li className="rounded-[var(--radius)] border border-[var(--color-border)] overflow-hidden">
+      <button onClick={onToggle} disabled={!hasItems}
+        className="w-full flex items-center justify-between px-3 py-2.5 gap-2 hover:bg-[var(--color-surface-hover)] disabled:cursor-default text-left">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-blue-100 text-blue-700 text-xs">
+            🛒
+          </span>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <p className="text-xs font-medium text-[var(--color-text-primary)]">
+                Pedido <span className="font-mono">{order.ref || '—'}</span>
+              </p>
+              <StatusBadge status={order.status} />
+            </div>
+            <div className="flex items-center gap-2 flex-wrap mt-0.5">
+              <p className="text-[10px] text-[var(--color-text-secondary)]">{fmtDate(order.createdAt)}</p>
+              <span className="text-[10px] rounded-full bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400 px-1.5 py-0.5 font-medium">
+                {PM_LABEL_ALL[order.paymentMethod] ?? (order.paymentMethod||'—').replace('_',' ')}
+              </span>
+              {hasItems && (
+                <span className="text-[10px] text-[var(--color-text-secondary)]">
+                  {items.length} {items.length === 1 ? 'item' : 'itens'}
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="text-sm font-semibold text-[var(--color-text-primary)]">{fmt(order.total)}</span>
+          {hasItems && (
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+              className={`text-[var(--color-text-secondary)] transition-transform ${expanded ? 'rotate-90' : ''}`}>
+              <path d="m9 18 6-6-6-6"/>
+            </svg>
+          )}
+        </div>
+      </button>
+
+      {expanded && hasItems && (
+        <div className="border-t border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2">
+          <ul className="flex flex-col gap-1">
+            {items.map(it => {
+              const cancelled = it.status === 'cancelado'
+              const returned  = (it.qtyReturned || 0) > 0
+              const activeQty = it.qty - (it.qtyReturned || 0)
+              return (
+                <li key={it.id} className={`flex items-center justify-between gap-2 py-1.5 text-xs ${cancelled ? 'opacity-50 line-through' : ''}`}>
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="font-mono text-[10px] text-[var(--color-text-secondary)] shrink-0">{it.skuCode || '—'}</span>
+                    <span className="truncate text-[var(--color-text-primary)]">{it.productName}</span>
+                    {it.attributes && Object.keys(it.attributes).length > 0 && (
+                      <span className="text-[10px] text-[var(--color-text-secondary)] shrink-0">
+                        ({Object.values(it.attributes).join(' / ')})
+                      </span>
+                    )}
+                    {cancelled && (
+                      <span className="text-[10px] rounded-full bg-red-100 text-red-700 px-1.5 py-0.5 font-medium no-underline">
+                        cancelado
+                      </span>
+                    )}
+                    {returned && !cancelled && (
+                      <span className="text-[10px] rounded-full bg-amber-100 text-amber-700 px-1.5 py-0.5 font-medium">
+                        devolvido {it.qtyReturned}x
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-3 shrink-0">
+                    <span className="text-[var(--color-text-secondary)] tabular-nums">
+                      {cancelled || returned ? `${activeQty}/${it.qty}` : `${it.qty}`}x
+                    </span>
+                    <span className="text-[var(--color-text-secondary)] tabular-nums">{fmt(it.priceUnit)}</span>
+                    <span className="font-semibold text-[var(--color-text-primary)] tabular-nums w-20 text-right">
+                      {fmt(activeQty * it.priceUnit)}
+                    </span>
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+        </div>
+      )}
+    </li>
   )
 }
 
@@ -524,14 +767,36 @@ function buildReportHtml(customer, detail) {
       <td class="num ${t.type==='debit'?'debit':'credit'}">${t.type==='debit'?'−':'+'}${fmtC(t.amount)}</td>
     </tr>`).join('') || '<tr><td colspan="5" class="empty">Sem movimentações</td></tr>'
 
-  const ordRows = (detail.orders ?? []).map(o => `
-    <tr>
-      <td class="mono">${o.ref || '—'}</td>
-      <td>${fDate(o.createdAt)}</td>
-      <td>${STATUS_PT[o.status] ?? o.status}</td>
-      <td>${PM_PT[o.paymentMethod] ?? (o.paymentMethod || '—')}</td>
-      <td class="num">${fmtC(o.total)}</td>
-    </tr>`).join('') || '<tr><td colspan="5" class="empty">Sem pedidos</td></tr>'
+  const ordRows = (detail.orders ?? []).map(o => {
+    const items = o.items ?? []
+    const itemsRows = items.length ? `
+      <tr class="items-row"><td colspan="5" class="items-cell">
+        <table class="items"><thead><tr>
+          <th>SKU</th><th>Produto</th><th class="num">Qtd</th><th class="num">Preço</th><th class="num">Total</th>
+        </tr></thead><tbody>
+        ${items.map(it => {
+          const activeQty = (it.qty || 0) - (it.qtyReturned || 0)
+          const cancelled = it.status === 'cancelado'
+          const label = cancelled ? ' (cancelado)' : (it.qtyReturned > 0 ? ` (devolv. ${it.qtyReturned})` : '')
+          return `<tr class="${cancelled?'item-cancelled':''}">
+            <td class="mono">${it.skuCode || '—'}</td>
+            <td>${it.productName || ''}${label}</td>
+            <td class="num">${it.qty}${cancelled||it.qtyReturned?` / ${activeQty}`:''}</td>
+            <td class="num">${fmtC(it.priceUnit)}</td>
+            <td class="num">${fmtC(activeQty * it.priceUnit)}</td>
+          </tr>`
+        }).join('')}
+        </tbody></table>
+      </td></tr>` : ''
+    return `
+      <tr>
+        <td class="mono">${o.ref || '—'}</td>
+        <td>${fDate(o.createdAt)}</td>
+        <td>${STATUS_PT[o.status] ?? o.status}</td>
+        <td>${PM_PT[o.paymentMethod] ?? (o.paymentMethod || '—')}</td>
+        <td class="num">${fmtC(o.total)}</td>
+      </tr>${itemsRows}`
+  }).join('') || '<tr><td colspan="5" class="empty">Sem pedidos</td></tr>'
 
   const periodo = detail.filtered ? `Período: ${detail.dateFrom ?? ''} a ${detail.dateTo ?? ''}` : 'Histórico completo'
 
@@ -556,6 +821,12 @@ function buildReportHtml(customer, detail) {
   .mono{font-family:monospace;font-size:11px}
   .debit{color:#dc2626}.credit{color:#16a34a}
   .empty{text-align:center;color:#aaa;padding:16px;font-style:italic}
+  .items-row td{background:#f8fafc!important;padding:0}
+  .items-cell{padding:0 10px 8px 30px!important}
+  table.items{margin-top:0;font-size:10.5px}
+  table.items th{background:#e8eef5;padding:4px 8px;font-size:9.5px}
+  table.items td{padding:4px 8px;border-bottom:1px solid #eef2f7;background:#fff!important}
+  .item-cancelled{text-decoration:line-through;color:#888}
   .footer{margin-top:32px;border-top:1px solid #e0e0e0;padding-top:12px;font-size:10px;color:#aaa;display:flex;justify-content:space-between}
   @media print{body{padding:16px}@page{margin:1.5cm;size:A4 portrait}}
 </style></head><body>

@@ -3,9 +3,13 @@
  * Carteira de compradores B2B — Contas a Receber.
  *
  * GET  /api/wallet/receivables              — lista compradores com saldo devedor
- * GET  /api/wallet/buyers/:id              — extrato (suporta ?dateFrom=&dateTo=)
+ * GET  /api/wallet/buyers/:id              — extrato (suporta ?dateFrom=&dateTo=) — inclui itens dos pedidos
  * PATCH /api/wallet/buyers/:id/limit       — define limite de crédito
  * POST  /api/wallet/buyers/:id/payment     — registra pagamento (com forma + comprovante)
+ *
+ * Ticket #118:
+ *  - Pedidos retornam com items[] (LEFT JOIN order_items) p/ drilldown na UI.
+ *  - POST /payment rejeita amount > credit_balance (HTTP 422).
  */
 
 import { Router }   from 'express'
@@ -114,19 +118,35 @@ walletRouter.get('/buyers/:id', async (req, res) => {
       LIMIT $${txParams.length}
     `, txParams)
 
-    // ── Pedidos do período ──
+    // ── Pedidos do período (com itens — ticket #118) ──
     const ordParams = [req.params.id]
-    const ordWhere  = ['customer_id = $1']
-    if (dateFrom) { ordParams.push(dateFrom); ordWhere.push(`created_at::date >= $${ordParams.length}::date`) }
-    if (dateTo)   { ordParams.push(dateTo);   ordWhere.push(`created_at::date <= $${ordParams.length}::date`) }
+    const ordWhere  = ['o.customer_id = $1']
+    if (dateFrom) { ordParams.push(dateFrom); ordWhere.push(`o.created_at::date >= ${ordParams.length}::date`) }
+    if (dateTo)   { ordParams.push(dateTo);   ordWhere.push(`o.created_at::date <= ${ordParams.length}::date`) }
     ordParams.push(50)
 
     const { rows: orders } = await query(`
-      SELECT ref, id, number, status, total, payment_method AS "paymentMethod", created_at AS "createdAt"
-      FROM orders
+      SELECT o.ref, o.id, o.number, o.status, o.total,
+             o.payment_method AS "paymentMethod", o.created_at AS "createdAt",
+             COALESCE(json_agg(
+               json_build_object(
+                 'id',          oi.id,
+                 'productName', oi.product_name,
+                 'skuCode',     oi.sku_code,
+                 'attributes',  oi.attributes,
+                 'qty',         oi.qty,
+                 'qtyReturned', COALESCE(oi.qty_returned, 0),
+                 'priceUnit',   oi.price_unit,
+                 'status',      COALESCE(oi.status, 'ativo')
+               )
+               ORDER BY oi.created_at, oi.id
+             ) FILTER (WHERE oi.id IS NOT NULL), '[]'::json) AS items
+      FROM orders o
+      LEFT JOIN order_items oi ON oi.order_id = o.id
       WHERE ${ordWhere.join(' AND ')}
-      ORDER BY created_at DESC
-      LIMIT $${ordParams.length}
+      GROUP BY o.id
+      ORDER BY o.created_at DESC
+      LIMIT ${ordParams.length}
     `, ordParams)
 
     res.json({
@@ -148,6 +168,10 @@ walletRouter.get('/buyers/:id', async (req, res) => {
         ...o,
         ref:   o.ref || (o.number ? `#${o.number}` : o.id?.slice(-6).toUpperCase()),
         total: Math.round(parseFloat(o.total) * 100),
+        items: (o.items ?? []).map(it => ({
+          ...it,
+          priceUnit: Math.round(parseFloat(it.priceUnit) * 100),
+        })),
       })),
     })
   } catch (err) {
@@ -246,6 +270,16 @@ walletRouter.post('/buyers/:id/payment', authorize('admin', 'financeiro'), async
       [req.params.id]
     )
     if (!buyer) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Comprador não encontrado.' }) }
+
+    // Ticket #118: pagamento não pode exceder saldo devedor
+    const balanceCents = Math.round(parseFloat(buyer.credit_balance) * 100)
+    if (amountCents > balanceCents) {
+      await client.query('ROLLBACK')
+      const balanceStr = (balanceCents / 100).toFixed(2).replace('.', ',')
+      return res.status(422).json({
+        error: `Valor excede o saldo devedor (máx: R$ ${balanceStr}).`,
+      })
+    }
 
     await client.query(`
       INSERT INTO wallet_transactions
