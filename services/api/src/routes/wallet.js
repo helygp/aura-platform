@@ -121,8 +121,8 @@ walletRouter.get('/buyers/:id', async (req, res) => {
     // ── Pedidos do período (com itens — ticket #118) ──
     const ordParams = [req.params.id]
     const ordWhere  = ['o.customer_id = $1']
-    if (dateFrom) { ordParams.push(dateFrom); ordWhere.push(`o.created_at::date >= ${ordParams.length}::date`) }
-    if (dateTo)   { ordParams.push(dateTo);   ordWhere.push(`o.created_at::date <= ${ordParams.length}::date`) }
+    if (dateFrom) { ordParams.push(dateFrom); ordWhere.push(`o.created_at::date >= $${ordParams.length}::date`) }
+    if (dateTo)   { ordParams.push(dateTo);   ordWhere.push(`o.created_at::date <= $${ordParams.length}::date`) }
     ordParams.push(50)
 
     const { rows: orders } = await query(`
@@ -146,7 +146,7 @@ walletRouter.get('/buyers/:id', async (req, res) => {
       WHERE ${ordWhere.join(' AND ')}
       GROUP BY o.id
       ORDER BY o.created_at DESC
-      LIMIT ${ordParams.length}
+      LIMIT $${ordParams.length}
     `, ordParams)
 
     res.json({
