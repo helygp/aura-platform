@@ -21,6 +21,14 @@ e o projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ---
 
+## [1.10.0] — 2026-06-27
+
+### Adicionado
+- **ticket-122:** Automacao pos-deploy + correcao step Release (PR #92)
+
+### Corrigido
+- Remove duplicatas changelog.json (enquadramento e variações ficam só na v1.7) (73963cd)
+
 ## [1.8.0] — 2026-06-26
 
 ### Adicionado
