@@ -1,12 +1,12 @@
 /**
  * pages/receivables/ReceivablesPage.jsx
- * Contas a Receber — carteira de clientes B2B.
+ * Contas a Receber — extrato financeiro do cliente.
  *
  * T2.1 — filtro por data com recomposição de saldo de abertura
  * T2.2 — forma de pagamento + upload de comprovante
  * fix #82 — saldo devedor reflete período filtrado + reload ao toggle do filtro
- * ticket #118 — busca de cliente, presets de período, timeline unificada
- *               com drilldown de pedido + validação de pagamento ≤ saldo
+ * ticket #118 — busca de cliente, presets de período, validação de pagamento,
+ *               saldo corrente após cada movimento, drilldown de pedido em modal
  */
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
@@ -18,26 +18,20 @@ const fmtDate = iso => {
   try { return new Intl.DateTimeFormat('pt-BR', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' }).format(new Date(iso)) }
   catch { return '—' }
 }
-const fmtDateShort = iso => {
-  if (!iso) return '—'
-  try { return new Intl.DateTimeFormat('pt-BR', { day:'2-digit', month:'2-digit' }).format(new Date(iso)) }
-  catch { return '—' }
-}
 const toISODate = d => d.toISOString().slice(0, 10)
-const today = () => toISODate(new Date())
 
 // ── Presets de período ─────────────────────────────────────────────────────
 function rangeForPreset(preset) {
   const now = new Date()
   const y = now.getFullYear(), m = now.getMonth(), d = now.getDate()
-  const dow = now.getDay() // 0=domingo
+  const dow = now.getDay()
   const mondayOffset = dow === 0 ? -6 : 1 - dow
 
   switch (preset) {
-    case 'today':   return { from: toISODate(new Date(y, m, d)),                       to: toISODate(new Date(y, m, d)) }
-    case 'week':    return { from: toISODate(new Date(y, m, d + mondayOffset)),         to: toISODate(new Date(y, m, d + mondayOffset + 6)) }
-    case 'month':   return { from: toISODate(new Date(y, m, 1)),                       to: toISODate(new Date(y, m + 1, 0)) }
-    case 'last30':  return { from: toISODate(new Date(y, m, d - 29)),                  to: toISODate(new Date(y, m, d)) }
+    case 'today':   return { from: toISODate(new Date(y, m, d)),                  to: toISODate(new Date(y, m, d)) }
+    case 'week':    return { from: toISODate(new Date(y, m, d + mondayOffset)),    to: toISODate(new Date(y, m, d + mondayOffset + 6)) }
+    case 'month':   return { from: toISODate(new Date(y, m, 1)),                  to: toISODate(new Date(y, m + 1, 0)) }
+    case 'last30':  return { from: toISODate(new Date(y, m, d - 29)),             to: toISODate(new Date(y, m, d)) }
     default:        return null
   }
 }
@@ -80,27 +74,31 @@ function authFetchJson(url, opts = {}) {
   })
 }
 
-// ── Heurística pra classificar o tipo de transação (ícone + cor) ──────────
-function txCategory(t) {
-  const desc = (t.description || '').toLowerCase()
-  if (t.type === 'credit') {
-    if (desc.startsWith('estorno'))         return { kind: 'estorno',  icon: '↩', tone: 'amber' }
-    if (desc.startsWith('devolução'))       return { kind: 'estorno',  icon: '↩', tone: 'amber' }
-    if (desc.startsWith('ajuste'))          return { kind: 'ajuste',   icon: '⚖', tone: 'slate' }
-    return { kind: 'pagamento', icon: '💸', tone: 'green' }
+// Heurística pra classificar o tipo de movimento (ícone + cor + label)
+function txCategory(tx) {
+  const desc = (tx.description || '').toLowerCase()
+  if (tx.type === 'credit') {
+    if (desc.startsWith('estorno') || desc.startsWith('devolução'))
+      return { icon: '↩', tone: 'amber', label: 'Estorno' }
+    if (desc.startsWith('ajuste'))
+      return { icon: '⚖', tone: 'slate', label: 'Ajuste' }
+    return { icon: '💸', tone: 'green', label: 'Pagamento' }
   }
-  if (desc.startsWith('ajuste')) return { kind: 'ajuste', icon: '⚖', tone: 'slate' }
-  return { kind: 'pedido_debito', icon: '🛒', tone: 'red' }
+  if (desc.startsWith('ajuste'))
+    return { icon: '⚖', tone: 'slate', label: 'Ajuste' }
+  if (tx.orderRef)
+    return { icon: '🛒', tone: 'red', label: 'Pedido' }
+  return { icon: '–', tone: 'red', label: 'Débito' }
 }
 
 export function ReceivablesPage() {
   const { user } = useAuth()
 
-  const [buyers,     setBuyers]     = useState([])
-  const [loading,    setLoading]    = useState(true)
-  const [error,      setError]      = useState(null)
-  const [selected,   setSelected]   = useState(null)
-  const [detail,     setDetail]     = useState(null)
+  const [buyers,        setBuyers]        = useState([])
+  const [loading,       setLoading]       = useState(true)
+  const [error,         setError]         = useState(null)
+  const [selected,      setSelected]      = useState(null)
+  const [detail,        setDetail]        = useState(null)
   const [detailLoading, setDetailLoading] = useState(false)
 
   // Busca de clientes (ticket #118)
@@ -111,10 +109,10 @@ export function ReceivablesPage() {
   const [dateFrom,    setDateFrom]    = useState(initialRange.from)
   const [dateTo,      setDateTo]      = useState(initialRange.to)
   const [useFilter,   setUseFilter]   = useState(false)
-  const [quickPreset, setQuickPreset] = useState('month') // 'today'|'week'|'month'|'last30'|'custom'
+  const [quickPreset, setQuickPreset] = useState('month')
 
-  // Drilldown de pedidos (ticket #118)
-  const [expandedOrders, setExpandedOrders] = useState(() => new Set())
+  // Modal de pedido (ticket #118 — drilldown sob demanda)
+  const [orderModal, setOrderModal] = useState(null)
 
   // Modal pagamento
   const [payModal,     setPayModal]     = useState(false)
@@ -146,7 +144,7 @@ export function ReceivablesPage() {
 
   useEffect(() => { if (user) loadBuyers() }, [loadBuyers, user])
 
-  // Filtro client-side de buyers por nome/email (ticket #118)
+  // Filtro client-side de buyers por nome/email
   const filteredBuyers = useMemo(() => {
     const q = customerSearch.trim().toLowerCase()
     if (!q) return buyers
@@ -159,7 +157,6 @@ export function ReceivablesPage() {
 
   const fetchDetail = useCallback(async (buyer, { from, to, filtered } = {}) => {
     setDetail(null)
-    setExpandedOrders(new Set())
     setDetailLoading(true)
     try {
       const qs = new URLSearchParams()
@@ -183,7 +180,6 @@ export function ReceivablesPage() {
     if (selected) fetchDetail(selected, { from: dateFrom, to: dateTo, filtered: useFilter })
   }
 
-  // Aplicar preset rápido (ticket #118)
   function applyPreset(presetId) {
     setQuickPreset(presetId)
     if (presetId === 'custom') {
@@ -198,29 +194,35 @@ export function ReceivablesPage() {
     if (selected) fetchDetail(selected, { from: range.from, to: range.to, filtered: true })
   }
 
-  // fix #82 — recarrega extrato ao ativar/desativar filtro
+  // fix #82 — recarrega ao toggle do filtro
   useEffect(() => {
     if (selected) fetchDetail(selected, { from: dateFrom, to: dateTo, filtered: useFilter })
   }, [useFilter]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Toggle expansão de um pedido (ticket #118)
-  function toggleOrder(orderId) {
-    setExpandedOrders(prev => {
-      const next = new Set(prev)
-      if (next.has(orderId)) next.delete(orderId); else next.add(orderId)
-      return next
-    })
-  }
-
-  // Timeline unificada: pedidos + transações ordenados por data DESC (ticket #118)
-  const timeline = useMemo(() => {
+  // Saldo corrente após cada movimento (extrato bancário) — ticket #118
+  // Backend devolve transactions DESC; calculamos do mais antigo pro mais novo
+  // partindo do openingBalance e voltamos pra DESC pra exibir.
+  const txWithBalance = useMemo(() => {
     if (!detail) return []
-    const entries = [
-      ...(detail.orders ?? []).map(o => ({ kind: 'order', date: o.createdAt, data: o })),
-      ...(detail.transactions ?? []).map(t => ({ kind: 'tx', date: t.createdAt, data: t })),
-    ]
-    return entries.sort((a, b) => new Date(b.date) - new Date(a.date))
+    const asc = [...(detail.transactions ?? [])].reverse()
+    let running = detail.openingBalance ?? 0
+    const withBal = asc.map(tx => {
+      running += tx.type === 'debit' ? tx.amount : -tx.amount
+      return { ...tx, balance: running }
+    })
+    return withBal.reverse()
   }, [detail])
+
+  // Drilldown: procura o pedido em detail.orders pelo ref ou id (ticket #118)
+  function openOrderModal(orderRef) {
+    if (!detail || !orderRef) return
+    const order = (detail.orders ?? []).find(o =>
+      o.ref === orderRef || o.id === orderRef ||
+      // refs costumam vir como "#ABC123" ou "ABC123"
+      (o.ref && (o.ref === `#${orderRef}` || `#${o.ref}` === orderRef))
+    )
+    setOrderModal(order ? { kind: 'ok', order } : { kind: 'missing', ref: orderRef })
+  }
 
   // Upload comprovante → base64
   async function handleFileChange(e) {
@@ -239,7 +241,7 @@ export function ReceivablesPage() {
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
-  // Validação ao vivo do valor de pagamento (ticket #118)
+  // Validação ao vivo do valor de pagamento
   const payAmountCents = useMemo(() => {
     const n = parseFloat((payAmount || '').replace(',', '.'))
     if (!isFinite(n) || n <= 0) return 0
@@ -250,7 +252,6 @@ export function ReceivablesPage() {
   const payValid     = payAmountCents > 0 && payAmountCents <= balanceCents
 
   async function handlePayment() {
-    // Ticket #118: validações de valor
     if (!payAmountCents) return setPayError('Valor inválido.')
     if (payAmountCents > balanceCents)
       return setPayError(`Valor maior que o saldo devedor (${fmt(balanceCents)}).`)
@@ -314,7 +315,7 @@ export function ReceivablesPage() {
           </button>
         </div>
 
-        {/* Busca de cliente (ticket #118) */}
+        {/* Busca de cliente */}
         <div className="border-b border-[var(--color-border)] px-3 py-2">
           <div className="relative">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
@@ -404,7 +405,7 @@ export function ReceivablesPage() {
             </button>
           </div>
 
-          {/* ── Filtro de período: presets + range custom (ticket #118) ── */}
+          {/* ── Filtro de período: presets + range custom ── */}
           <div className="flex flex-col gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2.5">
             <div className="flex flex-wrap items-center gap-1.5">
               <label className="flex items-center gap-1.5 text-xs text-[var(--color-text-secondary)] cursor-pointer select-none mr-2">
@@ -440,7 +441,7 @@ export function ReceivablesPage() {
             )}
           </div>
 
-          {/* Saldos — fix #82: "Saldo devedor" reflete o período quando filtrado */}
+          {/* Saldos */}
           {detail && (() => {
             const periodBalance = detail.filtered
               ? detail.openingBalance + detail.transactions.reduce(
@@ -479,21 +480,19 @@ export function ReceivablesPage() {
                 </div>
               )}
 
-              {/* Timeline unificada (ticket #118) */}
+              {/* ── Extrato: APENAS movimentações financeiras (ticket #118) ── */}
               <div className="px-4 pb-6 pt-4">
                 <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-[var(--color-text-secondary)]">
                   Movimentações {detail.filtered ? `(${dateFrom} – ${dateTo})` : ''}
                 </h3>
-                {timeline.length === 0 ? (
+                {txWithBalance.length === 0 ? (
                   <p className="text-sm text-[var(--color-text-secondary)]">Sem movimentações{detail.filtered ? ' no período' : ''}.</p>
                 ) : (
                   <ul className="flex flex-col gap-1">
-                    {timeline.map((entry, idx) => entry.kind === 'order'
-                      ? <OrderRow key={`o-${entry.data.id || idx}`} order={entry.data}
-                          expanded={expandedOrders.has(entry.data.id)}
-                          onToggle={() => toggleOrder(entry.data.id)} />
-                      : <TxRow key={`t-${entry.data.id}`} tx={entry.data} />
-                    )}
+                    {txWithBalance.map(tx => (
+                      <TxRow key={tx.id} tx={tx}
+                        onOrderClick={tx.orderRef ? () => openOrderModal(tx.orderRef) : null} />
+                    ))}
                   </ul>
                 )}
               </div>
@@ -504,6 +503,26 @@ export function ReceivablesPage() {
         <div className="hidden flex-1 items-center justify-center md:flex">
           <p className="text-sm text-[var(--color-text-secondary)]">Selecione um cliente para ver o extrato</p>
         </div>
+      )}
+
+      {/* ── Modal Pedido (drilldown ticket #118) ── */}
+      {orderModal && (
+        <Modal title={orderModal.kind === 'ok' ? `Pedido ${orderModal.order.ref || '—'}` : 'Pedido não disponível'}
+               size="lg" onClose={() => setOrderModal(null)}>
+          {orderModal.kind === 'ok'
+            ? <OrderDetails order={orderModal.order} />
+            : <div className="text-sm text-[var(--color-text-secondary)]">
+                <p>Esse pedido não está incluído no período filtrado.</p>
+                <p className="mt-2">Desative o filtro ou amplie o intervalo para visualizar os detalhes.</p>
+              </div>
+          }
+          <div className="mt-5 flex justify-end">
+            <button onClick={() => setOrderModal(null)}
+              className="rounded-[var(--radius)] border border-[var(--color-border)] px-4 py-2 text-sm font-medium hover:bg-[var(--color-surface-hover)]">
+              Fechar
+            </button>
+          </div>
+        </Modal>
       )}
 
       {/* ── Modal Pagamento ── */}
@@ -595,19 +614,38 @@ export function ReceivablesPage() {
   )
 }
 
-// ── Linha de transação na timeline (ticket #118) ──────────────────────────
-function TxRow({ tx }) {
-  const cat = txCategory(tx)
-  const isCredit = tx.type === 'credit'
+// ── Linha de movimentação no extrato (com saldo corrente e click pra pedido) ──
+function TxRow({ tx, onOrderClick }) {
+  const cat        = txCategory(tx)
+  const isCredit   = tx.type === 'credit'
+  const clickable  = !!onOrderClick
+  const toneClasses = {
+    green:  'bg-green-100 text-green-700',
+    red:    'bg-red-100 text-red-700',
+    amber:  'bg-amber-100 text-amber-700',
+    slate:  'bg-slate-100 text-slate-700',
+  }[cat.tone] || 'bg-slate-100 text-slate-700'
+
   return (
-    <li className="flex items-center justify-between rounded-[var(--radius)] border border-[var(--color-border)] px-3 py-2.5 gap-2">
+    <li
+      onClick={clickable ? onOrderClick : undefined}
+      role={clickable ? 'button' : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      onKeyDown={clickable ? (e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOrderClick() } }) : undefined}
+      title={clickable ? 'Clique para ver o pedido' : undefined}
+      className={`flex items-center justify-between gap-2 rounded-[var(--radius)] border border-[var(--color-border)] px-3 py-2.5 ${
+        clickable
+          ? 'cursor-pointer hover:border-[var(--color-primary)] hover:bg-[var(--color-surface-hover)] transition-colors'
+          : ''
+      }`}
+    >
       <div className="flex items-center gap-2.5 min-w-0">
-        <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs ${isCredit?'bg-green-100 text-green-700':'bg-red-100 text-red-700'}`}>
+        <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs ${toneClasses}`}>
           {cat.icon}
         </span>
         <div className="min-w-0">
           <p className="text-xs font-medium text-[var(--color-text-primary)] truncate">{tx.description}</p>
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap mt-0.5">
             <p className="text-[10px] text-[var(--color-text-secondary)]">{fmtDate(tx.createdAt)}</p>
             {tx.paymentMethod && (
               <span className="text-[10px] rounded-full bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400 px-1.5 py-0.5 font-medium">
@@ -621,115 +659,116 @@ function TxRow({ tx }) {
             )}
             {tx.hasReceipt && (
               <a href={`/api/wallet/transactions/${tx.id}/receipt`} target="_blank" rel="noopener noreferrer"
+                onClick={e => e.stopPropagation()}
                 className="text-[10px] rounded-full bg-green-50 dark:bg-green-950/30 text-green-700 dark:text-green-400 px-1.5 py-0.5 font-medium hover:opacity-80">
                 📎 Comprovante
               </a>
             )}
+            {clickable && (
+              <span className="text-[10px] text-[var(--color-primary)] font-medium">
+                ver pedido →
+              </span>
+            )}
           </div>
         </div>
       </div>
-      <span className={`text-sm font-semibold shrink-0 ${isCredit?'text-green-600':'text-red-600'}`}>
-        {isCredit?'+':'−'}{fmt(tx.amount)}
-      </span>
+      <div className="flex flex-col items-end shrink-0">
+        <span className={`text-sm font-semibold ${isCredit ? 'text-green-600' : 'text-red-600'}`}>
+          {isCredit ? '+' : '−'}{fmt(tx.amount)}
+        </span>
+        <span className="text-[10px] text-[var(--color-text-secondary)]">
+          saldo: <span className={`tabular-nums font-medium ${tx.balance > 0 ? 'text-red-500/90' : 'text-[var(--color-text-secondary)]'}`}>{fmt(tx.balance)}</span>
+        </span>
+      </div>
     </li>
   )
 }
 
-// ── Linha de pedido na timeline + drilldown (ticket #118) ─────────────────
-function OrderRow({ order, expanded, onToggle }) {
+// ── Detalhe do pedido dentro do modal ──
+function OrderDetails({ order }) {
   const items = order.items ?? []
-  const hasItems = items.length > 0
   return (
-    <li className="rounded-[var(--radius)] border border-[var(--color-border)] overflow-hidden">
-      <button onClick={onToggle} disabled={!hasItems}
-        className="w-full flex items-center justify-between px-3 py-2.5 gap-2 hover:bg-[var(--color-surface-hover)] disabled:cursor-default text-left">
-        <div className="flex items-center gap-2.5 min-w-0">
-          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-blue-100 text-blue-700 text-xs">
-            🛒
-          </span>
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <p className="text-xs font-medium text-[var(--color-text-primary)]">
-                Pedido <span className="font-mono">{order.ref || '—'}</span>
-              </p>
-              <StatusBadge status={order.status} />
-            </div>
-            <div className="flex items-center gap-2 flex-wrap mt-0.5">
-              <p className="text-[10px] text-[var(--color-text-secondary)]">{fmtDate(order.createdAt)}</p>
-              <span className="text-[10px] rounded-full bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400 px-1.5 py-0.5 font-medium">
-                {PM_LABEL_ALL[order.paymentMethod] ?? (order.paymentMethod||'—').replace('_',' ')}
-              </span>
-              {hasItems && (
-                <span className="text-[10px] text-[var(--color-text-secondary)]">
-                  {items.length} {items.length === 1 ? 'item' : 'itens'}
-                </span>
-              )}
-            </div>
-          </div>
+    <div className="flex flex-col gap-4">
+      <div className="grid grid-cols-2 gap-3 rounded-[var(--radius)] border border-[var(--color-border)] bg-[var(--color-background)] p-3">
+        <div>
+          <p className="text-[10px] uppercase tracking-wider text-[var(--color-text-secondary)]">Status</p>
+          <div className="mt-0.5"><StatusBadge status={order.status} /></div>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <span className="text-sm font-semibold text-[var(--color-text-primary)]">{fmt(order.total)}</span>
-          {hasItems && (
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-              className={`text-[var(--color-text-secondary)] transition-transform ${expanded ? 'rotate-90' : ''}`}>
-              <path d="m9 18 6-6-6-6"/>
-            </svg>
-          )}
+        <div>
+          <p className="text-[10px] uppercase tracking-wider text-[var(--color-text-secondary)]">Pagamento</p>
+          <p className="mt-0.5 text-xs font-medium text-[var(--color-text-primary)]">
+            {PM_LABEL_ALL[order.paymentMethod] ?? (order.paymentMethod || '—').replace('_',' ')}
+          </p>
         </div>
-      </button>
+        <div>
+          <p className="text-[10px] uppercase tracking-wider text-[var(--color-text-secondary)]">Data</p>
+          <p className="mt-0.5 text-xs font-medium text-[var(--color-text-primary)]">{fmtDate(order.createdAt)}</p>
+        </div>
+        <div>
+          <p className="text-[10px] uppercase tracking-wider text-[var(--color-text-secondary)]">Total</p>
+          <p className="mt-0.5 text-sm font-bold text-[var(--color-text-primary)]">{fmt(order.total)}</p>
+        </div>
+      </div>
 
-      {expanded && hasItems && (
-        <div className="border-t border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2">
-          <ul className="flex flex-col gap-1">
-            {items.map(it => {
-              const cancelled = it.status === 'cancelado'
-              const returned  = (it.qtyReturned || 0) > 0
-              const activeQty = it.qty - (it.qtyReturned || 0)
-              return (
-                <li key={it.id} className={`flex items-center justify-between gap-2 py-1.5 text-xs ${cancelled ? 'opacity-50 line-through' : ''}`}>
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className="font-mono text-[10px] text-[var(--color-text-secondary)] shrink-0">{it.skuCode || '—'}</span>
-                    <span className="truncate text-[var(--color-text-primary)]">{it.productName}</span>
-                    {it.attributes && Object.keys(it.attributes).length > 0 && (
-                      <span className="text-[10px] text-[var(--color-text-secondary)] shrink-0">
-                        ({Object.values(it.attributes).join(' / ')})
-                      </span>
-                    )}
-                    {cancelled && (
-                      <span className="text-[10px] rounded-full bg-red-100 text-red-700 px-1.5 py-0.5 font-medium no-underline">
-                        cancelado
-                      </span>
-                    )}
-                    {returned && !cancelled && (
-                      <span className="text-[10px] rounded-full bg-amber-100 text-amber-700 px-1.5 py-0.5 font-medium">
-                        devolvido {it.qtyReturned}x
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-3 shrink-0">
-                    <span className="text-[var(--color-text-secondary)] tabular-nums">
-                      {cancelled || returned ? `${activeQty}/${it.qty}` : `${it.qty}`}x
-                    </span>
-                    <span className="text-[var(--color-text-secondary)] tabular-nums">{fmt(it.priceUnit)}</span>
-                    <span className="font-semibold text-[var(--color-text-primary)] tabular-nums w-20 text-right">
-                      {fmt(activeQty * it.priceUnit)}
-                    </span>
-                  </div>
-                </li>
-              )
-            })}
-          </ul>
+      {items.length === 0 ? (
+        <p className="text-sm text-[var(--color-text-secondary)]">Sem itens neste pedido.</p>
+      ) : (
+        <div className="overflow-hidden rounded-[var(--radius)] border border-[var(--color-border)]">
+          <table className="w-full text-xs">
+            <thead className="bg-[var(--color-surface-hover)]">
+              <tr>
+                <th className="px-3 py-2 text-left font-semibold text-[var(--color-text-secondary)]">SKU</th>
+                <th className="px-3 py-2 text-left font-semibold text-[var(--color-text-secondary)]">Produto</th>
+                <th className="px-3 py-2 text-right font-semibold text-[var(--color-text-secondary)]">Qtd</th>
+                <th className="px-3 py-2 text-right font-semibold text-[var(--color-text-secondary)]">Preço</th>
+                <th className="px-3 py-2 text-right font-semibold text-[var(--color-text-secondary)]">Total</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[var(--color-border)]">
+              {items.map(it => {
+                const cancelled = it.status === 'cancelado'
+                const returned  = (it.qtyReturned || 0) > 0
+                const activeQty = it.qty - (it.qtyReturned || 0)
+                return (
+                  <tr key={it.id} className={cancelled ? 'opacity-50' : ''}>
+                    <td className={`px-3 py-2 font-mono text-[10px] text-[var(--color-text-secondary)] ${cancelled ? 'line-through' : ''}`}>{it.skuCode || '—'}</td>
+                    <td className={`px-3 py-2 ${cancelled ? 'line-through' : ''}`}>
+                      <span className="text-[var(--color-text-primary)]">{it.productName}</span>
+                      {it.attributes && Object.keys(it.attributes).length > 0 && (
+                        <span className="ml-1 text-[10px] text-[var(--color-text-secondary)]">
+                          ({Object.values(it.attributes).join(' / ')})
+                        </span>
+                      )}
+                      {cancelled && <span className="ml-2 text-[10px] rounded-full bg-red-100 text-red-700 px-1.5 py-0.5 font-medium no-underline">cancelado</span>}
+                      {returned && !cancelled && <span className="ml-2 text-[10px] rounded-full bg-amber-100 text-amber-700 px-1.5 py-0.5 font-medium">devolvido {it.qtyReturned}x</span>}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-[var(--color-text-secondary)]">
+                      {cancelled || returned ? `${activeQty}/${it.qty}` : it.qty}x
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-[var(--color-text-secondary)]">{fmt(it.priceUnit)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums font-semibold text-[var(--color-text-primary)]">{fmt(activeQty * it.priceUnit)}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
         </div>
       )}
-    </li>
+    </div>
   )
 }
 
-function Modal({ title, onClose, children }) {
+// ── Modal genérico com tamanhos ──
+function Modal({ title, onClose, children, size = 'sm' }) {
+  const widthCls = {
+    sm: 'max-w-sm',
+    md: 'max-w-md',
+    lg: 'max-w-2xl',
+  }[size] || 'max-w-sm'
   return (
     <>
       <div className="fixed inset-0 z-40 bg-black/50" onClick={onClose} />
-      <div className="fixed left-1/2 top-1/2 z-50 w-[90vw] max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-[var(--radius-lg)] bg-[var(--color-surface)] p-6 shadow-xl overflow-y-auto max-h-[90vh]">
+      <div className={`fixed left-1/2 top-1/2 z-50 w-[90vw] ${widthCls} -translate-x-1/2 -translate-y-1/2 rounded-[var(--radius-lg)] bg-[var(--color-surface)] p-6 shadow-xl overflow-y-auto max-h-[90vh]`}>
         <h2 className="mb-4 text-base font-semibold text-[var(--color-text-primary)]">{title}</h2>
         {children}
       </div>
@@ -750,7 +789,7 @@ function StatusBadge({ status }) {
   return <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${cls}`}>{label}</span>
 }
 
-/* ─── Relatório HTML para impressão ─── */
+/* ─── Relatório HTML para impressão (sem itens dos pedidos — ticket #118) ─── */
 function buildReportHtml(customer, detail) {
   const now   = new Intl.DateTimeFormat('pt-BR', { dateStyle:'full', timeStyle:'short' }).format(new Date())
   const fmtC  = cents => new Intl.NumberFormat('pt-BR', { style:'currency', currency:'BRL' }).format((cents ?? 0) / 100)
@@ -767,36 +806,14 @@ function buildReportHtml(customer, detail) {
       <td class="num ${t.type==='debit'?'debit':'credit'}">${t.type==='debit'?'−':'+'}${fmtC(t.amount)}</td>
     </tr>`).join('') || '<tr><td colspan="5" class="empty">Sem movimentações</td></tr>'
 
-  const ordRows = (detail.orders ?? []).map(o => {
-    const items = o.items ?? []
-    const itemsRows = items.length ? `
-      <tr class="items-row"><td colspan="5" class="items-cell">
-        <table class="items"><thead><tr>
-          <th>SKU</th><th>Produto</th><th class="num">Qtd</th><th class="num">Preço</th><th class="num">Total</th>
-        </tr></thead><tbody>
-        ${items.map(it => {
-          const activeQty = (it.qty || 0) - (it.qtyReturned || 0)
-          const cancelled = it.status === 'cancelado'
-          const label = cancelled ? ' (cancelado)' : (it.qtyReturned > 0 ? ` (devolv. ${it.qtyReturned})` : '')
-          return `<tr class="${cancelled?'item-cancelled':''}">
-            <td class="mono">${it.skuCode || '—'}</td>
-            <td>${it.productName || ''}${label}</td>
-            <td class="num">${it.qty}${cancelled||it.qtyReturned?` / ${activeQty}`:''}</td>
-            <td class="num">${fmtC(it.priceUnit)}</td>
-            <td class="num">${fmtC(activeQty * it.priceUnit)}</td>
-          </tr>`
-        }).join('')}
-        </tbody></table>
-      </td></tr>` : ''
-    return `
-      <tr>
-        <td class="mono">${o.ref || '—'}</td>
-        <td>${fDate(o.createdAt)}</td>
-        <td>${STATUS_PT[o.status] ?? o.status}</td>
-        <td>${PM_PT[o.paymentMethod] ?? (o.paymentMethod || '—')}</td>
-        <td class="num">${fmtC(o.total)}</td>
-      </tr>${itemsRows}`
-  }).join('') || '<tr><td colspan="5" class="empty">Sem pedidos</td></tr>'
+  const ordRows = (detail.orders ?? []).map(o => `
+    <tr>
+      <td class="mono">${o.ref || '—'}</td>
+      <td>${fDate(o.createdAt)}</td>
+      <td>${STATUS_PT[o.status] ?? o.status}</td>
+      <td>${PM_PT[o.paymentMethod] ?? (o.paymentMethod || '—')}</td>
+      <td class="num">${fmtC(o.total)}</td>
+    </tr>`).join('') || '<tr><td colspan="5" class="empty">Sem pedidos</td></tr>'
 
   const periodo = detail.filtered ? `Período: ${detail.dateFrom ?? ''} a ${detail.dateTo ?? ''}` : 'Histórico completo'
 
@@ -821,12 +838,6 @@ function buildReportHtml(customer, detail) {
   .mono{font-family:monospace;font-size:11px}
   .debit{color:#dc2626}.credit{color:#16a34a}
   .empty{text-align:center;color:#aaa;padding:16px;font-style:italic}
-  .items-row td{background:#f8fafc!important;padding:0}
-  .items-cell{padding:0 10px 8px 30px!important}
-  table.items{margin-top:0;font-size:10.5px}
-  table.items th{background:#e8eef5;padding:4px 8px;font-size:9.5px}
-  table.items td{padding:4px 8px;border-bottom:1px solid #eef2f7;background:#fff!important}
-  .item-cancelled{text-decoration:line-through;color:#888}
   .footer{margin-top:32px;border-top:1px solid #e0e0e0;padding-top:12px;font-size:10px;color:#aaa;display:flex;justify-content:space-between}
   @media print{body{padding:16px}@page{margin:1.5cm;size:A4 portrait}}
 </style></head><body>
