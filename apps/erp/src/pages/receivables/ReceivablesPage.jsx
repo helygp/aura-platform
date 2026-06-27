@@ -4,9 +4,10 @@
  *
  * T2.1 — filtro por data com recomposição de saldo de abertura
  * T2.2 — forma de pagamento + upload de comprovante
- * fix #82 — saldo devedor reflete período filtrado + reload ao toggle do filtro
+ * fix #82 — saldo devedor reflete período filtrado
  * ticket #118 — busca de cliente, presets de período, validação de pagamento,
  *               saldo corrente após cada movimento, drilldown de pedido em modal
+ *               (rev2) — filtro sempre visível, chip "Tudo" no lugar do checkbox
  */
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
@@ -20,7 +21,6 @@ const fmtDate = iso => {
 }
 const toISODate = d => d.toISOString().slice(0, 10)
 
-// ── Presets de período ─────────────────────────────────────────────────────
 function rangeForPreset(preset) {
   const now = new Date()
   const y = now.getFullYear(), m = now.getMonth(), d = now.getDate()
@@ -37,6 +37,7 @@ function rangeForPreset(preset) {
 }
 
 const QUICK_PRESETS = [
+  { id: 'all',    label: 'Tudo' },
   { id: 'today',  label: 'Hoje' },
   { id: 'week',   label: 'Esta semana' },
   { id: 'month',  label: 'Este mês' },
@@ -74,7 +75,6 @@ function authFetchJson(url, opts = {}) {
   })
 }
 
-// Heurística pra classificar o tipo de movimento (ícone + cor + label)
 function txCategory(tx) {
   const desc = (tx.description || '').toLowerCase()
   if (tx.type === 'credit') {
@@ -101,17 +101,15 @@ export function ReceivablesPage() {
   const [detail,        setDetail]        = useState(null)
   const [detailLoading, setDetailLoading] = useState(false)
 
-  // Busca de clientes (ticket #118)
   const [customerSearch, setCustomerSearch] = useState('')
 
-  // Filtro de data + presets (ticket #118)
+  // Filtro de período sempre ativo (default: mês corrente). 'all' = sem filtro.
   const initialRange = rangeForPreset('month')
   const [dateFrom,    setDateFrom]    = useState(initialRange.from)
   const [dateTo,      setDateTo]      = useState(initialRange.to)
-  const [useFilter,   setUseFilter]   = useState(false)
   const [quickPreset, setQuickPreset] = useState('month')
 
-  // Modal de pedido (ticket #118 — drilldown sob demanda)
+  // Modal de pedido (drilldown sob demanda)
   const [orderModal, setOrderModal] = useState(null)
 
   // Modal pagamento
@@ -131,6 +129,12 @@ export function ReceivablesPage() {
   const [savingLimit, setSavingLimit] = useState(false)
   const [limitError,  setLimitError]  = useState(null)
 
+  // Args atuais do fetch baseado no preset selecionado
+  const currentFetchArgs = useCallback(() => {
+    if (quickPreset === 'all') return { filtered: false }
+    return { from: dateFrom, to: dateTo, filtered: true }
+  }, [quickPreset, dateFrom, dateTo])
+
   const loadBuyers = useCallback(async () => {
     setLoading(true); setError(null)
     try {
@@ -144,7 +148,6 @@ export function ReceivablesPage() {
 
   useEffect(() => { if (user) loadBuyers() }, [loadBuyers, user])
 
-  // Filtro client-side de buyers por nome/email
   const filteredBuyers = useMemo(() => {
     const q = customerSearch.trim().toLowerCase()
     if (!q) return buyers
@@ -173,35 +176,39 @@ export function ReceivablesPage() {
 
   async function openDetail(buyer) {
     setSelected(buyer)
-    await fetchDetail(buyer, { from: dateFrom, to: dateTo, filtered: useFilter })
+    await fetchDetail(buyer, currentFetchArgs())
   }
 
   function applyFilter() {
-    if (selected) fetchDetail(selected, { from: dateFrom, to: dateTo, filtered: useFilter })
+    if (selected) fetchDetail(selected, { from: dateFrom, to: dateTo, filtered: true })
   }
 
   function applyPreset(presetId) {
     setQuickPreset(presetId)
-    if (presetId === 'custom') {
-      setUseFilter(true)
+    if (presetId === 'all') {
+      if (selected) fetchDetail(selected, { filtered: false })
       return
     }
+    if (presetId === 'custom') return // espera o usuário clicar "Filtrar"
     const range = rangeForPreset(presetId)
     if (!range) return
     setDateFrom(range.from)
     setDateTo(range.to)
-    setUseFilter(true)
     if (selected) fetchDetail(selected, { from: range.from, to: range.to, filtered: true })
   }
 
-  // fix #82 — recarrega ao toggle do filtro
-  useEffect(() => {
-    if (selected) fetchDetail(selected, { from: dateFrom, to: dateTo, filtered: useFilter })
-  }, [useFilter]) // eslint-disable-line react-hooks/exhaustive-deps
+  function toggleOrder(/* removido */) {}
 
-  // Saldo corrente após cada movimento (extrato bancário) — ticket #118
-  // Backend devolve transactions DESC; calculamos do mais antigo pro mais novo
-  // partindo do openingBalance e voltamos pra DESC pra exibir.
+  function openOrderModal(orderRef) {
+    if (!detail || !orderRef) return
+    const order = (detail.orders ?? []).find(o =>
+      o.ref === orderRef || o.id === orderRef ||
+      (o.ref && (o.ref === `#${orderRef}` || `#${o.ref}` === orderRef))
+    )
+    setOrderModal(order ? { kind: 'ok', order } : { kind: 'missing', ref: orderRef })
+  }
+
+  // Saldo corrente após cada movimento (extrato bancário)
   const txWithBalance = useMemo(() => {
     if (!detail) return []
     const asc = [...(detail.transactions ?? [])].reverse()
@@ -213,18 +220,6 @@ export function ReceivablesPage() {
     return withBal.reverse()
   }, [detail])
 
-  // Drilldown: procura o pedido em detail.orders pelo ref ou id (ticket #118)
-  function openOrderModal(orderRef) {
-    if (!detail || !orderRef) return
-    const order = (detail.orders ?? []).find(o =>
-      o.ref === orderRef || o.id === orderRef ||
-      // refs costumam vir como "#ABC123" ou "ABC123"
-      (o.ref && (o.ref === `#${orderRef}` || `#${o.ref}` === orderRef))
-    )
-    setOrderModal(order ? { kind: 'ok', order } : { kind: 'missing', ref: orderRef })
-  }
-
-  // Upload comprovante → base64
   async function handleFileChange(e) {
     const file = e.target.files?.[0]
     if (!file) return
@@ -241,7 +236,6 @@ export function ReceivablesPage() {
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
-  // Validação ao vivo do valor de pagamento
   const payAmountCents = useMemo(() => {
     const n = parseFloat((payAmount || '').replace(',', '.'))
     if (!isFinite(n) || n <= 0) return 0
@@ -271,7 +265,7 @@ export function ReceivablesPage() {
       if (!res.ok) throw new Error(d.error)
       resetPayModal()
       await loadBuyers()
-      if (selected) await fetchDetail(selected, { from: dateFrom, to: dateTo, filtered: useFilter })
+      if (selected) await fetchDetail(selected, currentFetchArgs())
     } catch (e) { setPayError(e.message) }
     finally { setPaying(false) }
   }
@@ -289,7 +283,7 @@ export function ReceivablesPage() {
       if (!res.ok) throw new Error(d.error)
       setLimitModal(false); setLimitValue('')
       await loadBuyers()
-      if (selected) await fetchDetail(selected, { from: dateFrom, to: dateTo, filtered: useFilter })
+      if (selected) await fetchDetail(selected, currentFetchArgs())
     } catch (e) { setLimitError(e.message) }
     finally { setSavingLimit(false) }
   }
@@ -405,14 +399,11 @@ export function ReceivablesPage() {
             </button>
           </div>
 
-          {/* ── Filtro de período: presets + range custom ── */}
+          {/* ── Filtro de período: chips sempre visíveis ── */}
           <div className="flex flex-col gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2.5">
             <div className="flex flex-wrap items-center gap-1.5">
-              <label className="flex items-center gap-1.5 text-xs text-[var(--color-text-secondary)] cursor-pointer select-none mr-2">
-                <input type="checkbox" checked={useFilter} onChange={e => setUseFilter(e.target.checked)} className="rounded" />
-                Filtrar por período
-              </label>
-              {useFilter && QUICK_PRESETS.map(p => (
+              <span className="text-xs text-[var(--color-text-secondary)] mr-1.5 font-medium">Período:</span>
+              {QUICK_PRESETS.map(p => (
                 <button key={p.id} onClick={() => applyPreset(p.id)}
                   className={`h-7 px-3 text-xs font-medium rounded-full border transition-colors ${
                     quickPreset === p.id
@@ -423,7 +414,7 @@ export function ReceivablesPage() {
                 </button>
               ))}
             </div>
-            {useFilter && quickPreset === 'custom' && (
+            {quickPreset === 'custom' && (
               <div className="flex flex-wrap items-center gap-2">
                 <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
                   className="h-7 px-2 text-xs rounded border border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-text-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]" />
@@ -436,7 +427,7 @@ export function ReceivablesPage() {
                 </button>
               </div>
             )}
-            {useFilter && quickPreset !== 'custom' && (
+            {quickPreset !== 'custom' && quickPreset !== 'all' && (
               <p className="text-[10px] text-[var(--color-text-secondary)]">{dateFrom} → {dateTo}</p>
             )}
           </div>
@@ -480,7 +471,7 @@ export function ReceivablesPage() {
                 </div>
               )}
 
-              {/* ── Extrato: APENAS movimentações financeiras (ticket #118) ── */}
+              {/* Extrato puro: APENAS movimentações financeiras */}
               <div className="px-4 pb-6 pt-4">
                 <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-[var(--color-text-secondary)]">
                   Movimentações {detail.filtered ? `(${dateFrom} – ${dateTo})` : ''}
@@ -505,7 +496,7 @@ export function ReceivablesPage() {
         </div>
       )}
 
-      {/* ── Modal Pedido (drilldown ticket #118) ── */}
+      {/* ── Modal Pedido (drilldown) ── */}
       {orderModal && (
         <Modal title={orderModal.kind === 'ok' ? `Pedido ${orderModal.order.ref || '—'}` : 'Pedido não disponível'}
                size="lg" onClose={() => setOrderModal(null)}>
@@ -513,7 +504,7 @@ export function ReceivablesPage() {
             ? <OrderDetails order={orderModal.order} />
             : <div className="text-sm text-[var(--color-text-secondary)]">
                 <p>Esse pedido não está incluído no período filtrado.</p>
-                <p className="mt-2">Desative o filtro ou amplie o intervalo para visualizar os detalhes.</p>
+                <p className="mt-2">Selecione "Tudo" ou amplie o intervalo para visualizar os detalhes.</p>
               </div>
           }
           <div className="mt-5 flex justify-end">
@@ -614,7 +605,7 @@ export function ReceivablesPage() {
   )
 }
 
-// ── Linha de movimentação no extrato (com saldo corrente e click pra pedido) ──
+// ── Linha de movimentação no extrato ──
 function TxRow({ tx, onOrderClick }) {
   const cat        = txCategory(tx)
   const isCredit   = tx.type === 'credit'
@@ -758,7 +749,6 @@ function OrderDetails({ order }) {
   )
 }
 
-// ── Modal genérico com tamanhos ──
 function Modal({ title, onClose, children, size = 'sm' }) {
   const widthCls = {
     sm: 'max-w-sm',
@@ -789,7 +779,7 @@ function StatusBadge({ status }) {
   return <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${cls}`}>{label}</span>
 }
 
-/* ─── Relatório HTML para impressão (sem itens dos pedidos — ticket #118) ─── */
+/* ─── Relatório HTML para impressão (sem itens dos pedidos) ─── */
 function buildReportHtml(customer, detail) {
   const now   = new Intl.DateTimeFormat('pt-BR', { dateStyle:'full', timeStyle:'short' }).format(new Date())
   const fmtC  = cents => new Intl.NumberFormat('pt-BR', { style:'currency', currency:'BRL' }).format((cents ?? 0) / 100)
