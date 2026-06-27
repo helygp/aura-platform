@@ -39,8 +39,11 @@ function parseCommit(message) {
   const subject = message.split("\n")[0].trim();
   const m = subject.match(/^(\w+)(\(([^)]*)\))?(!)?:\s*(.+)$/);
   const breaking = /(^|\n)BREAKING CHANGE/.test(message) || (m && !!m[4]);
-  if (!m) return { type: null, scope: null, breaking, desc: subject };
-  return { type: m[1].toLowerCase(), scope: m[3] || null, breaking, desc: m[5] };
+  if (m) return { type: m[1].toLowerCase(), scope: m[3] || null, breaking, desc: m[5] };
+  // Fallback ticket #122: subject no padrao [#NNN] descricao -> classifica como feat com scope ticket-NNN
+  const tm = subject.match(/^\[#(\d+)\]\s*(.+)$/);
+  if (tm) return { type: "feat", scope: "ticket-" + tm[1], breaking: false, desc: tm[2] };
+  return { type: null, scope: null, breaking, desc: subject };
 }
 
 const CAT = { feat: "Adicionado", fix: "Corrigido", perf: "Performance", refactor: "Alterado", revert: "Revertido" };

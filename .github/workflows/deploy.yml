@@ -61,6 +61,34 @@ jobs:
           git config --global url."https://x-access-token:${GH_TOKEN}@github.com/".insteadOf "https://github.com/"
           bash "$REPO_DIR/deploy.sh" "${{ github.ref_name }}"
 
+      - name: Notificar n8n deploy_concluido
+        if: success() && github.ref_name == 'main'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          set +e
+          # Ultima tag p/ delimitar compare
+          LAST_TAG=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/helygp/aura-platform/tags?per_page=1" | grep -oE '"name":"[^"]+"' | head -1 | cut -d'"' -f4)
+          if [ -n "$LAST_TAG" ]; then
+            CMP=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/helygp/aura-platform/compare/$LAST_TAG...$SHA")
+          else
+            CMP=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/helygp/aura-platform/commits?sha=$SHA&per_page=50")
+          fi
+          # Extrai ticket ids de subjects [#NNN] (padrao do ticket; evita confusao com PR refs (#NN))
+          TICKETS=$(printf '%s' "$CMP" | grep -oE '\\[#[0-9]+\\]' | grep -oE '[0-9]+' | sort -u | tr '\n' ',' | sed 's/,$//')
+          VERSION=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github.raw" \
+            "https://api.github.com/repos/helygp/aura-platform/contents/apps/erp/public/changelog.json?ref=main" 2>/dev/null | grep -oE '"current":"[^"]+"' | head -1 | cut -d'"' -f4)
+          PAYLOAD=$(printf '{"token":"auradev-7c1f9a2b6e","evento":"deploy_concluido","sha":"%s","branch":"%s","version":"%s","ticket_ids":[%s]}' "$SHA" "$BRANCH" "$VERSION" "$TICKETS")
+          echo "Payload: $PAYLOAD"
+          curl -s -m 15 -X POST -H "Content-Type: application/json" -d "$PAYLOAD" \
+            "https://n8n.srv885928.hstgr.cloud/webhook/aurasuporte-dev" && echo "" && echo "n8n notify ok" || echo "n8n notify falhou (ignorado)"
+
       - name: Notificar WhatsApp
         if: always()
         env:
