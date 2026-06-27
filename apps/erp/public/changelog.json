@@ -1,6 +1,41 @@
 {
-  "current": "1.8.0",
+  "current": "1.9.0",
   "releases": [
+    {
+      "version": "1.9.0",
+      "date": "2026-06-27",
+      "title": "7 novidades nesta versão",
+      "highlights": [
+        {
+          "icon": "📷",
+          "text": "Cadastro de produto: editor de enquadramento (4:3) com zoom e arraste — fim do erro ao enviar foto grande do celular"
+        },
+        {
+          "icon": "🗑️",
+          "text": "Cadastro de produto: dá pra remover variações (SKUs) que não são mais usadas pela própria lista — SKUs com estoque ou histórico ficam protegidos"
+        },
+        {
+          "icon": "🏦",
+          "text": "Contas a Receber: extrato bancário com colunas Entrada / Saída / Saldo"
+        },
+        {
+          "icon": "🔍",
+          "text": "Contas a Receber: busca de cliente e chips de período rápido"
+        },
+        {
+          "icon": "🖨",
+          "text": "Contas a Receber: Imprimir extrato (bancário) e Imprimir pedidos (original)"
+        },
+        {
+          "icon": "🔎",
+          "text": "Contas a Receber: drilldown de pedido em modal ao clicar na movimentação"
+        },
+        {
+          "icon": "✅",
+          "text": "Contas a Receber: pagamento bloqueado quando valor excede saldo devedor"
+        }
+      ]
+    },
     {
       "version": "1.8.0",
       "date": "2026-06-26",
