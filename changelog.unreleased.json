@@ -1,0 +1,38 @@
+[
+  {
+    "icon": "🏦",
+    "text": "Contas a Receber: extrato bancário com colunas Entrada / Saída / Saldo"
+  },
+  {
+    "icon": "🔍",
+    "text": "Contas a Receber: busca de cliente e chips de período rápido"
+  },
+  {
+    "icon": "🖨",
+    "text": "Contas a Receber: Imprimir extrato (bancário) e Imprimir pedidos (original)"
+  },
+  {
+    "icon": "🔎",
+    "text": "Contas a Receber: drilldown de pedido em modal ao clicar na movimentação"
+  },
+  {
+    "icon": "✅",
+    "text": "Contas a Receber: pagamento bloqueado quando valor excede saldo devedor"
+  },
+  {
+    "icon": "⏱️",
+    "text": "Cockpit: widget Pedidos em risco mostrando aging por status com SLA destacado"
+  },
+  {
+    "icon": "🚦",
+    "text": "Pedidos: endpoint /api/orders/aging para listar pedidos parados além do SLA"
+  },
+  {
+    "icon": "📊",
+    "text": "Relatórios: nova aba Sazonalidade com gráficos por dia da semana e hora do dia"
+  },
+  {
+    "icon": "🇧🇷",
+    "text": "Sazonalidade: agregação no fuso de São Paulo, exclui cancelados e desconta devoluções"
+  }
+]
