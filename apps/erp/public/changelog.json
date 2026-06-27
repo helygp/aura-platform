@@ -1,6 +1,17 @@
 {
-  "current": "1.9.0",
+  "current": "1.10.0",
   "releases": [
+    {
+      "version": "1.10.0",
+      "date": "2026-06-27",
+      "title": "Melhorias internas: automação de release e changelog após cada deploy em produção",
+      "highlights": [
+        {
+          "icon": "⚙���",
+          "text": "Melhorias internas: automação de release e changelog após cada deploy em produção"
+        }
+      ]
+    },
     {
       "version": "1.9.0",
       "date": "2026-06-27",
