@@ -18,5 +18,21 @@
   {
     "icon": "✅",
     "text": "Contas a Receber: pagamento bloqueado quando valor excede saldo devedor"
+  },
+  {
+    "icon": "⏱️",
+    "text": "Cockpit: widget Pedidos em risco mostrando aging por status com SLA destacado"
+  },
+  {
+    "icon": "🚦",
+    "text": "Pedidos: endpoint /api/orders/aging para listar pedidos parados além do SLA"
+  },
+  {
+    "icon": "📊",
+    "text": "Relatórios: nova aba Sazonalidade com gráficos por dia da semana e hora do dia"
+  },
+  {
+    "icon": "🇧🇷",
+    "text": "Sazonalidade: agregação no fuso de São Paulo, exclui cancelados e desconta devoluções"
   }
 ]
