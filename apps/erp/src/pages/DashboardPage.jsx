@@ -311,121 +311,6 @@ function ErrorState({ onRetry }) {
 }
 
 
-/* ─── Widget: Pedidos em risco — Ticket #120 (issue #94) ─── */
-function OrdersAgingWidget() {
-  const navigate = useNavigate()
-  const [items, setItems]       = useState([])
-  const [sla, setSla]           = useState({})
-  const [isLoading, setLoading] = useState(true)
-  const [isError, setError]     = useState(false)
-
-  useEffect(() => {
-    let alive = true
-    const tok = window.__aura_mem_token__ || ''
-    setLoading(true)
-    setError(false)
-    fetch('/api/orders/aging?over_hours=0&limit=8', {
-      credentials: 'include',
-      headers: tok ? { Authorization: 'Bearer ' + tok } : {},
-    })
-      .then(r => {
-        if (!r.ok) throw new Error('http ' + r.status)
-        return r.json()
-      })
-      .then(d => {
-        if (!alive) return
-        setItems(Array.isArray(d.items) ? d.items : [])
-        setSla(d.sla || {})
-      })
-      .catch(() => alive && setError(true))
-      .finally(() => alive && setLoading(false))
-    return () => { alive = false }
-  }, [])
-
-  const fmtHours = (h) => {
-    if (h == null) return '—'
-    if (h < 1)    return Math.round(h * 60) + ' min'
-    if (h < 24)   return h.toFixed(1).replace('.', ',') + ' h'
-    return Math.floor(h / 24) + ' d ' + Math.round(h % 24) + ' h'
-  }
-
-  return (
-    <Card className="p-5">
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-amber-50 text-amber-600 dark:bg-amber-950 dark:text-amber-400">
-            <Clock size={16} />
-          </div>
-          <div>
-            <p className="text-sm font-semibold text-[var(--color-text)] leading-tight">
-              Pedidos em risco
-            </p>
-            <p className="text-[10px] text-[var(--color-text-muted)] leading-tight mt-0.5">
-              SLA: confirmado {sla.confirmado ?? 4}h · separando {sla.separando ?? 8}h
-            </p>
-          </div>
-        </div>
-        <button
-          onClick={() => navigate('/orders')}
-          className="flex items-center gap-1 text-xs font-medium text-[var(--color-primary)] hover:underline"
-        >
-          Ver todos <ArrowRight size={12} />
-        </button>
-      </div>
-
-      {isLoading ? (
-        <div className="space-y-2">
-          {[...Array(4)].map((_, i) => (
-            <Skeleton key={i} width="100%" height={36} />
-          ))}
-        </div>
-      ) : isError ? (
-        <p className="text-sm text-[var(--color-text-muted)] py-6 text-center">
-          Falha ao carregar.
-        </p>
-      ) : items.length === 0 ? (
-        <p className="text-sm text-[var(--color-text-muted)] py-6 text-center">
-          Nenhum pedido em fluxo aberto agora.
-        </p>
-      ) : (
-        <ul className="divide-y divide-[var(--color-border)]">
-          {items.map(it => (
-            <li
-              key={it.id}
-              onClick={() => navigate('/orders', { state: { focusOrderId: it.id } })}
-              className="flex items-center justify-between gap-3 py-2.5 cursor-pointer hover:bg-[var(--color-bg-subtle)] rounded-lg px-2 -mx-2 transition-colors"
-            >
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-semibold text-[var(--color-text)]">
-                    #{it.number ?? it.id.slice(0, 6)}
-                  </span>
-                  <Badge variant={it.breached ? 'danger' : 'neutral'} size="sm">
-                    {it.status}
-                  </Badge>
-                </div>
-                <p className="text-xs text-[var(--color-text-muted)] truncate mt-0.5">
-                  {it.customer_name || 'Sem cliente'}
-                </p>
-              </div>
-              <div className="text-right shrink-0">
-                <p className={`text-sm font-semibold ${it.breached ? 'text-[var(--color-error)]' : 'text-[var(--color-text)]'}`}>
-                  {fmtHours(it.hours_in_status)}
-                </p>
-                {it.sla_hours != null && (
-                  <p className="text-[10px] text-[var(--color-text-muted)] leading-tight">
-                    SLA {it.sla_hours}h
-                  </p>
-                )}
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
-    </Card>
-  )
-}
-
 /* ─── Página principal ─── */
 export function DashboardPage() {
   const { t }   = useTranslation()
@@ -517,9 +402,6 @@ export function DashboardPage() {
           <QuickActions isLoading={isLoading} />
         </div>
       </div>
-
-      {/* ── Pedidos em risco (Ticket #120) ── */}
-      <OrdersAgingWidget />
 
     </div>
   )
