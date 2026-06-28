@@ -25,6 +25,8 @@ import { separationSheetRouter }     from './routes/separationSheet.js'
 import { orderDraftsRouter }         from './routes/orderDrafts.js'
 import { inventoryRouter } from './routes/inventory.js'
 import { ordersRouter }    from './routes/orders.js'
+import { ordersAgingRouter }       from './routes/ordersAging.js'
+import { ordersSeasonalityRouter } from './routes/ordersSeasonality.js'
 import { customersRouter } from './routes/customers.js'
 import { usersRouter }     from './routes/users.js'
 import { whatsappRouter }  from './routes/whatsapp.js'
@@ -190,6 +192,8 @@ app.use('/api/order-reasons',        orderReasonsRouter)
 app.use('/api/product-categories', productCategoriesRouter)
 app.use('/api/orders/separation-sheet', separationSheetRouter)
 app.use('/api/orders/drafts',           orderDraftsRouter)
+app.use('/api/orders/aging',            ordersAgingRouter)
+app.use('/api/orders/seasonality',      ordersSeasonalityRouter)
 app.use('/api/products',  productsRouter)
 app.use('/api/inventory', inventoryRouter)
 app.use('/api/orders',    ordersRouter)

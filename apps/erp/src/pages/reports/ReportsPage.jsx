@@ -12,10 +12,10 @@ import {
   BarChart2, Package, AlertTriangle, TrendingDown,
   ArrowLeftRight, Calendar, Download, FileText,
   RefreshCw, ChevronDown, ChevronUp, ChevronsUpDown,
-  Filter, Search, Users, Eye
+  Filter, Search, Users, Eye, Activity
 } from 'lucide-react'
 import {
-  AreaChart, Area, BarChart, Bar,
+  AreaChart, Area, BarChart, Bar, LineChart, Line,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell
 } from 'recharts'
 import { useAuth }       from '../../auth/AuthContext.jsx'
@@ -264,6 +264,7 @@ const TABS = [
   { key:'stock-critical', label:'Estoque Crítico',   icon: AlertTriangle },
   { key:'stock-idle',     label:'Produtos Parados',  icon: TrendingDown },
   { key:'movements',      label:'Movimentação',      icon: ArrowLeftRight },
+  { key:'seasonality',    label:'Sazonalidade',      icon: Activity },
 ]
 
 /* ═══════════════════════════════════════════
@@ -319,6 +320,7 @@ export function ReportsPage() {
       {tab === 'stock-critical' && <StockCritical     companyName={companyName} />}
       {tab === 'stock-idle'     && <StockIdle         companyName={companyName} />}
       {tab === 'movements'      && <MovementsReport   companyName={companyName} />}
+      {tab === 'seasonality'    && <SeasonalityReport />}
     </div>
   )
 }
@@ -912,3 +914,212 @@ function MovementsReport({ companyName }) {
     </div>
   )
 }
+
+/* ═══════════════════════════════════════════
+   7. SAZONALIDADE — Ticket #121 (issue #95)
+   • Gráfico 1: barras por dia da semana (seg → dom em ordem BR)
+   • Gráfico 2: linha por hora do dia (0 → 23h)
+   • Toggle de métrica: pedidos · itens · valor R$
+   • Janela: 30 / 90 / 180 dias (default 90)
+═══════════════════════════════════════════ */
+const DOW_LABELS = ['seg', 'ter', 'qua', 'qui', 'sex', 'sáb', 'dom']
+// PG: 0=dom 1=seg 2=ter 3=qua 4=qui 5=sex 6=sáb. Reordenar para seg→dom (BR).
+const DOW_ORDER  = [1, 2, 3, 4, 5, 6, 0]
+
+const METRIC_OPTIONS = [
+  { key:'count', label:'Pedidos' },
+  { key:'qty',   label:'Itens'   },
+  { key:'value', label:'Valor'   },
+]
+
+const DAYS_OPTIONS = [
+  { key:30,  label:'30 dias'  },
+  { key:90,  label:'90 dias'  },
+  { key:180, label:'180 dias' },
+]
+
+function fmtMetric(metric, v) {
+  if (metric === 'value') return R$(v)
+  return N(v)
+}
+
+function SeasonalityReport() {
+  const [metric, setMetric] = useState('count')
+  const [days,   setDays]   = useState(90)
+
+  const [dow,  setDow]    = useState(null)
+  const [hour, setHour]   = useState(null)
+  const [loading, setLoading] = useState(false)
+  const [error,   setError]   = useState(null)
+
+  const load = useCallback(async () => {
+    setLoading(true); setError(null)
+    try {
+      const tok = window.__aura_mem_token__ || ''
+      const headers = tok ? { Authorization: 'Bearer ' + tok } : {}
+      const [rDow, rHour] = await Promise.all([
+        fetch(`/api/orders/seasonality?dimension=dow&metric=${metric}&days=${days}`,  { credentials:'include', headers }),
+        fetch(`/api/orders/seasonality?dimension=hour&metric=${metric}&days=${days}`, { credentials:'include', headers }),
+      ])
+      if (!rDow.ok || !rHour.ok) throw new Error('Falha ao carregar.')
+      const [jDow, jHour] = await Promise.all([rDow.json(), rHour.json()])
+      setDow(jDow)
+      setHour(jHour)
+    } catch (e) {
+      setError(e.message || 'Erro ao carregar sazonalidade.')
+    } finally {
+      setLoading(false)
+    }
+  }, [metric, days])
+
+  useEffect(() => { load() }, [load])
+
+  // Dados pro gráfico DOW reordenados para seg→dom.
+  const dowChart = useMemo(() => {
+    if (!dow?.buckets) return []
+    const map = new Map(dow.buckets.map(b => [Number(b.label), Number(b.value) || 0]))
+    return DOW_ORDER.map((pgDow, i) => ({
+      day:   DOW_LABELS[i],
+      value: map.get(pgDow) ?? 0,
+    }))
+  }, [dow])
+
+  const hourChart = useMemo(() => {
+    if (!hour?.buckets) return []
+    return hour.buckets.map(b => ({
+      hour:  String(b.label).padStart(2, '0') + 'h',
+      value: Number(b.value) || 0,
+    }))
+  }, [hour])
+
+  const insufficient = (dow?.insufficient_sample || hour?.insufficient_sample) === true
+  const sampleSize   = dow?.sample_size ?? 0
+
+  return (
+    <div className="space-y-4">
+      {/* Header / controles */}
+      <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] p-4">
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Toggle métrica */}
+          <div className="flex items-center gap-1 p-1 rounded-xl bg-[var(--color-bg-subtle)]">
+            {METRIC_OPTIONS.map(opt => {
+              const active = metric === opt.key
+              return (
+                <button
+                  key={opt.key}
+                  onClick={() => setMetric(opt.key)}
+                  className={[
+                    'h-8 px-3 rounded-lg text-xs font-medium transition-colors',
+                    active
+                      ? 'bg-[var(--color-bg)] text-[var(--color-text)] shadow-[var(--shadow-sm)]'
+                      : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'
+                  ].join(' ')}
+                >
+                  {opt.label}
+                </button>
+              )
+            })}
+          </div>
+
+          {/* Seletor de janela */}
+          <div className="flex items-center gap-1 p-1 rounded-xl bg-[var(--color-bg-subtle)]">
+            {DAYS_OPTIONS.map(opt => {
+              const active = days === opt.key
+              return (
+                <button
+                  key={opt.key}
+                  onClick={() => setDays(opt.key)}
+                  className={[
+                    'h-8 px-3 rounded-lg text-xs font-medium transition-colors',
+                    active
+                      ? 'bg-[var(--color-bg)] text-[var(--color-text)] shadow-[var(--shadow-sm)]'
+                      : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'
+                  ].join(' ')}
+                >
+                  {opt.label}
+                </button>
+              )
+            })}
+          </div>
+
+          <div className="ml-auto flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
+            <span>Amostra: <strong className="text-[var(--color-text)]">{N(sampleSize)}</strong> pedidos</span>
+            <button
+              onClick={load}
+              disabled={loading}
+              className="flex items-center gap-1 h-8 px-3 rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-bg-subtle)] disabled:opacity-40 transition-colors"
+              aria-label="Recarregar"
+            >
+              <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
+              <span>Atualizar</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Estado: erro */}
+      {error && (
+        <div className="bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-900 rounded-xl p-4 text-sm text-red-700 dark:text-red-300">
+          {error}
+        </div>
+      )}
+
+      {/* Estado: amostra insuficiente */}
+      {!error && !loading && insufficient && (
+        <div className="bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-900 rounded-xl p-6 text-center">
+          <p className="text-sm font-semibold text-amber-700 dark:text-amber-300">Amostra insuficiente</p>
+          <p className="text-xs text-amber-700 dark:text-amber-300 mt-1 opacity-80">
+            Menos de 30 pedidos no período selecionado. Aumente a janela ou aguarde mais dados para evitar decisões sobre ruído.
+          </p>
+        </div>
+      )}
+
+      {/* Gráficos */}
+      {!error && !insufficient && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {/* Gráfico 1 — DOW */}
+          <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] p-4">
+            <p className="text-sm font-semibold text-[var(--color-text)] mb-1">Por dia da semana</p>
+            <p className="text-xs text-[var(--color-text-muted)] mb-3">Distribuição ao longo dos últimos {days} dias</p>
+            <div className="h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={dowChart} margin={{ top: 8, right: 8, bottom: 0, left: -8 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
+                  <XAxis dataKey="day" tick={{ fontSize: 11 }} />
+                  <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => metric === 'value' ? R$(v) : N(v)} width={70} />
+                  <Tooltip formatter={(v) => fmtMetric(metric, v)} />
+                  <Bar dataKey="value" fill="var(--color-primary)" radius={[6, 6, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* Gráfico 2 — Hora */}
+          <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] p-4">
+            <p className="text-sm font-semibold text-[var(--color-text)] mb-1">Por hora do dia</p>
+            <p className="text-xs text-[var(--color-text-muted)] mb-3">Distribuição horária (0h → 23h, TZ Brasil)</p>
+            <div className="h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={hourChart} margin={{ top: 8, right: 8, bottom: 0, left: -8 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
+                  <XAxis dataKey="hour" tick={{ fontSize: 10 }} interval={1} />
+                  <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => metric === 'value' ? R$(v) : N(v)} width={70} />
+                  <Tooltip formatter={(v) => fmtMetric(metric, v)} />
+                  <Line
+                    type="monotone"
+                    dataKey="value"
+                    stroke="var(--color-primary)"
+                    strokeWidth={2}
+                    dot={{ r: 3 }}
+                    activeDot={{ r: 5 }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
