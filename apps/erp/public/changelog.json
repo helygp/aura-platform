@@ -1,6 +1,105 @@
 {
-  "current": "1.6.5",
+  "current": "1.10.0",
   "releases": [
+    {
+      "version": "1.10.0",
+      "date": "2026-06-27",
+      "title": "Melhorias internas: automação de release e changelog após cada deploy em produção",
+      "highlights": [
+        {
+          "icon": "⚙���",
+          "text": "Melhorias internas: automação de release e changelog após cada deploy em produção"
+        }
+      ]
+    },
+    {
+      "version": "1.9.0",
+      "date": "2026-06-27",
+      "title": "5 novidades nesta versão",
+      "highlights": [
+        {
+          "icon": "🏦",
+          "text": "Contas a Receber: extrato bancário com colunas Entrada / Saída / Saldo"
+        },
+        {
+          "icon": "🔍",
+          "text": "Contas a Receber: busca de cliente e chips de período rápido"
+        },
+        {
+          "icon": "🖨",
+          "text": "Contas a Receber: Imprimir extrato (bancário) e Imprimir pedidos (original)"
+        },
+        {
+          "icon": "🔎",
+          "text": "Contas a Receber: drilldown de pedido em modal ao clicar na movimentação"
+        },
+        {
+          "icon": "✅",
+          "text": "Contas a Receber: pagamento bloqueado quando valor excede saldo devedor"
+        }
+      ]
+    },
+    {
+      "version": "1.8.0",
+      "date": "2026-06-26",
+      "title": "4 novidades nesta versão",
+      "highlights": [
+        {
+          "icon": "🐛",
+          "text": "Cancelamento de pedido agora estorna automaticamente em Contas a Receber"
+        },
+        {
+          "icon": "↩️",
+          "text": "Devolução parcial ou total de pedidos entregues, com motivo cadastrável"
+        },
+        {
+          "icon": "✏️",
+          "text": "Edição de pedidos em aberto: adicionar item, ajustar quantidade e cancelar item"
+        },
+        {
+          "icon": "📋",
+          "text": "Cadastro de motivos de cancelamento e devolução em Configurações → Pedidos"
+        }
+      ]
+    },
+    {
+      "version": "1.7.0",
+      "date": "2026-06-26",
+      "title": "2 novidades nesta versão",
+      "highlights": [
+        {
+          "icon": "📷",
+          "text": "Cadastro de produto: editor de enquadramento (4:3) com zoom e arraste — fim do erro ao enviar foto grande do celular"
+        },
+        {
+          "icon": "🗑️",
+          "text": "Cadastro de produto: dá pra remover variações (SKUs) que não são mais usadas pela própria lista — SKUs com estoque ou histórico ficam protegidos"
+        }
+      ]
+    },
+    {
+      "version": "1.6.6",
+      "date": "2026-06-26",
+      "title": "Tela de Novo Pedido mais rápida",
+      "highlights": [
+        {
+          "icon": "🎨",
+          "text": "Catálogo agora agrupa as cores: dá pra abrir só a cor que interessa e ver os tamanhos disponíveis sem rolar a lista inteira"
+        },
+        {
+          "icon": "🔎",
+          "text": "Seleção de cliente agora busca por nome, razão social ou CNPJ — digita e filtra na hora"
+        },
+        {
+          "icon": "🔒",
+          "text": "Lista de clientes só mostra os ativos e respeita o acesso do usuário (admin vê todos; usuários comuns vêem só os vinculados a eles)"
+        },
+        {
+          "icon": "📦",
+          "text": "Busca de produto no pedido agora também encontra por cor, tamanho ou código do SKU — mesmo padrão da tela de Estoque"
+        }
+      ]
+    },
     {
       "version": "1.6.5",
       "date": "2026-06-18",
