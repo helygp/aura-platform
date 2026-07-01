@@ -204,9 +204,15 @@ docker exec api-staging node /tmp/issues.js
 - `loginService` **OBRIGATORIAMENTE** filtra por `process.env.TENANT_SLUG` — sem isso,
   `findFirst` por login pode pegar admin de tenant errado
 
-### Permissões
+### Permissões (RBAC — revisado no #50)
 - `authorize(...roles)` — passa se QUALQUER role do user bate. Admin sempre passa.
-- `authorize.atLeast('financeiro')` — hierarquia: admin(4) > financeiro(3) > estoque(2) > operador(1)
+- **Papéis são ORTOGONAIS, não uma escada.** `authorize.atLeast` e a hierarquia numérica foram REMOVIDOS (#50): financeiro NÃO herda estoque (financeiro não altera cadastro de produto — regra do #45). Use sempre allowlist explícita.
+- **Regras por rota (decididas no #50):**
+  - `tenant` billing/plan/cancel → `admin`
+  - `wallet` leituras (receivables, buyers/:id, receipt) → `admin`/`financeiro`
+  - `orders` PUT /:id/status → `admin`/`operador`
+  - `customers` criar/editar/deletar → **`admin`** (decisão Hely #50); send-portal-access → `admin`/`operador` (papel `gerente` inexistente foi removido)
+  - `estoque` edita produto (`PUT /products/:id`) mas **NÃO** gerencia categorias/atributos/importação — essas permanecem só `admin` (decisão Hely #50)
 
 ### Esqueci minha senha (v1.3.0)
 - Tabela `password_reset_tokens` em `aura_master` (sha256, TTL 1h, uso único)

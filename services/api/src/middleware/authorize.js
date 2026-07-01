@@ -2,7 +2,7 @@
  * middleware/authorize.js
  * RBAC baseado em papel(éis) do usuário.
  *
- * Papéis disponíveis (do mais ao menos privilegiado):
+ * Papéis disponíveis (ORTOGONAIS — allowlist explícita, sem hierarquia):
  *   admin       — acesso total (sempre passa)
  *   financeiro  — financeiro + operacional
  *   estoque     — gestão de produtos e estoque
@@ -20,13 +20,6 @@
  *
  * authorize() sem argumentos = qualquer usuário autenticado.
  */
-
-export const ROLES = {
-  admin:      4,
-  financeiro: 3,
-  estoque:    2,
-  operador:   1,
-}
 
 /* Extrai array de papéis do req, em lowercase. Fallback para role single. */
 function getUserRoles(req) {
@@ -63,36 +56,6 @@ export function authorize(...allowed) {
     // Intersecção: alguma role do usuário precisa estar na lista
     const passes = userRoles.some(r => roles.includes(r))
     if (!passes) {
-      return res.status(403).json({ error: 'Permissão insuficiente.', code: 'FORBIDDEN' })
-    }
-
-    next()
-  }
-}
-
-/**
- * Atalho: authorize a partir de um nível mínimo de hierarquia.
- * Considera o MAIOR nível entre os roles do usuário.
- *
- * authorize.atLeast('financeiro') → permite financeiro, estoque (não!), admin
- * → só passa se userMaxLevel >= minLevel
- */
-authorize.atLeast = function (minRole) {
-  const minLevel = ROLES[minRole.toLowerCase()]
-  if (!minLevel) throw new Error(`Papel desconhecido: ${minRole}`)
-
-  return function (req, res, next) {
-    if (!req.auth) {
-      return res.status(401).json({ error: 'Não autenticado.' })
-    }
-
-    const userRoles = getUserRoles(req)
-    const userMaxLevel = userRoles.reduce(
-      (max, r) => Math.max(max, ROLES[r] ?? 0),
-      0
-    )
-
-    if (userMaxLevel < minLevel) {
       return res.status(403).json({ error: 'Permissão insuficiente.', code: 'FORBIDDEN' })
     }
 
