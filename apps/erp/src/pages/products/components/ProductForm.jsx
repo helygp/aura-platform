@@ -800,6 +800,9 @@ function initialForm(product) {
     name: '', code: '', category: '', type: PRODUCT_TYPES.SIMPLE,
     imageUrl: null, priceWholesale: '', stockMin: '0',
     attributes: [], skus: [],
+    // Vitrine (#183): novo produto nasce rascunho; capa/seo vazios (auto usa a foto do produto)
+    coverImageUrl: null, destaque: false, publico: false,
+    seoTitle: '', seoDescription: '',
   }
   return {
     ...product,
@@ -1119,6 +1122,74 @@ export function ProductForm({ open, onClose, product, onSave }) {
                     imageUrl={form.imageUrl}
                     onImageChange={url => setForm(prev => ({ ...prev, imageUrl: url }))}
                   />
+
+                  {/* ── Vitrine / Loja online (#183) ── */}
+                  <div className="rounded-[var(--radius-md)] border border-[var(--color-border)] p-4 space-y-4">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-[var(--color-text)]">Vitrine (loja online)</span>
+                      <Badge variant={form.publico ? 'success' : 'muted'}>
+                        {form.publico ? 'Publicado' : 'Rascunho'}
+                      </Badge>
+                    </div>
+
+                    {/* Toggles publicar + destaque */}
+                    <div className="grid grid-cols-2 gap-3">
+                      <button
+                        type="button"
+                        disabled={readOnly}
+                        onClick={() => setForm(prev => ({ ...prev, publico: !prev.publico }))}
+                        className={[
+                          'flex items-center justify-between h-10 px-3 rounded-[var(--radius-md)] text-sm border transition-colors',
+                          form.publico
+                            ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/10 text-[var(--color-text)]'
+                            : 'border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text-muted)]',
+                        ].join(' ')}
+                      >
+                        <span>Publicar na loja</span>
+                        <span className={form.publico ? 'text-[var(--color-primary)]' : ''}>{form.publico ? 'Sim' : 'Não'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        disabled={readOnly}
+                        onClick={() => setForm(prev => ({ ...prev, destaque: !prev.destaque }))}
+                        className={[
+                          'flex items-center justify-between h-10 px-3 rounded-[var(--radius-md)] text-sm border transition-colors',
+                          form.destaque
+                            ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/10 text-[var(--color-text)]'
+                            : 'border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text-muted)]',
+                        ].join(' ')}
+                      >
+                        <span>Destaque na home</span>
+                        <span className={form.destaque ? 'text-[var(--color-primary)]' : ''}>{form.destaque ? 'Sim' : 'Não'}</span>
+                      </button>
+                    </div>
+
+                    {/* Capa da vitrine (override — vazio usa a foto do produto) */}
+                    <Input
+                      label="Capa da vitrine (opcional)"
+                      placeholder="Deixe vazio para usar a foto do produto"
+                      value={form.coverImageUrl || ''}
+                      onChange={set('coverImageUrl')}
+                    />
+
+                    {/* SEO */}
+                    <Input
+                      label="SEO — título"
+                      placeholder="Título para buscadores (opcional)"
+                      value={form.seoTitle || ''}
+                      onChange={set('seoTitle')}
+                    />
+                    <div>
+                      <label className="block text-sm font-medium text-[var(--color-text)] mb-1.5">SEO — descrição</label>
+                      <textarea
+                        rows={2}
+                        placeholder="Descrição para buscadores (opcional)"
+                        value={form.seoDescription || ''}
+                        onChange={set('seoDescription')}
+                        className="w-full px-3 py-2 rounded-[var(--radius-md)] text-sm bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] resize-none"
+                      />
+                    </div>
+                  </div>
 
                   {!formIsVariant && (
                     <div className="grid grid-cols-2 gap-4">
