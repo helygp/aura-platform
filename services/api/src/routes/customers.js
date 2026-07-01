@@ -50,7 +50,7 @@ customersRouter.get('/', async (req, res) => {
 })
 
 /* ── POST /api/customers ── */
-customersRouter.post('/', async (req, res) => {
+customersRouter.post('/', authorize('admin'), async (req, res) => {
   try {
     const { name, personType='pj', document, whatsapp, email, status='ativo', creditLimit=0, address={} } = req.body
     const { rows:[c] } = await query(`
@@ -65,7 +65,7 @@ customersRouter.post('/', async (req, res) => {
 })
 
 /* ── PUT /api/customers/:id ── */
-customersRouter.put('/:id', async (req, res) => {
+customersRouter.put('/:id', authorize('admin'), async (req, res) => {
   try {
     const { name, personType, document, whatsapp, email, status, creditLimit, address={} } = req.body
     const { rows:[c] } = await query(`
@@ -111,7 +111,7 @@ function normalizeCust(c) {
  * Gera acesso ao portal para um cliente pré-cadastrado no ERP.
  * Cria senha padrão, ativa portal_active e envia email.
  */
-customersRouter.post('/:id/send-portal-access', authorize('admin', 'gerente'), async (req, res) => {
+customersRouter.post('/:id/send-portal-access', authorize('admin', 'operador'), async (req, res) => {
   try {
     const { rows: [customer] } = await query(
       'SELECT id, name, email FROM customers WHERE id = $1',

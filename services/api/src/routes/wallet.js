@@ -23,7 +23,7 @@ walletRouter.use(authenticate)
 /* ── GET /api/wallet/receivables ─────────────────────────────────────────────
  * Lista todos os compradores com saldo devedor ou limite configurado.
  */
-walletRouter.get('/receivables', async (req, res) => {
+walletRouter.get('/receivables', authorize('admin', 'financeiro'), async (req, res) => {
   try {
     const { rows } = await query(`
       SELECT
@@ -73,7 +73,7 @@ walletRouter.get('/receivables', async (req, res) => {
  * Suporta ?dateFrom=YYYY-MM-DD&dateTo=YYYY-MM-DD para filtrar por período.
  * Quando filtrado, retorna também o saldo de abertura (recomposição).
  */
-walletRouter.get('/buyers/:id', async (req, res) => {
+walletRouter.get('/buyers/:id', authorize('admin', 'financeiro'), async (req, res) => {
   try {
     const { dateFrom, dateTo } = req.query
     const filtered = !!(dateFrom || dateTo)
@@ -183,7 +183,7 @@ walletRouter.get('/buyers/:id', async (req, res) => {
 /* ── GET /api/wallet/transactions/:txId/receipt ─────────────────────────────
  * Retorna o arquivo de comprovante de uma transação.
  */
-walletRouter.get('/transactions/:txId/receipt', async (req, res) => {
+walletRouter.get('/transactions/:txId/receipt', authorize('admin', 'financeiro'), async (req, res) => {
   try {
     const { rows: [tx] } = await query(
       'SELECT receipt_data FROM wallet_transactions WHERE id = $1',

@@ -21,6 +21,41 @@ e o projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ---
 
+## [1.10.0] — 2026-06-27
+
+### Adicionado
+- **ticket-122:** Automacao pos-deploy + correcao step Release (PR #92)
+
+### Corrigido
+- Remove duplicatas changelog.json (enquadramento e variações ficam só na v1.7) (73963cd)
+
+## [1.8.0] — 2026-06-26
+
+### Adicionado
+- Cancelamento de pedido agora estorna automaticamente em Contas a Receber
+- Devolução parcial ou total de pedidos entregues, com motivo cadastrável
+- Edição de pedidos em aberto: adicionar item, ajustar quantidade e cancelar item
+- Cadastro de motivos de cancelamento e devolução em Configurações → Pedidos
+
+## [1.7.0] — 2026-06-26
+
+### Adicionado
+- **products:** exclusão de variações (SKUs) não utilizadas direto pela lista de SKUs com soft delete inteligente — SKUs com estoque ou histórico ficam protegidos (#70)
+
+### Corrigido
+- **products:** erro 413 ao adicionar foto de produto — novo editor de enquadramento (4:3) com zoom, arraste e compressão automática (#70)
+
+## [1.6.6] — 2026-06-26
+
+### Adicionado
+- **orders:** Agrupamento por cor expansível no modo lista da tela de Novo Pedido (#58)
+- **orders:** Combobox de cliente com busca por nome / razão social / CNPJ + navegação por teclado (#58)
+- **orders:** Busca de catálogo no Novo Pedido agora cobre código de SKU e atributos (cor, tamanho) (#58)
+
+### Corrigido
+- **orders:** Lista de clientes no Novo Pedido respeita status ativo e `customerIds` do usuário; admin vê todos, usuários comuns vêem só os vinculados — comportamento legado preservado p/ usuários sem vínculo configurado (#58)
+- **api:** Middleware `authenticate` passa a expor `customerIds` em `req.auth` — bug pré-existente que impedia a pré-seleção automática de cliente único (#58)
+
 ## [1.6.5] — 2026-06-18
 
 ### Corrigido

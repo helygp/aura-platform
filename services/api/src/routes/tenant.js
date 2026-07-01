@@ -110,7 +110,7 @@ tenantRouter.put('/settings', authorize('admin'), async (req, res) => {
 })
 
 /* ── GET /api/tenant/billing ── */
-tenantRouter.get('/billing', async (req, res) => {
+tenantRouter.get('/billing', authorize('admin'), async (req, res) => {
   try {
     const tenant = await prismaMaster.tenant.findUnique({
       where:   { slug: req.user.tenantSlug },
@@ -183,7 +183,7 @@ tenantRouter.get('/billing', async (req, res) => {
 })
 
 /* ── PATCH /api/tenant/plan ── */
-tenantRouter.patch('/plan', async (req, res) => {
+tenantRouter.patch('/plan', authorize('admin'), async (req, res) => {
   /* Apenas ADMIN pode trocar de plano */
   if (req.user.role !== 'ADMIN') {
     return res.status(403).json({ error: 'Apenas admins podem alterar o plano.' })
@@ -251,7 +251,7 @@ tenantRouter.patch('/plan', async (req, res) => {
 })
 
 /* ── POST /api/tenant/cancel ── */
-tenantRouter.post('/cancel', async (req, res) => {
+tenantRouter.post('/cancel', authorize('admin'), async (req, res) => {
   if (req.user.role !== 'ADMIN') {
     return res.status(403).json({ error: 'Apenas admins podem cancelar a assinatura.' })
   }

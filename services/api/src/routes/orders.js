@@ -483,7 +483,7 @@ ordersRouter.post('/', authorize('admin','operador'), async (req, res) => {
  * o cancelamento completo (estoque + wallet + history). Para outras transições
  * mantém o comportamento simples de mudar status.
  */
-ordersRouter.put('/:id/status', async (req, res) => {
+ordersRouter.put('/:id/status', authorize('admin','operador'), async (req, res) => {
   const client = await getClient()
   try {
     await client.query('BEGIN')

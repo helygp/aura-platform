@@ -118,13 +118,19 @@ productsRouter.post('/', authorize('admin', 'estoque'), async (req, res) => {
   const client = await getClient()
   try {
     await client.query('BEGIN')
-    const { name, code, category, type, imageUrl, attributes, skus = [] } = req.body
+    const { name, code, category, type, imageUrl, attributes, skus = [],
+            coverImageUrl, destaque, seoTitle, seoDescription } = req.body
 
+    // Vitrine (ticket #183): produto nasce rascunho (publico=false); a capa usa a
+    // foto do produto por padrao, mas pode ser sobrescrita por coverImageUrl (auto+override).
+    const cover = (coverImageUrl && coverImageUrl.trim()) ? coverImageUrl : imageUrl
     const { rows: [product] } = await client.query(`
-      INSERT INTO products (name, code, category, type, image_url, attributes)
-      VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+      INSERT INTO products (name, code, category, type, image_url, attributes,
+                            cover_image_url, destaque, seo_title, seo_description, publico)
+      VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, false)
       RETURNING *
-    `, [name, code, category, type, imageUrl, JSON.stringify(attributes ?? [])])
+    `, [name, code, category, type, imageUrl, JSON.stringify(attributes ?? []),
+        cover, destaque === true, seoTitle ?? null, seoDescription ?? null])
 
     const insertedSkus = []
     for (const sku of skus) {
@@ -172,13 +178,19 @@ productsRouter.put('/:id', authorize('admin', 'estoque'), async (req, res) => {
   const client = await getClient()
   try {
     await client.query('BEGIN')
-    const { name, code, category, imageUrl, attributes, skus = [] } = req.body
+    const { name, code, category, imageUrl, attributes, skus = [],
+            coverImageUrl, destaque, seoTitle, seoDescription } = req.body
 
+    // Vitrine (#183): cover = override ou fallback pra foto do produto. publico NAO muda aqui
+    // (usa o toggle PATCH /:id/publish).
+    const cover = (coverImageUrl && coverImageUrl.trim()) ? coverImageUrl : imageUrl
     const { rows: [product] } = await client.query(`
       UPDATE products SET name=$1, code=$2, category=$3, image_url=$4,
-             attributes=$5::jsonb, updated_at=now()
-      WHERE id=$6 RETURNING *
-    `, [name, code, category, imageUrl, JSON.stringify(attributes ?? []), req.params.id])
+             attributes=$5::jsonb, cover_image_url=$6, destaque=$7,
+             seo_title=$8, seo_description=$9, updated_at=now()
+      WHERE id=$10 RETURNING *
+    `, [name, code, category, imageUrl, JSON.stringify(attributes ?? []),
+        cover, destaque === true, seoTitle ?? null, seoDescription ?? null, req.params.id])
     if (!product) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Produto não encontrado.' }) }
 
     /* Atualiza SKUs existentes; insere novos (sem id) */
@@ -279,6 +291,22 @@ productsRouter.put('/:id', authorize('admin', 'estoque'), async (req, res) => {
   }
 })
 
+/* ── PATCH /api/products/:id/publish ── toggle publicar/despublicar na vitrine (#183) */
+productsRouter.patch('/:id/publish', authorize('admin', 'estoque'), async (req, res) => {
+  try {
+    const publico = req.body?.publico === true
+    const { rows: [product] } = await query(
+      'UPDATE products SET publico=$1, updated_at=now() WHERE id=$2 RETURNING *',
+      [publico, req.params.id]
+    )
+    if (!product) return res.status(404).json({ error: 'Produto não encontrado.' })
+    res.json({ ok: true, id: product.id, publico: product.publico })
+  } catch (err) {
+    console.error('[products/publish]', err.message)
+    res.status(500).json({ error: 'Erro interno.' })
+  }
+})
+
 /* ── DELETE /api/products/:id ── */
 productsRouter.delete('/:id', authorize('admin'), async (req, res) => {
   try {
@@ -299,6 +327,11 @@ function normalizeProduct(p) {
     category:  p.category,
     type:      p.type,
     imageUrl:  p.image_url,
+    coverImageUrl:  p.cover_image_url ?? null,
+    destaque:       p.destaque ?? false,
+    publico:        p.publico ?? false,
+    seoTitle:       p.seo_title ?? null,
+    seoDescription: p.seo_description ?? null,
     attributes: p.attributes ?? [],
     skus: (p.skus ?? []).map(s => ({
       id:             s.id,
