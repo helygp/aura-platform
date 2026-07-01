@@ -116,6 +116,20 @@ export function useProducts() {
     }
   }, [fetchAll])
 
+  // Publica/despublica na vitrine (#183)
+  const publishProduct = useCallback(async (id, publico) => {
+    try {
+      const res = await authFetch(`/api/products/${id}/publish`, {
+        method: 'PATCH', body: JSON.stringify({ publico }),
+      })
+      if (!res.ok) throw new Error()
+      await fetchAll()
+    } catch (e) {
+      console.error('[useProducts/publish]', e.message)
+      throw e
+    }
+  }, [fetchAll])
+
   return {
     products:   paginated,
     total:      filtered.length,
@@ -128,6 +142,7 @@ export function useProducts() {
     refetch:    fetchAll,
     saveProduct,
     deleteProduct,
+    publishProduct,
     PAGE_SIZE,
   }
 }
